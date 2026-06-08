@@ -1,0 +1,15 @@
+[project]
+name = "claw-stream"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "browser-use>=0.12.6",
+    "duckdb>=1.5.2",
+    "duckduckgo-search>=8.1.1",
+    "fastapi>=0.136.1",
+    "playwright>=1.59.0",
+    "pydantic>=2.12.5",
+    "selectolax>=0.4.9",
+    "uvicorn>=0.46.0",
+]

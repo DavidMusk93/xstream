@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =============================================
+   Apple Design System — Star Archive
+   ============================================= */
+
+html {
+  scroll-behavior: smooth;
+  background: #000000;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
+               'Helvetica Neue', 'Segoe UI', 'Inter', sans-serif;
+  background: #000000;
+  color: #ffffff;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+/* Hide scrollbar but keep scrollability */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* =============================================
+   NEW: Apple-style components
+   ============================================= */
+
+@layer components {
+  /* System glass for navbars — subtle, Apple HIG compliant */
+  .system-glass {
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background-color: rgba(0, 0, 0, 0.72);
+  }
+
+  /* Media card — Apple TV / App Store style */
+  .media-card {
+    position: relative;
+    border-radius: 16px;
+    overflow: hidden;
+    background: #1c1c1e;
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+                box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .media-card:hover {
+    transform: scale(1.03);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Minimal pill badge */
+  .pill-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: #ffffff;
+    letter-spacing: 0.01em;
+  }
+}
+
+/* =============================================
+   LEGACY: Keep old glass classes for
+   unmodified components (VideoModal, CachePanel, login)
+   ============================================= */
+
+@layer components {
+  .glass {
+    background: rgba(255,255,255,0.03);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+
+  .glass-strong {
+    background: rgba(255,255,255,0.05);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+
+  .glass-card {
+    background: rgba(255,255,255,0.03);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 1.25rem;
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .glass-card:hover {
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.12);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+
+  .text-gradient-rose {
+    background: linear-gradient(135deg, #FB7185 0%, #E11D48 50%, #BE123C 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .glow-rose:hover {
+    box-shadow: 0 0 40px rgba(225,29,72,0.15), 0 0 80px rgba(225,29,72,0.08);
+  }
+
+  .image-reveal {
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+                filter 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .image-reveal:hover {
+    transform: scale(1.02);
+    filter: brightness(1.1) saturate(1.1);
+  }
+}
