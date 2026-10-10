@@ -30,7 +30,9 @@ connection to the pool). Never open ad-hoc connections.
 - Placeholders are `%s`; `Connection` has no `executemany` — use
   `conn.cursor().executemany(...)`.
 - All DB writes go through `core/db/write_queue.py` (legacy serialization
-  choice, see `docs/design/architecture-decisions.md`).
+  choice, see `docs/design/architecture-decisions.md`). Reads from async
+  code use `db_read` (worker thread, no queue) — never `db_write`, or they
+  wait behind unrelated writes.
 
 ## CLI
 

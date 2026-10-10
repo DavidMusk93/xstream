@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse
 from backend.routers.auth import require_auth
 from backend.routers.stars import invalidate_stars_cache, CONFIG_PATH
 from core import db, get_logger
-from core.db.write_queue import db_write
+from core.db.write_queue import db_read, db_write
 from core.events import publish_event
 
 router = APIRouter(prefix="/api/stars", tags=["sync"], dependencies=[Depends(require_auth)])
@@ -175,7 +175,7 @@ async def _scheduler_loop() -> None:
     global _next_scheduled_at
     delay = SYNC_INTERVAL_SEC
     try:
-        runs = await db_write(db.list_sync_runs, 1)
+        runs = await db_read(db.list_sync_runs, 1)
         finished_at = runs[0]["finished_at"] if runs else None
         if finished_at:
             # list_sync_runs returns real datetime objects (naive, server-local).
@@ -230,7 +230,7 @@ async def get_sync_status() -> dict[str, Any]:
         }
 
     try:
-        runs = await db_write(db.list_sync_runs, 5)
+        runs = await db_read(db.list_sync_runs, 5)
     except Exception:
         runs = []
     state["recent_runs"] = runs

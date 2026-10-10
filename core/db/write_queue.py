@@ -125,3 +125,12 @@ def get_queue() -> DBWriteQueue:
 async def db_write(func: Callable, *args, **kwargs) -> Any:
     """Convenience function: enqueue a synchronous write operation and wait for the result"""
     return await _default_queue.enqueue(func, *args, **kwargs)
+
+
+async def db_read(func: Callable, *args, **kwargs) -> Any:
+    """Run a synchronous read in a worker thread, bypassing the write queue.
+
+    Reads must not queue behind writes: routing them through db_write made
+    GET /api/stars/sync wait up to seconds behind magnet-check writes.
+    """
+    return await asyncio.to_thread(func, *args, **kwargs)

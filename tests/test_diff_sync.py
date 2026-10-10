@@ -553,7 +553,7 @@ class _StubFetcher:
 
 
 async def _stub_db_write(func, *args, **kwargs):
-    """In-memory stand-in for the serial DB write queue."""
+    """In-memory stand-in for db_write / db_read."""
     name = getattr(func, "__name__", "")
     if name == "upsert_star":
         return 1
@@ -588,6 +588,7 @@ async def test_run_raises_when_all_fetches_fail(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sync_titles, "FETCH_RETRY_DELAYS", (0.0, 0.0))
     monkeypatch.setattr(sync_titles, "db_write", _stub_db_write)
+    monkeypatch.setattr(sync_titles, "db_read", _stub_db_write)
     monkeypatch.setattr(sync_titles, "HttpxFetcher", lambda: _StubFetcher(behavior))
     monkeypatch.setattr(sync_titles, "_rss_enrich_all", _noop_rss_enrich)
 
@@ -624,6 +625,7 @@ async def test_run_partial_failure_returns_failed_list(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sync_titles, "FETCH_RETRY_DELAYS", (0.0, 0.0))
     monkeypatch.setattr(sync_titles, "db_write", _stub_db_write)
+    monkeypatch.setattr(sync_titles, "db_read", _stub_db_write)
     monkeypatch.setattr(sync_titles, "HttpxFetcher", lambda: _StubFetcher(behavior))
     monkeypatch.setattr(sync_titles, "download_covers_batch", _stub_covers)
     monkeypatch.setattr(sync_titles, "TitleSyncSink", _StubSink)
@@ -675,6 +677,7 @@ async def test_run_phase_b_enriches_with_rss(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sync_titles, "FETCH_RETRY_DELAYS", (0.0, 0.0))
     monkeypatch.setattr(sync_titles, "db_write", _stub_db_write)
+    monkeypatch.setattr(sync_titles, "db_read", _stub_db_write)
     monkeypatch.setattr(sync_titles, "HttpxFetcher", lambda: _StubFetcher(behavior))
     monkeypatch.setattr(sync_titles, "download_covers_batch", _stub_covers)
     monkeypatch.setattr(sync_titles, "TitleSyncSink", _RecordingSink)
@@ -1330,6 +1333,7 @@ async def test_rss_enrich_records_and_suppresses_empty_stars(sink_db, monkeypatc
         return fn(*a, **k)
 
     monkeypatch.setattr(st, "db_write", _direct)
+    monkeypatch.setattr(st, "db_read", _direct)
     sink_db.execute("INSERT INTO stars (id, name, code) VALUES (1, 'Empty Star', 'E-1')")
     star = StarConfig(name="Empty Star", code="E-1")
 
@@ -1366,6 +1370,7 @@ async def test_rss_enrich_clears_streak_on_results(sink_db, monkeypatch):
         return fn(*a, **k)
 
     monkeypatch.setattr(st, "db_write", _direct)
+    monkeypatch.setattr(st, "db_read", _direct)
     sink_db.execute("INSERT INTO stars (id, name, code) VALUES (1, 'Lucky Star', 'L-1')")
     sink_db.execute("INSERT INTO star_rss_state (star_id, empty_streak) VALUES (1, 2)")
 

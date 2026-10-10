@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from backend.routers.auth import require_auth
 from backend.services.magnet_checker import MagnetChecker, extract_hash, has_cached_torrent
 from core import db, get_logger
-from core.db.write_queue import db_write
+from core.db.write_queue import db_read, db_write
 from core.events import publish_event
 
 router = APIRouter(prefix="/api/magnets", tags=["magnets"], dependencies=[Depends(require_auth)])
@@ -161,7 +161,7 @@ async def _run_check_bg(scope: str) -> None:
     started_at = _check_state["started_at"]
     pending: list[asyncio.Future] = []
     try:
-        titles = await db_write(db.load_titles_for_magnet_check, scope)
+        titles = await db_read(db.load_titles_for_magnet_check, scope)
         # Disk-is-truth shortcut: a cached .torrent proves the swarm works.
         network_items: list[dict[str, Any]] = []
         cached_ok = 0
@@ -269,7 +269,7 @@ async def purge_dead(request: Request) -> dict[str, Any]:
                 content={"detail": "magnet check is running; purge after it finishes"},
             )
 
-    unplayable = await db_write(db.list_unplayable_titles)
+    unplayable = await db_read(db.list_unplayable_titles)
     liked = [t for t in unplayable if t["user_liked"]]
     deletable = [t for t in unplayable if not t["user_liked"]]
 

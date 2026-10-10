@@ -38,7 +38,7 @@ detail: `docs/design/architecture-decisions.md`.
 - **On-demand download discipline (不看不下、看哪下哪)**: add = paused + all-zero priorities; play/seek raises priorities only inside the window; `set_sequential_download(True)` is never allowed.
 - **`close_redundant_connections=False`** — libtorrent's default peer-drop on finished↔downloading flips kills streaming.
 - **Bootstrap-first verification + fast-resume snapshots** — never blindly recheck finished torrents.
-- **All DB access via the psycopg pool** (`core/db/connection.py`); all writes via `core/db/write_queue.py`. Schema and access rules: `docs/design/database.md`.
+- **All DB access via the psycopg pool** (`core/db/connection.py`); all writes via `core/db/write_queue.py` (`db_write`); async reads via `db_read`, never the write queue. Schema and access rules: `docs/design/database.md`.
 - **Auth on every API router** except `/api/auth` and `/api/test` (`Depends(require_auth)`).
 - **SSE push, no frontend polling timers** (`core/events.py` + `useEventSource.ts`).
 - **Multi-star/VR titles and no-magnet titles never enter the DB** (filtered at collection, skipped at sink).

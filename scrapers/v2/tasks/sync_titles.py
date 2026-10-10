@@ -55,7 +55,7 @@ import httpx
 
 from core import get_logger
 from core import db
-from core.db.write_queue import db_write
+from core.db.write_queue import db_read, db_write
 from scrapers.v2.fetchers import HttpxFetcher
 from scrapers.v2.extractors import IJavTorrentExtractor, SukebeiRssExtractor
 from scrapers.v2.sinks import TitleSyncSink
@@ -526,10 +526,10 @@ async def run(
 
     # 2. Preload existing title codes and missing-metadata codes into memory sets
     t0 = time.perf_counter()
-    existing_codes = await db_write(db.load_all_title_codes)
-    missing_codes = await db_write(db.load_title_codes_missing_metadata)
-    cover_missing = await db_write(db.load_title_codes_missing_cover)
-    blacklisted = await db_write(db.load_blacklisted_codes)
+    existing_codes = await db_read(db.load_all_title_codes)
+    missing_codes = await db_read(db.load_title_codes_missing_metadata)
+    cover_missing = await db_read(db.load_title_codes_missing_cover)
+    blacklisted = await db_read(db.load_blacklisted_codes)
     t1 = time.perf_counter()
     log.info(f"[timing] load existing codes: {(t1 - t0) * 1000:.1f}ms | count={len(existing_codes)} | missing={len(missing_codes)}")
 
@@ -646,7 +646,7 @@ async def run(
 
     # Statistics
     t0 = time.perf_counter()
-    rows = await db_write(_query_stats)
+    rows = await db_read(_query_stats)
     t1 = time.perf_counter()
     log.info(f"[timing] stats query: {(t1 - t0) * 1000:.1f}ms")
 
@@ -710,7 +710,7 @@ async def _rss_enrich_all(
     n_enriched = 0
     n_new = 0
     n_failed = 0
-    suppressed = await db_write(db.load_rss_suppressed_stars)
+    suppressed = await db_read(db.load_rss_suppressed_stars)
     if suppressed:
         log.info(f"phase B: {len(suppressed)} stars rss-suppressed (repeated empty results)")
 
@@ -790,7 +790,7 @@ async def _rss_enrich_all(
 
 
 def _query_stats(conn=None):
-    """Count titles per star (for db_write queue invocation)."""
+    """Count titles per star."""
     managed, should_close = db._managed_conn(conn)
     try:
         rows = managed.execute("""
@@ -819,7 +819,7 @@ async def sync_star(
         code=star.code,
     )
 
-    existing_codes = await db_write(db.load_all_title_codes)
+    existing_codes = await db_read(db.load_all_title_codes)
     try:
         with open("config.json", encoding="utf-8") as f:
             roster_names = [
@@ -831,7 +831,7 @@ async def sync_star(
     items = await fetch_star(
         fetcher, star, asyncio.Semaphore(1), SukebeiRateLimiter(), roster_names
     )
-    blacklisted = await db_write(db.load_blacklisted_codes)
+    blacklisted = await db_read(db.load_blacklisted_codes)
     items = _drop_blacklisted(items, star_id, blacklisted)
     if not items:
         return {"name": star.name, "count": 0, "titles": []}
