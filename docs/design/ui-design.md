@@ -20,10 +20,14 @@ Fluid Interfaces* translated to the web).
 
 ## Branding
 
-- Logo: neon star with a play glyph on a dark rounded square
-  (`frontend/public/logo.png`; `logo.svg` is the source). Header shows it at
-  28px next to the `xstream` wordmark; login shows it at 88px.
-- `icon.png` (favicon) and `icon-192x192.png` / `icon-512x512.png` (PWA).
+- Logo: a curved Didone-style "x" — one thick swash crossed by a hairline,
+  rose → crimson gradient (`#FF8AA0 → #FF375F → #C00036`), a small dot at the
+  hairline's tip, on a near-black squircle (`rx 116/512`) with a faint warm
+  glow. Sensual through contrast and curve, never through explicit imagery.
+- `frontend/public/logo.svg` is the hand-written source; `logo.png`,
+  `icon.png` (favicon) and `icon-192x192.png` / `icon-512x512.png` (PWA) are
+  rendered from it with headless Chromium (transparent corners). Header
+  shows it at 28px next to the `xstream` wordmark; login at 88px.
 - Do not reintroduce emoji-as-logo.
 
 ---
