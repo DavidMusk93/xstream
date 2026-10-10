@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 
 import psycopg
 from psycopg_pool import ConnectionPool
+
+from core.logger import get_logger
+
+_log = get_logger("db-ops")
 
 _pool: ConnectionPool | None = None
 _pool_lock = threading.Lock()
 
 POOL_MIN_SIZE = 1
 POOL_MAX_SIZE = 10
+POOL_WAIT_WARN_MS = 50
 
 
 def get_pool() -> ConnectionPool:
@@ -44,8 +50,23 @@ def get_pool() -> ConnectionPool:
 
 
 def _conn() -> psycopg.Connection:
-    """Get a connection from the pool; .close() returns it to the pool."""
-    return get_pool().getconn()
+    """Get a connection from the pool; .close() returns it to the pool.
+
+    Slow checkouts are logged with pool stats so db-ops latency can be split
+    into pool wait vs. statement time.
+    """
+    pool = get_pool()
+    start = time.perf_counter()
+    conn = pool.getconn()
+    wait_ms = (time.perf_counter() - start) * 1000
+    if wait_ms > POOL_WAIT_WARN_MS:
+        stats = pool.get_stats()
+        _log.warning(
+            f"pool getconn waited {wait_ms:.1f}ms"
+            f" (size={stats.get('pool_size')} available={stats.get('pool_available')}"
+            f" waiting={stats.get('requests_waiting')})"
+        )
+    return conn
 
 
 def close_pool() -> None:
