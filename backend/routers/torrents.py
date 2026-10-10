@@ -11,6 +11,7 @@ from backend.models import TorrentStatus, TorrentAddRequest, TorrentAddResponse,
 from backend.routers.auth import require_auth
 from core import get_logger
 from core.db.connection import _conn as _db_conn
+from core.db.write_queue import db_read
 
 router = APIRouter(prefix="/torrent", tags=["torrents"], dependencies=[Depends(require_auth)])
 log = get_logger("torrents-router")
@@ -96,7 +97,7 @@ async def add_torrent(req: TorrentAddRequest, engine: Any = Depends(get_engine))
     if not req.magnet:
         raise HTTPException(status_code=400, detail="Missing magnet")
 
-    magnet = _resolve_magnet(req.magnet)
+    magnet = await db_read(_resolve_magnet, req.magnet)
     # add_torrent does synchronous I/O (save metadata, scan filesystem).
     # Run in thread pool so the event loop stays responsive.
     try:

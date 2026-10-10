@@ -438,10 +438,12 @@ def delete_star_by_code(code: str, conn=None) -> bool:
         star_id = row[0]
 
         # Delete in foreign-key dependency order: social_posts → titles → stars
-        # (title_covers rows cascade with their titles)
-        managed.execute("DELETE FROM social_posts WHERE star_id = %s", (star_id,))
-        managed.execute("DELETE FROM titles WHERE star_id = %s", (star_id,))
-        managed.execute("DELETE FROM stars WHERE id = %s", (star_id,))
+        # (title_covers rows cascade with their titles). Pool connections are
+        # autocommit: one transaction so a failure never leaves a half-deleted star.
+        with managed.transaction():
+            managed.execute("DELETE FROM social_posts WHERE star_id = %s", (star_id,))
+            managed.execute("DELETE FROM titles WHERE star_id = %s", (star_id,))
+            managed.execute("DELETE FROM stars WHERE id = %s", (star_id,))
         return True
     finally:
         if should_close:

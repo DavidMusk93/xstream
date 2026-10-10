@@ -20,6 +20,7 @@ from typing import Any
 from backend.routers.auth import require_auth
 from core import get_logger
 from core.db.connection import _conn as _db_conn
+from core.db.write_queue import db_read, db_write
 from core.events import publish_event
 
 log = get_logger("stars-router")
@@ -308,7 +309,7 @@ async def add_star(request: AddStarRequest) -> AddStarResponse:
 
     # Write to database
     from core import db
-    db.upsert_star(name=name, handle=handle, code=code)
+    await db_write(db.upsert_star, name=name, handle=handle, code=code)
 
     invalidate_stars_cache()
     log.info(f"star added: {name} ({code}) from {url}")
@@ -348,6 +349,18 @@ async def add_star(request: AddStarRequest) -> AddStarResponse:
 
 # ── Delete Star ─────────────────────────────────────────────────────
 
+def _star_magnet_hashes(code: str) -> list[str]:
+    conn = _db_conn()
+    try:
+        rows = conn.execute(
+            "SELECT magnet_hash FROM titles WHERE star_code = %s AND magnet_hash IS NOT NULL",
+            [code],
+        ).fetchall()
+        return [h for (h,) in rows if h]
+    finally:
+        conn.close()
+
+
 @router.delete("/{code}")
 async def delete_star(
     request: Request,
@@ -368,21 +381,12 @@ async def delete_star(
     engine = request.app.state.engine
     magnet_hashes: list[str] = []
     try:
-        conn = _db_conn()
-        try:
-            rows = conn.execute("""
-                SELECT magnet_hash
-                FROM titles
-                WHERE star_code = %s AND magnet_hash IS NOT NULL
-            """, [code]).fetchall()
-            magnet_hashes = [h for (h,) in rows if h]
-        finally:
-            conn.close()
+        magnet_hashes = await db_read(_star_magnet_hashes, code)
     except Exception as e:
         log.warning(f"delete_star: failed to query magnet hashes for {code}: {e}")
 
     from core import db
-    deleted = db.delete_star_by_code(code)
+    deleted = await db_write(db.delete_star_by_code, code)
     if not deleted:
         log.warning(f"star {code} removed from config but not found in db")
 
@@ -412,34 +416,38 @@ class LikeResponse(BaseModel):
     downloaded: bool
 
 
+def _title_magnet(code: str) -> tuple[str | None, str | None] | None:
+    conn = _db_conn()
+    try:
+        return conn.execute(
+            "SELECT magnet, magnet_hash FROM titles WHERE code = %s", [code]
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def _set_title_liked(code: str, liked: bool) -> None:
+    conn = _db_conn()
+    try:
+        conn.execute(
+            "UPDATE titles SET user_liked = %s WHERE code = %s", [1 if liked else 0, code]
+        )
+    finally:
+        conn.close()
+
+
 @router.post("/like")
 async def like_title(request: LikeRequest, req: Request) -> LikeResponse:
     """Like / unlike a title; if magnet exists after liking, trigger download immediately."""
     code = request.code.strip().upper()
     liked = request.liked
 
-    conn = _db_conn()
-    try:
-        row = conn.execute(
-            "SELECT magnet, magnet_hash FROM titles WHERE code = %s",
-            [code],
-        ).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="作品不存在")
-        magnet, magnet_hash = row
-    finally:
-        conn.close()
+    row = await db_read(_title_magnet, code)
+    if not row:
+        raise HTTPException(status_code=404, detail="作品不存在")
+    magnet, magnet_hash = row
 
-    # Update database
-    conn = _db_conn()
-    try:
-        conn.execute(
-            "UPDATE titles SET user_liked = %s WHERE code = %s",
-            [1 if liked else 0, code],
-        )
-    finally:
-        conn.close()
-
+    await db_write(_set_title_liked, code, liked)
     invalidate_stars_cache()
 
     engine = req.app.state.engine
@@ -449,7 +457,7 @@ async def like_title(request: LikeRequest, req: Request) -> LikeResponse:
     downloaded = False
     if liked and magnet:
         from backend.routers.torrents import _resolve_magnet
-        resolved = _resolve_magnet(magnet)
+        resolved = await db_read(_resolve_magnet, magnet)
         info = await asyncio.to_thread(engine.add_torrent, resolved, prefetch=False)
         if info:
             hash_str = info["hash"]

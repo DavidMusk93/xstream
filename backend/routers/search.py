@@ -35,6 +35,7 @@ from backend.routers.auth import require_auth
 from backend.routers.stars import _load_config
 from core import get_logger
 from core.db.connection import _conn as _db_conn
+from core.db.write_queue import db_read
 from scrapers.v2.extractors import (
     IJAV_BASE_URL,
     IJavTorrentExtractor,
@@ -264,7 +265,7 @@ async def search_titles(q: str = Query(..., min_length=2, max_length=100)) -> Se
 
     config = _load_config()
     followed_urls = {s.get("star_page_url") for s in config.get("stars", [])}
-    in_library = _library_codes([it.code for it, _ in items])
+    in_library = await db_read(_library_codes, [it.code for it, _ in items])
 
     results = []
     for it, source in items:

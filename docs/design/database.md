@@ -33,6 +33,10 @@ connection to the pool). Never open ad-hoc connections.
   choice, see `docs/design/architecture-decisions.md`). Reads from async
   code use `db_read` (worker thread, no queue) — never `db_write`, or they
   wait behind unrelated writes.
+- Async route code never touches the pool synchronously (not even a quick
+  SELECT): a cold `title_covers` TOAST cascade on star delete took 20s and
+  froze the event loop. `tests/test_no_blocking_db_in_handlers.py` scans
+  `backend/routers/` statically.
 
 ## CLI
 
