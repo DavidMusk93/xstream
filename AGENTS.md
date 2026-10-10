@@ -103,6 +103,10 @@ systemctl restart xstream-backend xstream-frontend
 
 Caddy / ports / logging / ops commands: `docs/ops/runbook.md`.
 
+**Preview frontend changes with `scripts/preview_frontend.sh start`** (isolated
+build on :3100) — never `npm run build` just to test: it rewrites the
+`.output` that production serves, breaking the live site until a restart.
+
 **Restart both services after any code change** — uvicorn has no hot reload in
 production; the frontend needs `npm run build` + restart.
 
@@ -184,4 +188,5 @@ ops changes → `docs/ops/`, lessons → `docs/skill/`.
 
 - Never leak private data (covers, database content, user memories)
 - Never run destructive commands; `trash` > `rm`
+- Process hygiene: kill by PID file only (never `pkill -f` — it matches your own shell); detach servers with `setsid nohup`; wrap waits in `timeout`. See `docs/skill/agent-process-hygiene.md`
 - When uncertain, ask the user first

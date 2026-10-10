@@ -51,6 +51,7 @@ Refactoring experiences, coding conventions, and lessons learned.
 | Document | Content |
 |----------|---------|
 | [project-refactor.md](skill/project-refactor.md) | Layout migration, terminology unification, english-ification log |
+| [agent-process-hygiene.md](skill/agent-process-hygiene.md) | Kill by PID, setsid for servers, bounded waits, isolated frontend preview |
 
 ---
 
