@@ -26,19 +26,19 @@
       </button>
     </div>
 
-    <div v-reveal="0.08" class="surface overflow-hidden">
-      <!-- Hero -->
-      <div v-if="activeTitle" class="flex flex-col sm:flex-row gap-5 sm:gap-8 p-4 sm:p-6">
-        <div class="group/hero w-full sm:w-[300px] md:w-[360px] lg:w-[440px] shrink-0 rounded-[18px] overflow-hidden bg-fill">
+    <div v-reveal="0.08">
+      <!-- Stage: the cover is the protagonist; info reads like a caption -->
+      <div v-if="activeTitle" class="grid gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] lg:gap-12">
+        <div class="group/hero relative w-full max-w-[760px] rounded-[22px] overflow-hidden bg-fill shadow-[0_30px_60px_-34px_rgba(0,0,0,0.5)]">
           <img
             v-if="activeTitle.cover_url && !activeImgError"
             ref="heroImg"
             :key="activeTitle.code"
             :src="activeTitle.cover_url"
             :srcset="heroSrcset(activeTitle)"
-            sizes="(min-width: 1024px) 440px, (min-width: 768px) 360px, (min-width: 640px) 300px, calc(100vw - 32px)"
+            sizes="(min-width: 1280px) 740px, (min-width: 1024px) 60vw, (min-width: 808px) 760px, calc(100vw - 32px)"
             :alt="activeTitle.code"
-            class="w-full h-auto block transition-[opacity,transform] duration-700 [transition-timing-function:var(--ease-out)] sm:group-hover/hero:scale-[1.025]"
+            class="w-full h-auto block transition-[opacity,transform] duration-700 [transition-timing-function:var(--ease-out)] sm:group-hover/hero:scale-[1.015]"
             :class="heroLoaded ? 'opacity-100' : 'opacity-0'"
             :style="{ aspectRatio: coverAR(activeTitle) }"
             loading="lazy"
@@ -56,101 +56,119 @@
           </div>
         </div>
 
-        <Transition name="swap" mode="out-in">
-          <div :key="activeTitle.code" class="flex-1 min-w-0 flex flex-col justify-center sm:py-2">
-            <div class="flex items-center flex-wrap gap-x-2 gap-y-1 text-[13px] font-medium text-foreground-muted tabular-nums">
-              <span>#{{ activeTitle.number || activeIndex + 1 }}</span>
-              <template v-if="activeTitle.date">
-                <span class="text-foreground-muted/40">·</span>
-                <span>{{ fmtDate(activeTitle.date) }}</span>
-              </template>
-              <span v-if="activeIsHd" class="chip bg-black/[0.06] text-foreground">HD</span>
-              <span v-if="activeTitle.magnet_status === 'dead'" class="chip bg-danger/10 text-danger">Unavailable</span>
-            </div>
-            <h3 class="mt-2 text-[30px] sm:text-[40px] font-bold text-foreground leading-[1.05]">
-              {{ activeTitle.code }}
-            </h3>
-            <p class="mt-3 text-[15px] sm:text-[17px] text-foreground-muted leading-relaxed line-clamp-3">
-              {{ activeTitle.title }}
+        <div class="min-w-0 flex flex-col lg:py-1">
+          <!-- Position in the catalog + stepping -->
+          <div class="flex items-center gap-3">
+            <p class="font-mono text-[12px] text-foreground-muted tabular-nums">
+              <span class="text-foreground">{{ String(activeIndex + 1).padStart(2, '0') }}</span>
+              <span class="mx-1 text-foreground-muted/50">/</span>{{ String(total).padStart(2, '0') }}
             </p>
-
-            <!-- Icon-only actions; Copy stays first and accent — it is the
-                 real primary action (49 copies vs 1 play in early tracking) -->
-            <div class="flex items-center gap-3 mt-6 sm:mt-7">
-              <button
-                class="action text-white shadow-[0_6px_20px_-6px_rgba(255,55,95,0.6)] hover:-translate-y-0.5"
-                :class="copied ? 'bg-success shadow-none' : 'bg-accent hover:bg-accent-hover'"
-                :data-tip="copied ? 'Copied' : 'Copy magnet'"
-                :data-tip-show="copied || undefined"
-                aria-label="Copy magnet"
-                :disabled="!activePlayable"
-                @click="copyMagnet"
-              >
-                <Transition name="icon-swap" mode="out-in">
-                  <MagnetIcon v-if="!copied" key="copy" />
-                  <svg v-else key="done" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                </Transition>
+            <span class="h-px flex-1 bg-black/[0.08]" />
+            <div class="flex items-center gap-1">
+              <button class="btn-icon !w-9 !h-9 text-foreground disabled:opacity-25" aria-label="Previous title" :disabled="activeIndex <= 0" @click="step(-1)">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
               </button>
-
-              <button
-                class="action bg-foreground text-white hover:bg-black hover:-translate-y-0.5"
-                data-tip="Play"
-                aria-label="Play"
-                :disabled="!activePlayable"
-                @click="onPlay"
-              >
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" class="ml-0.5"><path d="M7 4.5v15l12.5-7.5z" /></svg>
-              </button>
-
-              <button
-                class="action hover:-translate-y-0.5"
-                :class="activeLiked ? 'bg-accent/10 text-accent hover:bg-accent/15' : 'bg-black/[0.05] text-foreground hover:bg-black/[0.08]'"
-                :data-tip="activeLiked ? 'Liked' : 'Like'"
-                :aria-pressed="activeLiked"
-                :aria-label="activeLiked ? 'Unlike' : 'Like'"
-                :disabled="liking"
-                @click="toggleLike"
-              >
-                <svg
-                  width="19" height="19" viewBox="0 0 24 24"
-                  :fill="activeLiked ? 'currentColor' : 'none'"
-                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                  class="transition-transform duration-300 ease-spring"
-                  :class="activeLiked ? 'scale-110' : 'scale-100'"
-                >
-                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-                </svg>
+              <button class="btn-icon !w-9 !h-9 text-foreground disabled:opacity-25" aria-label="Next title" :disabled="activeIndex >= total - 1" @click="step(1)">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
               </button>
             </div>
           </div>
-        </Transition>
+
+          <Transition name="swap" mode="out-in">
+            <div :key="activeTitle.code" class="mt-5 lg:mt-auto">
+              <div class="flex items-center flex-wrap gap-x-2 gap-y-1 text-[13px] font-medium text-foreground-muted tabular-nums">
+                <span v-if="activeTitle.date">{{ fmtDate(activeTitle.date) }}</span>
+                <span v-if="activeIsHd" class="chip bg-black/[0.06] text-foreground">HD</span>
+                <span v-if="activeTitle.magnet_status === 'dead'" class="chip bg-danger/10 text-danger">Unavailable</span>
+              </div>
+              <h3 class="mt-2 text-[34px] sm:text-[48px] lg:text-[56px] font-bold text-foreground leading-[1] tracking-[-0.03em]">
+                {{ activeTitle.code }}
+              </h3>
+              <p class="mt-4 text-[15px] sm:text-[17px] text-foreground-muted leading-relaxed line-clamp-3 lg:line-clamp-4">
+                {{ activeTitle.title }}
+              </p>
+
+              <!-- Icon-only actions; Copy stays first and accent — it is the
+                   real primary action (49 copies vs 1 play in early tracking) -->
+              <div class="flex items-center gap-3 mt-6 sm:mt-8">
+                <button
+                  class="action text-white shadow-[0_6px_20px_-6px_rgba(255,55,95,0.6)] hover:-translate-y-0.5"
+                  :class="copied ? 'bg-success shadow-none' : 'bg-accent hover:bg-accent-hover'"
+                  :data-tip="copied ? 'Copied' : 'Copy magnet'"
+                  :data-tip-show="copied || undefined"
+                  aria-label="Copy magnet"
+                  :disabled="!activePlayable"
+                  @click="copyMagnet"
+                >
+                  <Transition name="icon-swap" mode="out-in">
+                    <MagnetIcon v-if="!copied" key="copy" />
+                    <svg v-else key="done" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  </Transition>
+                </button>
+
+                <button
+                  class="action bg-foreground text-white hover:bg-black hover:-translate-y-0.5"
+                  data-tip="Play"
+                  aria-label="Play"
+                  :disabled="!activePlayable"
+                  @click="onPlay"
+                >
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" class="ml-0.5"><path d="M7 4.5v15l12.5-7.5z" /></svg>
+                </button>
+
+                <button
+                  class="action hover:-translate-y-0.5"
+                  :class="activeLiked ? 'bg-accent/10 text-accent hover:bg-accent/15' : 'bg-black/[0.05] text-foreground hover:bg-black/[0.08]'"
+                  :data-tip="activeLiked ? 'Liked' : 'Like'"
+                  :aria-pressed="activeLiked"
+                  :aria-label="activeLiked ? 'Unlike' : 'Like'"
+                  :disabled="liking"
+                  @click="toggleLike"
+                >
+                  <svg
+                    width="19" height="19" viewBox="0 0 24 24"
+                    :fill="activeLiked ? 'currentColor' : 'none'"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    class="transition-transform duration-300 ease-spring"
+                    :class="activeLiked ? 'scale-110' : 'scale-100'"
+                  >
+                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </Transition>
+        </div>
       </div>
 
-      <!-- Thumbnail rail -->
-      <div class="border-t border-black/[0.05]">
-        <div
-          ref="rowRef"
-          class="group/rail flex gap-3 sm:gap-4 items-start overflow-x-auto scrollbar-hide px-4 sm:px-6 py-4 sm:py-5 snap-x snap-mandatory scroll-px-4 sm:scroll-px-6"
-          @scroll.passive="onRowScroll"
+      <!-- Gallery: every title gets a captioned card -->
+      <div
+        ref="rowRef"
+        class="group/rail mt-8 sm:mt-10 flex gap-4 sm:gap-5 items-start overflow-x-auto scrollbar-hide pt-1 pb-2 snap-x snap-mandatory fade-edge-r"
+        @scroll.passive="onRowScroll"
+      >
+        <!-- Windowed rendering: spacers keep the scroll width exact while
+             only the visible ±THUMB_BUFFER thumbnails exist in the DOM -->
+        <div v-if="leadPad > 0" class="shrink-0 h-px" :style="{ width: `${leadPad}px` }" />
+        <button
+          v-for="{ title, idx } in windowedTitles"
+          :key="title.code"
+          class="group/thumb shrink-0 w-[148px] sm:w-[188px] lg:w-[212px] text-left snap-start transition-transform duration-300 active:scale-[0.97] active:duration-100 [transition-timing-function:var(--ease-out)]"
+          :class="activeIndex === idx ? '' : 'sm:hover:-translate-y-1'"
+          :aria-label="title.code"
+          :aria-current="activeIndex === idx"
+          @click="activeIndex = idx"
         >
-          <!-- Windowed rendering: spacers keep the scroll width exact while
-               only the visible ±THUMB_BUFFER thumbnails exist in the DOM -->
-          <div v-if="leadPad > 0" class="shrink-0 h-px" :style="{ width: `${leadPad}px` }" />
-          <button
-            v-for="{ title, idx } in windowedTitles"
-            :key="title.code"
-            class="relative shrink-0 w-[112px] sm:w-[144px] md:w-[168px] rounded-xl overflow-hidden bg-fill snap-start transition-[opacity,transform,filter,box-shadow] duration-300 active:scale-[0.96] active:duration-100 [transition-timing-function:var(--ease-out)]"
+          <div
+            class="rounded-[14px] overflow-hidden bg-fill transition-[opacity,filter,box-shadow] duration-300 [transition-timing-function:var(--ease-out)]"
             :class="[
               activeIndex === idx
-                ? 'ring-2 ring-accent ring-offset-2 ring-offset-white'
-                : 'opacity-[0.72] sm:group-hover/rail:opacity-40 sm:group-hover/rail:saturate-[0.6] hover:!opacity-100 hover:!saturate-100 hover:-translate-y-1 hover:shadow-[0_10px_24px_-10px_rgba(0,0,0,0.35)]',
+                ? 'shadow-[0_14px_30px_-16px_rgba(0,0,0,0.45)]'
+                : 'opacity-[0.78] sm:group-hover/rail:opacity-45 sm:group-hover/rail:saturate-[0.6] sm:group-hover/thumb:!opacity-100 sm:group-hover/thumb:!saturate-100 sm:group-hover/thumb:shadow-[0_14px_30px_-16px_rgba(0,0,0,0.4)]',
               title.magnet_status === 'dead' ? 'grayscale !opacity-40' : '',
             ]"
-            :aria-label="title.code"
-            :aria-current="activeIndex === idx"
-            @click="activeIndex = idx"
           >
             <img
               v-if="title.cover_url && !thumbErrors[title.code]"
@@ -168,12 +186,20 @@
             >
               <span class="text-[11px] font-semibold text-foreground/50">{{ title.code }}</span>
             </div>
-            <span class="absolute bottom-1.5 left-1.5 chip !px-1.5 bg-black/55 backdrop-blur-md text-white text-[10px] tabular-nums">
-              {{ title.number || idx + 1 }}
-            </span>
-          </button>
-          <div v-if="trailPad > 0" class="shrink-0 h-px" :style="{ width: `${trailPad}px` }" />
-        </div>
+          </div>
+          <div class="mt-2.5 flex items-center gap-1.5 px-0.5 whitespace-nowrap">
+            <span
+              class="h-1.5 rounded-full bg-accent transition-[width,opacity] duration-300 [transition-timing-function:var(--ease-out)]"
+              :class="activeIndex === idx ? 'w-1.5 opacity-100' : 'w-0 opacity-0'"
+            />
+            <span
+              class="text-[13px] font-semibold truncate transition-colors"
+              :class="activeIndex === idx ? 'text-foreground' : 'text-foreground-muted group-hover/thumb:text-foreground'"
+            >{{ title.code }}</span>
+            <span class="ml-auto text-[12px] text-foreground-muted/70 tabular-nums">{{ shortDate(title.date) }}</span>
+          </div>
+        </button>
+        <div v-if="trailPad > 0" class="shrink-0 h-px" :style="{ width: `${trailPad}px` }" />
       </div>
     </div>
   </section>
@@ -198,6 +224,22 @@ const { add: addLog } = useEventLog()
 const id = computed(() => props.star.code.toLowerCase())
 const activeIndex = ref(0)
 const activeTitle = computed(() => props.star.titles?.[activeIndex.value] || null)
+const total = computed(() => props.star.titles?.length ?? 0)
+
+function step(delta: number) {
+  const next = activeIndex.value + delta
+  if (next < 0 || next >= total.value) return
+  activeIndex.value = next
+  revealThumb(next)
+}
+
+// Keep the stepped-to card in view without nudging the page vertically.
+function revealThumb(idx: number) {
+  const row = rowRef.value
+  if (!row || !thumbStride.value) return
+  const left = idx * thumbStride.value - (row.clientWidth - thumbItemWidth.value) / 2
+  row.scrollTo({ left: Math.max(0, left), behavior: 'smooth' })
+}
 
 const activeImgError = ref(false)
 const thumbErrors = ref<Record<string, boolean>>({})
@@ -390,6 +432,12 @@ async function onDelete() {
   } finally {
     deleting.value = false
   }
+}
+
+function shortDate(dateStr?: string): string {
+  const parts = dateStr?.split('/')
+  if (!parts || parts.length !== 3) return ''
+  return `${parts[2].slice(2)}.${parts[1].padStart(2, '0')}.${parts[0].padStart(2, '0')}`
 }
 
 function fmtDate(dateStr?: string): string {

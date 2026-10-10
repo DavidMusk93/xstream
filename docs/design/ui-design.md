@@ -96,7 +96,7 @@ sheet on phones, centered card from `sm:`), `star/StarCardSkeleton.vue`.
 |------|--------|---------|--------|
 | Page large title ("Library") | 40 | 56 | bold |
 | Star section header | 28 | 36 | bold |
-| Active title code | 30 | 40 | bold, leading 1.05 |
+| Active title code | 34 | 56 (48 at `sm`) | bold, leading 1, `-0.03em` |
 | Sheet / section titles | 22 | | bold |
 | Panel titles | 17 | | semibold |
 | Buttons | 15 (14 small) | | semibold |
@@ -142,23 +142,28 @@ Search), not on the page.
 
 ### StarCard (shelf)
 
-An eyebrow (`01 · N titles ——`, numbered by shelf order) and the name sit on
-the page; the shelf is one `.surface`
-holding the hero and the thumbnail rail (hairline between them).
+Editorial layout, no card box — the cover is the protagonist and the info
+reads like a caption. An eyebrow (`01 · N titles ——`, numbered by shelf
+order) and the name sit above.
 
-- Hero cover: natural aspect ratio (`w-full h-auto`, box reserved from
-  `cover_w/h`), `sm:300 / md:360 / lg:440px`, `rounded-[18px]`; fades in once
-  decoded.
-- Info: meta line (`#N · date`, HD / Unavailable chips), code headline,
-  3-line title. Swapping titles crossfades the info block (`swap`).
+- Stage (`lg:` two columns, `1.65fr / 1fr`; stacked below): hero cover at
+  natural aspect ratio (`w-full h-auto`, box reserved from `cover_w/h`), up
+  to `760px`, `rounded-[22px]`, soft drop shadow; fades in once decoded.
+- Info column: mono position counter `04 / 54` + hairline + prev/next
+  chevrons on top; pinned to the bottom (`lg:mt-auto`): date and HD /
+  Unavailable chips, code headline (34 / 48 / 56px, tight tracking), 3–4
+  line title, actions. Swapping titles crossfades the block (`swap`);
+  stepping scrolls the gallery to center the new card.
 - Actions: three icon-only `.action` circles — **Copy Magnet** (accent
   fill, magnet icon → check + success fill + `Copied` tip), Play (dark fill),
   Like (accent tint when liked). Names come from the `data-tip` tooltip
   (hover on desktop; forced visible after copy via `data-tip-show`).
-- Rail: `w-[112/144/168px]`, `rounded-xl`; active = `ring-2 ring-accent
-  ring-offset-2`, inactive `opacity-[0.72]`; dead magnets grayscale.
-  Hovering the rail dims the other thumbs (focus/dim) and lifts the hovered
-  one. **No copy on thumbnails** — users copy only after viewing the hero.
+- Gallery: captioned cards `w-[148/188/212px]`, `rounded-[14px]`, caption =
+  code + `YY.MM.DD`. Active = accent dot before the code + lifted shadow (no
+  ring); inactive covers at `opacity-[0.78]`; dead magnets grayscale.
+  Hovering the gallery dims the other cards (focus/dim) and lifts the
+  hovered one. The right edge fades out (`.fade-edge-r`). **No copy on
+  thumbnails** — users copy only after viewing the hero.
 - Unfollow (trash icon) shows on hover on desktop, always on touch.
 
 **Image rule**: preserve original aspect ratio everywhere (covers, actress

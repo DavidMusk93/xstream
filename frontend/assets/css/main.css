@@ -74,6 +74,10 @@ textarea:focus-visible {
     -webkit-mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
     mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
   }
+  .fade-edge-r {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent);
+  }
 }
 
 @layer components {
