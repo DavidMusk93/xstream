@@ -132,6 +132,7 @@ uv run python -m pytest tests/<file> -v      # single
 
 - Tests auto-skip when real cache files, local seeds, or `xstream_test` are unavailable — they do not fail.
 - DB-backed tests need `XSTREAM_PG_DSN` in the environment (the `pg_test_db` fixture repoints it at `xstream_test`; load it via `set -a; . /etc/xstream.env; set +a`).
+- `tests/conftest.py` points `LOG_DIR` at `/tmp/xstream-test-logs-*`, so test runs never pollute the production `logs/` that metrics analysis reads.
 - Each test file's docstring says what it locks; `tests/conftest.py` holds the shared fixtures (`local_seed`, `real_video_engine`, `pg_test_db`).
 
 ---

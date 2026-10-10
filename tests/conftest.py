@@ -7,6 +7,12 @@ rather than relying on external networks or synthetic files.
 from __future__ import annotations
 
 import os
+import tempfile
+
+# Must run before anything imports core.logger: tests would otherwise append
+# fake sync runs / DB ops to the production logs/ that metrics analysis reads.
+os.environ["LOG_DIR"] = tempfile.mkdtemp(prefix="xstream-test-logs-")
+
 import pytest
 
 from tests.local_bt_fixture import LocalSeed, download_with_engine, cleanup_cache_dir
