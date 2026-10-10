@@ -225,7 +225,15 @@ function formatSpeed(rate: number): string {
   return `${rate} B/s`
 }
 
+// libtorrent reports finished/seeding once every *wanted* piece is in, and
+// on-demand priorities leave most pieces unwanted. Completeness comes from
+// disk-verified progress only.
+function isPartial(item: any): boolean {
+  return (item.state === 'finished' || item.state === 'seeding') && item.progress < 99.9
+}
+
 function stateTextClass(item: any): string {
+  if (isPartial(item)) return 'text-foreground-muted'
   if (item.state === 'finished' || item.state === 'seeding') return 'text-success'
   if (item.state?.includes('checking')) return 'text-warning'
   if (item.state === 'downloading') return 'text-info'
@@ -233,6 +241,10 @@ function stateTextClass(item: any): string {
 }
 
 function stateLabel(item: any): string {
+  if (isPartial(item)) {
+    if (item.progress <= 0) return 'Idle'
+    return `Partial ${item.progress < 1 ? '<1' : Math.floor(item.progress)}%`
+  }
   const map: Record<string, string> = {
     checking_files: 'Verifying',
     checking_resume_data: 'Verifying',

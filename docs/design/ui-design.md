@@ -126,6 +126,12 @@ Activity (`EventPanel`) and Downloads (`CachePanel`) are popovers anchored
 under their trigger (`origin-top-right`); full-width sheets under the bar on
 phones. Outside pointer-down or Escape closes them (`useDismiss`).
 
+Downloads row status follows disk-verified `progress`, not libtorrent's
+`state`: on-demand priorities make libtorrent report `finished` once the
+wanted window is in, so `finished`/`seeding` below 99.9% renders as muted
+`Partial N%` (`Idle` at 0%). Green `Finished` means the whole video is on
+disk.
+
 ### Home
 
 Eyebrow `00 Your collection`, large title `Library`, then a stats row
