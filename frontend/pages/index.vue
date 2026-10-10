@@ -34,18 +34,36 @@
           <span v-else class="hidden sm:inline">Refresh</span>
         </button>
       </template>
-      <StarNav :stars="displayStars" />
+      <StarNav :stars="displayStars" :active="navActive" @select="navActive = $event" />
     </AppHeader>
 
     <main class="pt-[calc(env(safe-area-inset-top)+128px)] sm:pt-[calc(env(safe-area-inset-top)+140px)] pb-32">
       <div class="max-w-7xl mx-auto px-4 sm:px-6">
         <!-- Large title -->
-        <div class="mb-10 sm:mb-14 px-1">
-          <h1 class="text-[34px] sm:text-[44px] font-bold text-foreground leading-[1.05]">Library</h1>
-          <p class="mt-1.5 text-[15px] sm:text-[17px] text-foreground-muted tabular-nums min-h-[1.5em]">
-            <template v-if="pending">Loading…</template>
-            <template v-else-if="!error">{{ displayStars.length }} stars · {{ titleCount }} titles</template>
+        <div class="relative mb-14 sm:mb-20 px-1">
+          <div class="pointer-events-none absolute -top-40 -left-24 w-[640px] max-w-[120vw] h-[420px] rounded-full bg-[radial-gradient(closest-side,rgba(255,55,95,0.10),transparent)]" aria-hidden="true" />
+          <p class="eyebrow rise relative">
+            <span class="text-accent">00</span>
+            <span>Your collection</span>
+            <span class="h-px w-10 bg-black/10" />
           </p>
+          <h1 class="rise relative mt-3 text-[40px] sm:text-[56px] font-bold text-foreground leading-[1.02]" style="--rise-delay: 0.08s">
+            Library
+          </h1>
+          <dl
+            v-if="!error"
+            class="rise relative mt-8 sm:mt-10 flex divide-x divide-black/[0.08] tabular-nums"
+            style="--rise-delay: 0.16s"
+          >
+            <div v-for="stat in stats" :key="stat.label" class="pr-6 sm:pr-10 pl-6 sm:pl-10 first:pl-0">
+              <dt class="sr-only">{{ stat.label }}</dt>
+              <dd class="text-[28px] sm:text-[36px] font-semibold text-foreground leading-none tracking-tight">
+                <span v-if="pending" class="inline-block w-12 h-7 rounded-md bg-black/[0.06] animate-pulse align-middle" />
+                <template v-else>{{ stat.value }}</template>
+              </dd>
+              <dd class="mt-2 text-[13px] text-foreground-muted" aria-hidden="true">{{ stat.label }}</dd>
+            </div>
+          </dl>
         </div>
 
         <!-- Loading skeletons -->
@@ -133,9 +151,21 @@ const displayStars = computed(() =>
   (stars.value ?? []).filter(s => !deletedCodes.value.has(s.code))
 )
 
-const titleCount = computed(() =>
-  displayStars.value.reduce((n, s) => n + (s.titles?.length ?? 0), 0)
-)
+// Title dates arrive as D/M/YYYY (see fmtDate in StarCard).
+function titleTime(date?: string): number {
+  const p = date?.split('/')
+  return p?.length === 3 ? Date.UTC(+p[2], +p[1] - 1, +p[0]) : 0
+}
+
+const stats = computed(() => {
+  const titles = displayStars.value.flatMap(s => s.titles ?? [])
+  const weekAgo = Date.now() - 7 * 24 * 3600 * 1000
+  return [
+    { label: 'Stars', value: displayStars.value.length.toLocaleString() },
+    { label: 'Titles', value: titles.length.toLocaleString() },
+    { label: 'This week', value: titles.filter(t => titleTime(t.date) >= weekAgo).length.toLocaleString() },
+  ]
+})
 
 const visibleCodes = ref<Set<string>>(new Set())
 const addOpen = ref(false)
@@ -374,13 +404,33 @@ if (import.meta.client) {
   })
 }
 
+// Active star for StarNav: the section crossing a band at 30–40% of the
+// viewport. Same directive, same mount-time wiring.
+const navActive = ref('')
+let bandObserver: IntersectionObserver | null = null
+if (import.meta.client) {
+  bandObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      const code = entry.target.getAttribute('data-code')
+      if (code && entry.isIntersecting) navActive.value = code
+    }
+  }, { rootMargin: '-30% 0px -60% 0px' })
+}
+
 const vObserve = {
-  mounted(el: HTMLElement) { observer?.observe(el) },
-  unmounted(el: HTMLElement) { observer?.unobserve(el) },
+  mounted(el: HTMLElement) {
+    observer?.observe(el)
+    bandObserver?.observe(el)
+  },
+  unmounted(el: HTMLElement) {
+    observer?.unobserve(el)
+    bandObserver?.unobserve(el)
+  },
 }
 
 onUnmounted(() => {
-  if (observer) observer.disconnect()
+  observer?.disconnect()
+  bandObserver?.disconnect()
 })
 
 </script>

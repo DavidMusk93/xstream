@@ -1,5 +1,5 @@
 <template>
-  <header class="chrome fixed inset-x-0 top-0 z-40 pt-[env(safe-area-inset-top)]">
+  <header class="chrome fixed inset-x-0 top-0 z-40 pt-[env(safe-area-inset-top)]" :class="{ 'chrome-flat': atTop }">
     <div class="max-w-7xl mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
       <div class="flex items-center gap-2 min-w-0">
         <slot name="leading">
@@ -26,4 +26,14 @@
 
 <script setup lang="ts">
 defineProps<{ offline?: boolean }>()
+
+const atTop = ref(true)
+function onScroll() {
+  atTop.value = window.scrollY < 8
+}
+onMounted(() => {
+  onScroll()
+  window.addEventListener('scroll', onScroll, { passive: true })
+})
+onUnmounted(() => window.removeEventListener('scroll', onScroll))
 </script>

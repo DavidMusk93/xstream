@@ -68,6 +68,8 @@ Compose them instead of re-spelling utility strings per page.
 | `.popover` | Floating panel material, `rounded-[22px]`, `shadow-float` |
 | `.btn` + `.btn-primary` / `.btn-secondary` / `.btn-dark` / `.btn-success` | Pill buttons, `h-11` (`.btn-sm` = `h-9`) |
 | `.btn-icon` | 40px round icon button, hover tint |
+| `.action` | 48px round icon-only primary action (Copy / Play / Like); label lives in `data-tip` |
+| `.eyebrow` | 12px mono muted row: accent index `01`, count, hairline — section kicker |
 | `.field` | Text input, `h-12`, accent focus ring |
 | `.chip` | 11px semibold badge (HD, Unavailable, sukebei, In Library) |
 | `.spinner` | `currentColor` ring spinner |
@@ -88,8 +90,8 @@ sheet on phones, centered card from `sm:`), `star/StarCardSkeleton.vue`.
 
 | Role | Mobile | Desktop | Weight |
 |------|--------|---------|--------|
-| Page large title ("Library") | 34 | 44 | bold |
-| Star section header | 26 | 32 | bold |
+| Page large title ("Library") | 40 | 56 | bold |
+| Star section header | 28 | 36 | bold |
 | Active title code | 30 | 40 | bold, leading 1.05 |
 | Sheet / section titles | 22 | | bold |
 | Panel titles | 17 | | semibold |
@@ -109,7 +111,12 @@ One glass layer: logo + wordmark (an `Offline` chip appears only when
 (+), Activity, Downloads, then the dark `Refresh` pill (spinner + `done/total`
 while syncing). On the home page `StarNav` is the second row of the same
 layer; the active pill (`bg-foreground text-white`) auto-centers in the rail
-as you scroll.
+as you scroll. The page owns the tracking (a band observer at 30–40% of the
+viewport, registered by the same `v-observe` directive that virtualizes
+sections); `StarNav` only renders `active` and emits `select`.
+
+At `scrollY < 8` the bar goes flat (`.chrome-flat`: no fill, no hairline) so
+the page header breathes; the material returns once content scrolls under.
 
 Activity (`EventPanel`) and Downloads (`CachePanel`) are popovers anchored
 under their trigger (`origin-top-right`); full-width sheets under the bar on
@@ -117,13 +124,16 @@ phones. Outside pointer-down or Escape closes them (`useDismiss`).
 
 ### Home
 
-Large title `Library` + `N stars · M titles`, then one shelf per star. Follow
+Eyebrow `00 Your collection`, large title `Library`, then a stats row
+(Stars / Titles / This week — big tabular numbers split by hairlines) over a
+soft static accent glow; then one shelf per star. Follow
 by URL lives in `AddStarSheet` (with the Recently Added list and a link to
 Search), not on the page.
 
 ### StarCard (shelf)
 
-Name + `N titles · No. X` sit on the page; the shelf is one `.surface`
+An eyebrow (`01 · N titles ——`, numbered by shelf order) and the name sit on
+the page; the shelf is one `.surface`
 holding the hero and the thumbnail rail (hairline between them).
 
 - Hero cover: natural aspect ratio (`w-full h-auto`, box reserved from
@@ -131,12 +141,14 @@ holding the hero and the thumbnail rail (hairline between them).
   decoded.
 - Info: meta line (`#N · date`, HD / Unavailable chips), code headline,
   3-line title. Swapping titles crossfades the info block (`swap`).
-- Actions: **Copy Magnet** (accent, primary — the real workflow), Play
-  (secondary), Like (round icon; accent tint when liked). On phones the two
-  pill buttons share the row equally.
+- Actions: three icon-only `.action` circles — **Copy Magnet** (accent
+  fill, magnet icon → check + success fill + `Copied` tip), Play (dark fill),
+  Like (accent tint when liked). Names come from the `data-tip` tooltip
+  (hover on desktop; forced visible after copy via `data-tip-show`).
 - Rail: `w-[112/144/168px]`, `rounded-xl`; active = `ring-2 ring-accent
-  ring-offset-2`, inactive `opacity-[0.72]`; dead magnets grayscale. Hover
-  reveals the one-click copy button.
+  ring-offset-2`, inactive `opacity-[0.72]`; dead magnets grayscale.
+  Hovering the rail dims the other thumbs (focus/dim) and lifts the hovered
+  one. **No copy on thumbnails** — users copy only after viewing the hero.
 - Unfollow (trash icon) shows on hover on desktop, always on touch.
 
 **Image rule**: preserve original aspect ratio everywhere (covers, actress
@@ -148,7 +160,7 @@ Back + `Search` in the bar; a 56px pill field (inline clear + Search
 button). Results: `Actresses` rail (cards with natural-ratio photos and a
 Follow button) and `Titles` cards in the StarCard language. Magnet
 candidates render as an inset grouped list (resolution, size, seeds, hash,
-copy).
+copy). The card's best-magnet copy is the same icon-only `.action`.
 
 ### Login
 
@@ -166,6 +178,12 @@ Logo, wordmark, a rotating greeting, passcode field (SVG eye toggle), accent
 - Shared transitions in `main.css`: `pop` (popovers, scale from trigger),
   `fade`, `swap` (in-place content change). `Sheet` slides up on phones and
   scales in on desktop; the player stage scales from 0.96.
+- **Scroll reveal** (`v-reveal`, `plugins/reveal.ts`): client-mounted
+  blocks rise 14px + fade (+4px blur from `sm:`) over 0.9s on
+  `--ease-out` `cubic-bezier(0.22,1,0.36,1)` when they enter the viewport;
+  numeric binding = stagger delay. SSR-rendered headers use `.rise` (CSS
+  keyframe) instead so hydration never flashes them.
+- Hover feedback is short (≈200ms); tooltips wait 250ms.
 - Enter and exit share the same path; exits are shorter (~200ms).
 - **No slow looping ambient animation.**
 - `prefers-reduced-motion`: motion collapses to short opacity cross-fades.

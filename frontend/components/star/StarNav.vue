@@ -21,11 +21,16 @@
 <script setup lang="ts">
 import type { Star } from '~/types/api'
 
+// The active star is tracked by the page (it observes each section as it
+// mounts); the nav only renders it and requests jumps.
 const props = defineProps<{
   stars: Star[]
+  active: string
 }>()
 
-const activeStar = ref('')
+const emit = defineEmits<{ (e: 'select', code: string): void }>()
+
+const activeStar = computed(() => props.active || props.stars[0]?.code || '')
 const railRef = ref<HTMLElement | null>(null)
 
 // Keep the active pill centered in the rail. Scrolls the rail itself —
@@ -39,62 +44,10 @@ watch(activeStar, (code) => {
 })
 
 function scrollToStar(code: string) {
-  activeStar.value = code
+  emit('select', code)
   const el = document.getElementById(`star-${code.toLowerCase()}`)
   if (el) {
     el.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 }
-
-let observer: IntersectionObserver | null = null
-// Codes whose section element is currently observed. Stars load client-side
-// after mount and the roster churns (adds/deletes), so observations must be
-// diffed on every refresh: observe new sections, unobserve removed ones
-// (a deleted star's detached element would otherwise stay observed).
-const observed = new Set<string>()
-
-function syncObserved() {
-  if (!observer) return
-  const current = new Set(props.stars.map(s => s.code))
-  for (const code of observed) {
-    if (!current.has(code)) {
-      const el = document.getElementById(`star-${code.toLowerCase()}`)
-      if (el) observer.unobserve(el)
-      observed.delete(code)
-    }
-  }
-  for (const star of props.stars) {
-    if (observed.has(star.code)) continue
-    const el = document.getElementById(`star-${star.code.toLowerCase()}`)
-    if (el) {
-      observer.observe(el)
-      observed.add(star.code)
-    }
-  }
-}
-
-onMounted(() => {
-  observer = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          const idCode = entry.target.id.replace('star-', '').toUpperCase()
-          activeStar.value = idCode
-        }
-      })
-    },
-    { rootMargin: '-30% 0px -60% 0px' }
-  )
-  syncObserved()
-})
-
-onUnmounted(() => {
-  if (observer) observer.disconnect()
-  observed.clear()
-})
-
-watch(() => props.stars, (stars) => {
-  if (!activeStar.value && stars.length) activeStar.value = stars[0].code
-  nextTick(syncObserved)
-}, { immediate: true })
 </script>

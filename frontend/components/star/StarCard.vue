@@ -1,14 +1,16 @@
 <template>
   <section :id="id" class="group/star">
     <!-- Section header: name sits on the page, the shelf below is one surface -->
-    <div class="flex items-end justify-between gap-4 mb-4 sm:mb-5 px-1">
+    <div v-reveal class="flex items-end justify-between gap-4 mb-4 sm:mb-5 px-1">
       <div class="min-w-0">
-        <h2 class="text-[26px] sm:text-[32px] font-bold text-foreground leading-tight truncate">
+        <p class="eyebrow">
+          <span class="text-accent">{{ String((index ?? 0) + 1).padStart(2, '0') }}</span>
+          <span class="tabular-nums">{{ star.titles?.length ?? 0 }} titles</span>
+          <span class="h-px w-10 bg-black/10" />
+        </p>
+        <h2 class="mt-2 text-[28px] sm:text-[36px] font-bold text-foreground leading-[1.1] truncate">
           {{ star.name }}
         </h2>
-        <p class="mt-0.5 text-[14px] text-foreground-muted tabular-nums">
-          {{ star.titles?.length ?? 0 }} titles<span v-if="star.number"> · No. {{ star.number }}</span>
-        </p>
       </div>
       <button
         class="btn-icon text-foreground-muted hover:text-danger hover:bg-danger/10 sm:opacity-0 sm:group-hover/star:opacity-100 focus-visible:opacity-100"
@@ -24,10 +26,10 @@
       </button>
     </div>
 
-    <div class="surface overflow-hidden">
+    <div v-reveal="0.08" class="surface overflow-hidden">
       <!-- Hero -->
       <div v-if="activeTitle" class="flex flex-col sm:flex-row gap-5 sm:gap-8 p-4 sm:p-6">
-        <div class="w-full sm:w-[300px] md:w-[360px] lg:w-[440px] shrink-0 rounded-[18px] overflow-hidden bg-fill">
+        <div class="group/hero w-full sm:w-[300px] md:w-[360px] lg:w-[440px] shrink-0 rounded-[18px] overflow-hidden bg-fill">
           <img
             v-if="activeTitle.cover_url && !activeImgError"
             ref="heroImg"
@@ -36,7 +38,7 @@
             :srcset="heroSrcset(activeTitle)"
             sizes="(min-width: 1024px) 440px, (min-width: 768px) 360px, (min-width: 640px) 300px, calc(100vw - 32px)"
             :alt="activeTitle.code"
-            class="w-full h-auto block transition-opacity duration-500 ease-spring"
+            class="w-full h-auto block transition-[opacity,transform] duration-700 [transition-timing-function:var(--ease-out)] sm:group-hover/hero:scale-[1.025]"
             :class="heroLoaded ? 'opacity-100' : 'opacity-0'"
             :style="{ aspectRatio: coverAR(activeTitle) }"
             loading="lazy"
@@ -72,40 +74,47 @@
               {{ activeTitle.title }}
             </p>
 
-            <!-- Copy is the real primary action: 49 copies vs 1 in-browser
-                 play in the first two weeks of tracking -->
-            <div class="flex items-center gap-2.5 mt-6 sm:mt-7">
+            <!-- Icon-only actions; Copy stays first and accent — it is the
+                 real primary action (49 copies vs 1 play in early tracking) -->
+            <div class="flex items-center gap-3 mt-6 sm:mt-7">
               <button
-                class="btn flex-1 sm:flex-none sm:px-6"
-                :class="copied ? 'btn-success' : 'btn-primary'"
+                class="action text-white shadow-[0_6px_20px_-6px_rgba(255,55,95,0.6)] hover:-translate-y-0.5"
+                :class="copied ? 'bg-success shadow-none' : 'bg-accent hover:bg-accent-hover'"
+                :data-tip="copied ? 'Copied' : 'Copy magnet'"
+                :data-tip-show="copied || undefined"
+                aria-label="Copy magnet"
                 :disabled="!activePlayable"
                 @click="copyMagnet"
               >
-                <svg v-if="!copied" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="9" y="9" width="13" height="13" rx="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-                <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-                {{ copied ? 'Copied' : 'Copy Magnet' }}
-              </button>
-
-              <button class="btn btn-secondary flex-1 sm:flex-none sm:px-6" :disabled="!activePlayable" @click="onPlay">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12.5-7.5z" /></svg>
-                Play
+                <Transition name="icon-swap" mode="out-in">
+                  <MagnetIcon v-if="!copied" key="copy" />
+                  <svg v-else key="done" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                </Transition>
               </button>
 
               <button
-                class="btn-icon w-11 h-11"
-                :class="activeLiked ? 'bg-accent/10 text-accent hover:bg-accent/15' : 'bg-black/[0.05] hover:bg-black/[0.08]'"
+                class="action bg-foreground text-white hover:bg-black hover:-translate-y-0.5"
+                data-tip="Play"
+                aria-label="Play"
+                :disabled="!activePlayable"
+                @click="onPlay"
+              >
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" class="ml-0.5"><path d="M7 4.5v15l12.5-7.5z" /></svg>
+              </button>
+
+              <button
+                class="action hover:-translate-y-0.5"
+                :class="activeLiked ? 'bg-accent/10 text-accent hover:bg-accent/15' : 'bg-black/[0.05] text-foreground hover:bg-black/[0.08]'"
+                :data-tip="activeLiked ? 'Liked' : 'Like'"
                 :aria-pressed="activeLiked"
                 :aria-label="activeLiked ? 'Unlike' : 'Like'"
                 :disabled="liking"
                 @click="toggleLike"
               >
                 <svg
-                  width="18" height="18" viewBox="0 0 24 24"
+                  width="19" height="19" viewBox="0 0 24 24"
                   :fill="activeLiked ? 'currentColor' : 'none'"
                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
                   class="transition-transform duration-300 ease-spring"
@@ -123,7 +132,7 @@
       <div class="border-t border-black/[0.05]">
         <div
           ref="rowRef"
-          class="flex gap-3 sm:gap-4 items-start overflow-x-auto scrollbar-hide px-4 sm:px-6 py-4 sm:py-5 snap-x snap-mandatory scroll-px-4 sm:scroll-px-6"
+          class="group/rail flex gap-3 sm:gap-4 items-start overflow-x-auto scrollbar-hide px-4 sm:px-6 py-4 sm:py-5 snap-x snap-mandatory scroll-px-4 sm:scroll-px-6"
           @scroll.passive="onRowScroll"
         >
           <!-- Windowed rendering: spacers keep the scroll width exact while
@@ -132,35 +141,17 @@
           <button
             v-for="{ title, idx } in windowedTitles"
             :key="title.code"
-            class="group/thumb relative shrink-0 w-[112px] sm:w-[144px] md:w-[168px] rounded-xl overflow-hidden bg-fill snap-start transition-[opacity,transform,box-shadow] duration-300 ease-spring active:scale-[0.96] active:duration-100"
+            class="relative shrink-0 w-[112px] sm:w-[144px] md:w-[168px] rounded-xl overflow-hidden bg-fill snap-start transition-[opacity,transform,filter,box-shadow] duration-300 active:scale-[0.96] active:duration-100 [transition-timing-function:var(--ease-out)]"
             :class="[
               activeIndex === idx
                 ? 'ring-2 ring-accent ring-offset-2 ring-offset-white'
-                : 'opacity-[0.72] hover:opacity-100',
+                : 'opacity-[0.72] sm:group-hover/rail:opacity-40 sm:group-hover/rail:saturate-[0.6] hover:!opacity-100 hover:!saturate-100 hover:-translate-y-1 hover:shadow-[0_10px_24px_-10px_rgba(0,0,0,0.35)]',
               title.magnet_status === 'dead' ? 'grayscale !opacity-40' : '',
             ]"
             :aria-label="title.code"
             :aria-current="activeIndex === idx"
             @click="activeIndex = idx"
           >
-            <!-- One-click magnet copy: the real primary workflow -->
-            <span
-              v-if="title.magnet"
-              role="button"
-              tabindex="-1"
-              class="absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-full bg-black/55 backdrop-blur-md text-white flex items-center justify-center opacity-0 scale-90 group-hover/thumb:opacity-100 group-hover/thumb:scale-100 transition duration-200 ease-spring hover:bg-accent"
-              :class="{ '!opacity-100 !scale-100 !bg-success': copiedCode === title.code }"
-              title="Copy magnet"
-              @click.stop="copyTitleMagnet(title)"
-            >
-              <svg v-if="copiedCode !== title.code" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                <rect x="9" y="9" width="13" height="13" rx="2" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-              </svg>
-              <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            </span>
             <img
               v-if="title.cover_url && !thumbErrors[title.code]"
               :src="title.cover_thumb_url || `/api/cover/${title.code}?thumb=1`"
@@ -378,21 +369,6 @@ function copyMagnet() {
     copied.value = true
     setTimeout(() => copied.value = false, 1500)
     track('copy_magnet', { code: activeTitle.value?.code, star_code: props.star.code, meta: { source: 'hero' } })
-  }).catch(() => {
-    // ignore
-  })
-}
-
-const copiedCode = ref('')
-
-function copyTitleMagnet(title: Title) {
-  if (!title.magnet) return
-  navigator.clipboard.writeText(title.magnet).then(() => {
-    copiedCode.value = title.code
-    setTimeout(() => {
-      if (copiedCode.value === title.code) copiedCode.value = ''
-    }, 1500)
-    track('copy_magnet', { code: title.code, star_code: props.star.code, meta: { source: 'thumbnail' } })
   }).catch(() => {
     // ignore
   })

@@ -60,7 +60,7 @@ detail: `docs/design/architecture-decisions.md`.
 | Scraper pipeline | `scrapers/v2/` | `tasks/sync_titles.py`: sources → fetchers → extractors → sinks (see `docs/design/diff-sync-design.md`) |
 
 Track events (`/api/track`): `star_view`, `play`, `play_ready`, `play_timeout`,
-`play_error`, `play_watch`, `copy_magnet` (meta.source: hero/thumbnail/search),
+`play_error`, `play_watch`, `copy_magnet` (meta.source: hero/search),
 `like`/`unlike`, `add_star` (meta.source: home/search), `delete_star`, `search`.
 
 ---

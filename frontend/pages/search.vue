@@ -81,8 +81,9 @@
             <h2 class="px-1 text-[22px] font-bold text-foreground">Actresses</h2>
             <div class="mt-4 -mx-4 sm:mx-0 flex gap-3 overflow-x-auto scrollbar-hide px-4 sm:px-0 pb-2 items-start">
               <div
-                v-for="a in actresses"
+                v-for="(a, i) in actresses"
                 :key="a.url"
+                v-reveal="Math.min(i, 5) * 0.05"
                 class="surface shrink-0 w-[148px] p-3 flex flex-col gap-3"
               >
                 <!-- Natural aspect ratio, never cropped -->
@@ -123,8 +124,9 @@
 
             <div class="mt-4 space-y-5">
               <article
-                v-for="item in items"
+                v-for="(item, i) in items"
                 :key="item.code"
+                v-reveal="Math.min(i, 3) * 0.06"
                 class="surface flex flex-col sm:flex-row gap-5 sm:gap-8 p-4 sm:p-6"
               >
                 <!-- Cover: natural aspect ratio, never cropped -->
@@ -170,18 +172,19 @@
                   <div class="flex items-center gap-2 mt-5 flex-wrap">
                     <button
                       v-if="bestMagnet(item)"
-                      class="btn"
-                      :class="copiedKey === item.code ? 'btn-success' : 'btn-primary'"
+                      class="action w-11 h-11 text-white shadow-[0_6px_20px_-6px_rgba(255,55,95,0.6)] hover:-translate-y-0.5"
+                      :class="copiedKey === item.code ? 'bg-success shadow-none' : 'bg-accent hover:bg-accent-hover'"
+                      :data-tip="copiedKey === item.code ? 'Copied' : 'Copy best magnet'"
+                      :data-tip-show="copiedKey === item.code || undefined"
+                      aria-label="Copy best magnet"
                       @click="copyMagnet(item, bestMagnet(item)!, item.code)"
                     >
-                      <svg v-if="copiedKey !== item.code" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="9" y="9" width="13" height="13" rx="2" />
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                      </svg>
-                      <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                      {{ copiedKey === item.code ? 'Copied' : 'Copy Magnet' }}
+                      <Transition name="icon-swap" mode="out-in">
+                        <MagnetIcon v-if="copiedKey !== item.code" key="copy" :size="18" />
+                        <svg v-else key="done" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      </Transition>
                     </button>
 
                     <button

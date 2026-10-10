@@ -14,6 +14,8 @@
 
 :root {
   --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Long, soft settle for scroll reveals and hover (archify.si feel) */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-press: cubic-bezier(0.25, 0.46, 0.45, 0.94);
   --accent: #ff375f;
 }
@@ -81,6 +83,7 @@ textarea:focus-visible {
      backdrop-filter re-rasterizes on every scroll frame. */
   .chrome {
     @apply bg-white/[0.94] border-b border-black/[0.06];
+    transition: background-color 0.3s var(--ease-out), border-color 0.3s var(--ease-out);
   }
   @screen sm {
     .chrome {
@@ -88,6 +91,13 @@ textarea:focus-visible {
       backdrop-filter: blur(20px) saturate(180%);
       -webkit-backdrop-filter: blur(20px) saturate(180%);
     }
+  }
+  /* At the very top the bar sits flush with the page; material appears
+     once content scrolls underneath */
+  .chrome.chrome-flat {
+    @apply bg-void/0 border-transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .surface {
@@ -155,6 +165,87 @@ textarea:focus-visible {
   .spinner {
     @apply inline-block rounded-full border-2 border-current border-r-transparent animate-spin;
   }
+
+  /* Round icon action (Copy / Play / Like): the icon is the label, the
+     tooltip names it */
+  .action {
+    @apply inline-flex items-center justify-center w-12 h-12 rounded-full shrink-0 select-none
+           transition-[transform,background-color,color,box-shadow,opacity] duration-200
+           active:scale-[0.92] active:duration-100
+           disabled:opacity-30 disabled:cursor-not-allowed disabled:active:scale-100;
+    transition-timing-function: var(--ease-out);
+  }
+
+  .eyebrow {
+    @apply flex items-center gap-2.5 font-mono text-[12px] tracking-[0.04em] text-foreground-muted;
+  }
+}
+
+/* Tooltip from data-tip; shown on hover (pointer devices) or forced with
+   data-tip-show (e.g. "Copied" feedback on touch). */
+[data-tip] {
+  position: relative;
+}
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translate(-50%, 4px) scale(0.96);
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  padding: 4px 10px;
+  border-radius: 9px;
+  background: #1D1D1F;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition: opacity 0.18s var(--ease-out), transform 0.18s var(--ease-out);
+  z-index: 20;
+}
+@media (hover: hover) {
+  [data-tip]:hover::after {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+    transition-delay: 0.25s;
+  }
+}
+[data-tip][data-tip-show]::after {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+  transition-delay: 0s;
+}
+
+/* Scroll reveal (v-reveal): rise + unblur once, staggered via
+   --reveal-delay. Blur only from sm: — it is costly on phones. */
+.reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 0.9s var(--ease-out), transform 0.9s var(--ease-out), filter 0.9s var(--ease-out);
+  transition-delay: var(--reveal-delay, 0s);
+}
+@media (min-width: 640px) {
+  .reveal {
+    filter: blur(4px);
+  }
+}
+.reveal.is-revealed {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+/* Page-load entrance for server-rendered content (runs from first paint,
+   so no hide-after-hydration flash). Stagger with --rise-delay. */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); filter: blur(6px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+.rise {
+  animation: rise 0.9s var(--ease-out) both;
+  animation-delay: var(--rise-delay, 0s);
 }
 
 /* =============================================
@@ -181,6 +272,22 @@ textarea:focus-visible {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* Icon state change inside a button (copy -> check) */
+.icon-swap-enter-active {
+  transition: opacity 0.18s var(--ease-out), transform 0.3s var(--ease-spring);
+}
+.icon-swap-leave-active {
+  transition: opacity 0.1s ease, transform 0.1s ease;
+}
+.icon-swap-enter-from {
+  opacity: 0;
+  transform: scale(0.5);
+}
+.icon-swap-leave-to {
+  opacity: 0;
+  transform: scale(0.8);
 }
 
 /* Crossfade for content that swaps in place (hero info on thumb change) */
@@ -216,8 +323,13 @@ textarea:focus-visible {
   }
   .pressable:active,
   .btn:active,
-  .btn-icon:active {
+  .btn-icon:active,
+  .action:active {
     transform: none;
+  }
+  .reveal {
+    transform: none;
+    filter: none;
   }
 }
 
