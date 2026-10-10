@@ -6,13 +6,14 @@ After the wide-table simplification, queries no longer JOIN magnets; read direct
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
 import time
 
 from fastapi import APIRouter, HTTPException, Request, Depends, Path
-from fastapi.responses import JSONResponse
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from typing import Any
 
@@ -45,31 +46,31 @@ def _save_config(config: dict[str, Any]) -> None:
 
 # ── Cache ───────────────────────────────────────────────────────────
 
-_stars_cache: dict[str, Any] = {"data": None, "ts": 0}
-CACHE_TTL = 5
+# Every DB/config write path calls invalidate_stars_cache(); the TTL is only a
+# safety net for writes that bypass it (e.g. out-of-process scripts).
+_stars_cache: dict[str, Any] = {"body": None, "etag": None, "ts": 0.0, "gen": 0}
+CACHE_TTL = 300
+_build_lock = asyncio.Lock()
 
 
 def invalidate_stars_cache() -> None:
-    global _stars_cache
-    _stars_cache = {"data": None, "ts": 0}
+    _stars_cache["body"] = None
+    _stars_cache["gen"] += 1
 
 
 # ── Response builder ────────────────────────────────────────────────
 
-def _scan_cover_files() -> dict[str, tuple[bool, bool, bool]]:
-    """Scan images/titles/ once and map code -> (has_full, has_thumb, has_mid).
+def _scan_cover_files(codes: set[str]) -> dict[str, tuple[bool, bool, bool]]:
+    """Map each title code -> (has_full, has_thumb, has_mid) from images/titles/.
 
     Lets /api/stars emit direct static cover URLs (served by Caddy with
     long-lived cache headers) instead of forcing every client through the
-    /api/cover 307 redirect hop. One listdir pass replaces ~3.5k stat calls.
+    /api/cover 307 redirect hop. Only the given codes' directories are
+    listed — images/titles/ also holds dirs of titles no longer in the DB.
     """
     titles_dir = os.path.join(IMAGES_DIR, "titles")
     found: dict[str, tuple[bool, bool, bool]] = {}
-    try:
-        codes = os.listdir(titles_dir)
-    except OSError:
-        return found
-    for code_dir in codes:
+    for code_dir in {c.lower() for c in codes}:
         try:
             files = set(os.listdir(os.path.join(titles_dir, code_dir)))
         except OSError:
@@ -114,7 +115,9 @@ def _build_stars_response() -> list[dict[str, Any]]:
         for row in title_rows:
             db_data[row[0]] = {"titles": row[1]}
 
-        cover_files = _scan_cover_files()
+        cover_files = _scan_cover_files(
+            {t["code"] for d in db_data.values() for t in d["titles"]}
+        )
 
         result = []
         for a in solo:
@@ -175,23 +178,43 @@ def _build_stars_response() -> list[dict[str, Any]]:
 
 # ── Routes ──────────────────────────────────────────────────────────
 
-@router.get("")
-async def get_stars():
-    """Get all stars with their latest titles and posts (cached, TTL=5s)."""
-    global _stars_cache
-    now = time.time()
-    if _stars_cache["data"] is not None and (now - _stars_cache["ts"]) < CACHE_TTL:
-        return JSONResponse(
-            content=_stars_cache["data"],
-            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-        )
+def _encode_stars_response() -> tuple[bytes, str]:
+    body = json.dumps(
+        _build_stars_response(), ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    return body, hashlib.blake2b(body, digest_size=16).hexdigest()
 
-    data = _build_stars_response()
-    _stars_cache = {"data": data, "ts": now}
-    return JSONResponse(
-        content=data,
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-    )
+
+def _cache_fresh() -> bool:
+    return _stars_cache["body"] is not None and (time.time() - _stars_cache["ts"]) < CACHE_TTL
+
+
+async def _get_stars_payload() -> tuple[bytes, str]:
+    """Return (body, etag), rebuilding off the event loop at most once at a time."""
+    if _cache_fresh():
+        return _stars_cache["body"], _stars_cache["etag"]
+    async with _build_lock:
+        if _cache_fresh():
+            return _stars_cache["body"], _stars_cache["etag"]
+        gen = _stars_cache["gen"]
+        body, etag = await asyncio.to_thread(_encode_stars_response)
+        # An invalidation during the build means this snapshot may be stale:
+        # serve it once, but do not cache it.
+        if _stars_cache["gen"] == gen:
+            _stars_cache.update(body=body, etag=etag, ts=time.time())
+        return body, etag
+
+
+@router.get("")
+async def get_stars(request: Request) -> Response:
+    """Get all stars with their titles (write-invalidated cache + ETag/304)."""
+    body, etag = await _get_stars_payload()
+    headers = {"Cache-Control": "no-cache", "ETag": f'"{etag}"'}
+    # Caddy's encode handler may suffix the ETag (e.g. "-zstd"), so match the
+    # digest loosely instead of comparing the header verbatim.
+    if etag in request.headers.get("if-none-match", ""):
+        return Response(status_code=304, headers=headers)
+    return Response(content=body, media_type="application/json", headers=headers)
 
 
 # ── Add Star ────────────────────────────────────────────────────────

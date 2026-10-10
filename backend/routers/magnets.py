@@ -121,6 +121,7 @@ async def _persist_outcome(item: dict[str, Any], outcome: dict[str, Any]) -> Non
     try:
         if outcome["status"] == "ok":
             await db_write(db.update_magnet_check_ok, item["id"], outcome.get("hash"))
+            invalidate_stars_cache()
         elif outcome["status"] == "swapped":
             await db_write(db.swap_primary_magnet, item["id"], outcome["magnet"], outcome["hash"])
             invalidate_stars_cache()
