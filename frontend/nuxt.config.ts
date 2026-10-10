@@ -135,24 +135,9 @@ export default defineNuxtConfig({
     inlineSSRStyles: () => true,
   },
   nitro: {
-    devProxy: {
-      '/api': {
-        target: 'http://localhost:8765',
-        changeOrigin: true,
-      },
-      '/stream': {
-        target: 'http://localhost:8765',
-        changeOrigin: true,
-      },
-      '/torrent': {
-        target: 'http://localhost:8765',
-        changeOrigin: true,
-      },
-      '/images': {
-        target: 'http://localhost:8765',
-        changeOrigin: true,
-      },
-    },
+    // Serves both dev and production. No devProxy: it is mounted at the
+    // prefix and strips it (/api/health -> /health), so every dev API call
+    // 404'd on the backend.
     routeRules: {
       '/api/**': { proxy: 'http://127.0.0.1:8765/api/**' },
       '/stream/**': { proxy: 'http://127.0.0.1:8765/stream/**' },
