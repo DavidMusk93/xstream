@@ -181,21 +181,49 @@ def upsert_star(name, jp_name=None, handle=None, code=None, type=None, note=None
 
 @trace_db
 def upsert_stars(star_rows, conn=None):
-    """Batch upsert stars, returns {code: id}. Single pooled connection."""
+    """Batch upsert stars in one statement, returns {code: id}.
+
+    Same semantics as calling upsert_star per row (given fields overwrite,
+    a repeated name keeps its last row); unchanged rows are not rewritten.
+    """
+    if not star_rows:
+        return {}
+    cols = ("name", "jp_name", "handle", "code", "type", "note")
+    by_name = {row.get("name"): row for row in star_rows}
+    placeholders = ", ".join(["(%s, %s, %s, %s, %s, %s)"] * len(by_name))
+    params = [row.get(c) for row in by_name.values() for c in cols]
     managed, should_close = _managed_conn(conn)
     try:
-        mapping = {}
-        for row in star_rows:
-            mapping[row["code"]] = upsert_star(
-                name=row.get("name"),
-                jp_name=row.get("jp_name"),
-                handle=row.get("handle"),
-                code=row.get("code"),
-                type=row.get("type"),
-                note=row.get("note"),
-                conn=managed,
+        with managed.transaction():
+            id_by_name = dict(
+                (name, star_id) for star_id, name in managed.execute(
+                    f"""
+                    INSERT INTO stars (name, jp_name, handle, code, type, note)
+                    VALUES {placeholders}
+                    ON CONFLICT (name) DO UPDATE SET
+                        jp_name = EXCLUDED.jp_name,
+                        handle = EXCLUDED.handle,
+                        code = EXCLUDED.code,
+                        type = EXCLUDED.type,
+                        note = EXCLUDED.note,
+                        updated_at = now()
+                    WHERE (stars.jp_name, stars.handle, stars.code, stars.type, stars.note)
+                    IS DISTINCT FROM
+                          (EXCLUDED.jp_name, EXCLUDED.handle, EXCLUDED.code,
+                           EXCLUDED.type, EXCLUDED.note)
+                    RETURNING id, name
+                    """,
+                    params,
+                ).fetchall()
             )
-        return mapping
+            unreturned = [n for n in by_name if n not in id_by_name]
+            if unreturned:
+                id_by_name.update(
+                    (name, star_id) for star_id, name in managed.execute(
+                        "SELECT id, name FROM stars WHERE name = ANY(%s)", (unreturned,)
+                    ).fetchall()
+                )
+        return {row["code"]: id_by_name[row.get("name")] for row in star_rows}
     finally:
         if should_close:
             managed.close()

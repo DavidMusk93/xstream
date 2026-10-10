@@ -1261,6 +1261,32 @@ async def test_sink_cover_fix_on_unchanged_row(sink_db):
     ).fetchone() == (8, 4)
 
 
+def test_upsert_stars_batch(pg_test_db):
+    """One-statement batch upsert: insert, overwrite, no-op, duplicate names."""
+    from core import db
+
+    conn = pg_test_db
+    conn.execute("INSERT INTO stars (name, handle, code) VALUES ('Old', 'h0', 'O-1')")
+    old_id = conn.execute("SELECT id FROM stars WHERE name = 'Old'").fetchone()[0]
+
+    mapping = db.upsert_stars([
+        {"name": "Old", "handle": "h1", "code": "O-1"},
+        {"name": "New", "handle": None, "code": "N-1"},
+        {"name": "New", "handle": "h2", "code": "N-2"},
+    ])
+    new_id = conn.execute("SELECT id FROM stars WHERE name = 'New'").fetchone()[0]
+    assert mapping == {"O-1": old_id, "N-1": new_id, "N-2": new_id}
+    assert conn.execute("SELECT handle FROM stars WHERE id = %s", (old_id,)).fetchone()[0] == "h1"
+    assert conn.execute(
+        "SELECT handle, code FROM stars WHERE id = %s", (new_id,)
+    ).fetchone() == ("h2", "N-2")
+
+    xmin = conn.execute("SELECT xmin::text FROM stars WHERE id = %s", (old_id,)).fetchone()[0]
+    assert db.upsert_stars([{"name": "Old", "handle": "h1", "code": "O-1"}]) == {"O-1": old_id}
+    assert conn.execute("SELECT xmin::text FROM stars WHERE id = %s", (old_id,)).fetchone()[0] == xmin
+    assert db.upsert_stars([]) == {}
+
+
 # ── Title blacklist: sink records skips, sync filters them ───────────
 # Repeatedly sink-rejected titles land in title_blacklist; the sync
 # pipeline filters them before the diff so no cover is downloaded for
