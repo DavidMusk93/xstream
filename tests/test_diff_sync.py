@@ -1016,8 +1016,8 @@ def test_ijav_extractor_extracts_star_links():
     ]
 
 
-# ── Sink: cover_b64 preservation on conflict ─────────────────────────
-# Cover blobs live in the separate title_covers table (1:1 with titles).
+# ── Sink: cover preservation on conflict ─────────────────────────────
+# Raw cover bytes live in the separate title_covers table (1:1 with titles).
 # The batch UPSERT must not touch title_covers on conflict without a fresh
 # cover and must never wipe an existing cover with an empty value.
 
@@ -1039,7 +1039,7 @@ def sink_db(pg_test_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sink_conflict_preserves_cover_b64(sink_db):
+async def test_sink_conflict_preserves_cover(sink_db):
     """ON CONFLICT without a fresh cover keeps the existing blob; with one, replaces it."""
     from scrapers.v2 import sinks
 
@@ -1047,7 +1047,7 @@ async def test_sink_conflict_preserves_cover_b64(sink_db):
         "INSERT INTO titles (id, star_id, code, title) VALUES (1, 1, 'ABC-001', 'old')"
     )
     sink_db.execute(
-        "INSERT INTO title_covers (title_id, cover_b64) VALUES (1, 'EXISTING_B64')"
+        "INSERT INTO title_covers (title_id, cover_data) VALUES (1, 'EXISTING'::bytea)"
     )
 
     sink = sinks.TitleSyncSink(star_id=1, star_code="ABC", star_name="Test")
@@ -1060,10 +1060,10 @@ async def test_sink_conflict_preserves_cover_b64(sink_db):
     # Conflict, no fresh cover: existing blob must survive.
     await sink.write_batch([item], set(), {})
     row = sink_db.execute(
-        "SELECT c.cover_b64, t.title FROM titles t "
+        "SELECT c.cover_data, t.title FROM titles t "
         "JOIN title_covers c ON c.title_id = t.id WHERE t.code = 'ABC-001'"
     ).fetchone()
-    assert row[0] == "EXISTING_B64"
+    assert bytes(row[0]) == b"EXISTING"
     assert row[1] == "new title"
 
     # Conflict with a fresh cover: blob is updated, with real pixel dims.
@@ -1078,10 +1078,11 @@ async def test_sink_conflict_preserves_cover_b64(sink_db):
 
     await sink.write_batch([item], set(), {"ABC-001": jpeg_b64})
     row = sink_db.execute(
-        "SELECT c.cover_b64, t.cover_w, t.cover_h FROM titles t "
+        "SELECT c.cover_data, t.cover_w, t.cover_h FROM titles t "
         "JOIN title_covers c ON c.title_id = t.id WHERE t.code = 'ABC-001'"
     ).fetchone()
-    assert row[0] == jpeg_b64
+    # Stored as raw bytes, not the base64 pipeline form.
+    assert bytes(row[0]) == buf.getvalue()
     assert row[1:] == (4, 2)
 
     # Fresh insert carries its cover.
@@ -1089,12 +1090,12 @@ async def test_sink_conflict_preserves_cover_b64(sink_db):
         code="ABC-002", title="brand new", cover_url="https://img.test/2.jpg",
         magnets=[MagnetCandidate(magnet="magnet:?xt=urn:btih:" + "bb" * 20)],
     )
-    await sink.write_batch([new_item], {"ABC-002"}, {"ABC-002": "FRESH_B64"})
+    await sink.write_batch([new_item], {"ABC-002"}, {"ABC-002": f"data:image/jpeg;base64,{jpeg_b64}"})
     row = sink_db.execute(
-        "SELECT c.cover_b64 FROM titles t "
+        "SELECT c.cover_data FROM titles t "
         "JOIN title_covers c ON c.title_id = t.id WHERE t.code = 'ABC-002'"
     ).fetchone()
-    assert row[0] == "FRESH_B64"
+    assert bytes(row[0]) == buf.getvalue()
 
 
 @pytest.mark.asyncio
@@ -1182,7 +1183,7 @@ async def test_sink_tall_cover_on_existing_row_keeps_old_cover(sink_db):
         " VALUES (1, 1, 'ABC-013', 'old', 800, 537)"
     )
     sink_db.execute(
-        "INSERT INTO title_covers (title_id, cover_b64) VALUES (1, 'EXISTING_B64')"
+        "INSERT INTO title_covers (title_id, cover_data) VALUES (1, 'EXISTING'::bytea)"
     )
 
     sink = sinks.TitleSyncSink(star_id=1, star_code="ABC", star_name="Test")
@@ -1192,10 +1193,10 @@ async def test_sink_tall_cover_on_existing_row_keeps_old_cover(sink_db):
     assert result["skipped_bad_cover"] == 1
     assert result["updated"] == 1
     row = sink_db.execute(
-        "SELECT c.cover_b64, t.cover_w, t.cover_h, t.title FROM titles t"
+        "SELECT c.cover_data, t.cover_w, t.cover_h, t.title FROM titles t"
         " JOIN title_covers c ON c.title_id = t.id WHERE t.code = 'ABC-013'"
     ).fetchone()
-    assert row == ("EXISTING_B64", 800, 537, item.title)
+    assert (bytes(row[0]), *row[1:]) == (b"EXISTING", 800, 537, item.title)
 
 
 @pytest.mark.asyncio

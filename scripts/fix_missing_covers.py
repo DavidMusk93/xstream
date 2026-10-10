@@ -57,7 +57,7 @@ async def main() -> None:
                 SELECT t.id, t.code FROM titles t
                 JOIN stars s ON s.id = t.star_id
                 LEFT JOIN title_covers c ON c.title_id = t.id
-                WHERE s.code = %s AND (c.cover_b64 IS NULL OR c.cover_b64 = '')
+                WHERE s.code = %s AND c.cover_data IS NULL
                 """,
                 (code,),
             ).fetchall()
@@ -124,11 +124,11 @@ async def main() -> None:
             try:
                 conn.execute(
                     """
-                    INSERT INTO title_covers (title_id, cover_b64) VALUES (%s, %s)
+                    INSERT INTO title_covers (title_id, cover_data) VALUES (%s, %s)
                     ON CONFLICT (title_id) DO UPDATE SET
-                        cover_b64 = EXCLUDED.cover_b64, updated_at = now()
+                        cover_data = EXCLUDED.cover_data, updated_at = now()
                     """,
-                    (title_id, b64),
+                    (title_id, db.cover_bytes(b64)),
                 )
                 dims = db._cover_dims_from_b64(b64)
                 if dims:

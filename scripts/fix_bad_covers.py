@@ -8,7 +8,7 @@ Usage: cd /root/xstream && python3 scripts/fix_bad_covers.py
 """
 from __future__ import annotations
 
-import sys, os, base64, asyncio
+import sys, os, asyncio
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -24,25 +24,17 @@ def main():
         SELECT t.id, t.code, t.cover_url
         FROM titles t
         JOIN title_covers c ON c.title_id = t.id
-        WHERE c.cover_b64 IS NOT NULL
+        WHERE c.cover_data IS NOT NULL
     """).fetchall()
 
     bad = []
     for title_id, code, cover_url in rows:
         row = conn.execute(
-            "SELECT cover_b64 FROM title_covers WHERE title_id = %s", (title_id,)
+            "SELECT cover_data FROM title_covers WHERE title_id = %s", (title_id,)
         ).fetchone()
         if not row or not row[0]:
             continue
-        b64 = row[0]
-        if b64.startswith('data:image/'):
-            b64 = b64.split(',', 1)[1]
-        try:
-            data = base64.b64decode(b64)
-        except Exception:
-            bad.append((title_id, code, cover_url))
-            print(f"BAD: {code}: undecodable base64")
-            continue
+        data = bytes(row[0])
         w, h = parse_image_size(data)
         if not is_good_cover(data):
             bad.append((title_id, code, cover_url))
@@ -60,11 +52,11 @@ def main():
         if b64:
             conn.execute(
                 """
-                INSERT INTO title_covers (title_id, cover_b64) VALUES (%s, %s)
+                INSERT INTO title_covers (title_id, cover_data) VALUES (%s, %s)
                 ON CONFLICT (title_id) DO UPDATE SET
-                    cover_b64 = EXCLUDED.cover_b64, updated_at = now()
+                    cover_data = EXCLUDED.cover_data, updated_at = now()
                 """,
-                (title_id, b64),
+                (title_id, db.cover_bytes(b64)),
             )
             dims = db._cover_dims_from_b64(b64)
             if dims:

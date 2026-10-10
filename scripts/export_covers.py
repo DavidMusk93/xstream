@@ -2,9 +2,9 @@
 """scripts/export_covers.py — Export title covers from PostgreSQL to disk.
 
 First-principle rationale:
-Covers are immutable static assets. Keeping them as base64 blobs inside the
-database forces every cover request to execute SQL, read the blob, and
-base64-decode it. Exporting them to disk lets the web server serve files
+Covers are immutable static assets. Keeping them only as blobs inside the
+database forces every cover request to execute SQL and read the blob.
+Exporting them to disk lets the web server serve files
 directly and lets the browser cache them efficiently.
 
 Output layout:
@@ -21,7 +21,6 @@ the full-size cover for a ~440px display box.
 
 from __future__ import annotations
 
-import base64
 import io
 import os
 import sys
@@ -42,11 +41,9 @@ MID_WIDTH = 800
 MID_QUALITY = 85
 
 
-def _decode_b64(b64_data: str) -> bytes:
-    """Strip data URI prefix and base64-decode."""
-    if b64_data.startswith("data:image/"):
-        b64_data = b64_data.split(",", 1)[1]
-    return base64.b64decode(b64_data)
+def _decode_b64(cover: str | bytes) -> bytes:
+    """Raw image bytes from a title_covers.cover_data value (or legacy base64)."""
+    return db.cover_bytes(cover) or b""
 
 
 def _normalize_to_jpeg(raw_bytes: bytes) -> bytes | None:
@@ -106,7 +103,7 @@ def _ensure_mid(code_lower: str, b64_data: str) -> bool:
 def export_covers() -> dict[str, int]:
     """Export all covers from the title_covers table to disk as JPEG.
 
-    Blobs are fetched one code at a time: loading every cover_b64 up front
+    Blobs are fetched one code at a time: loading every cover blob up front
     needlessly balloons memory on small machines.
     """
     db.init_schema()
@@ -119,7 +116,7 @@ def export_covers() -> dict[str, int]:
                 SELECT t.code
                 FROM titles t
                 JOIN title_covers c ON c.title_id = t.id
-                WHERE c.cover_b64 IS NOT NULL AND c.cover_b64 != ''
+                WHERE c.cover_data IS NOT NULL
                 ORDER BY t.code
                 """
             ).fetchall()
@@ -155,7 +152,7 @@ def export_covers() -> dict[str, int]:
 
             row = conn.execute(
                 """
-                SELECT c.cover_b64 FROM title_covers c
+                SELECT c.cover_data FROM title_covers c
                 JOIN titles t ON t.id = c.title_id
                 WHERE t.code = %s
                 """,

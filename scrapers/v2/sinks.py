@@ -217,13 +217,14 @@ class TitleSyncSink:
                         with managed.cursor() as cur:
                             cur.executemany(
                                 """
-                                INSERT INTO title_covers (title_id, cover_b64)
+                                INSERT INTO title_covers (title_id, cover_data)
                                 VALUES (%s, %s)
                                 ON CONFLICT (title_id) DO UPDATE SET
-                                    cover_b64 = EXCLUDED.cover_b64,
+                                    cover_data = EXCLUDED.cover_data,
                                     updated_at = now()
                                 """,
-                                [(id_by_code[v["code"]], v["cover_b64"]) for v in new_covers],
+                                [(id_by_code[v["code"]], db.cover_bytes(v["cover_b64"]))
+                                 for v in new_covers],
                             )
                             cur.executemany(
                                 "UPDATE titles SET cover_w = %s, cover_h = %s,"

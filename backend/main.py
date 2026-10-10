@@ -16,7 +16,6 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 import time
 import uuid
-import base64
 
 from backend.routers import stream_router, check_router, torrents_router, cache_router, auth_router, log_router, sync_router, track_router, stars, search, test_router, events_router, magnets_router
 from backend.services.torrent_engine import TorrentEngine
@@ -252,32 +251,25 @@ def _read_cover_from_db(code_upper: str) -> tuple[bytes, str] | None:
     if disk_result:
         return disk_result
 
-    # 2. Fallback to the title_covers base64 blob.
+    # 2. Fallback to the title_covers blob (raw bytes).
     try:
         conn = _db_conn()
         try:
             row = conn.execute(
                 """
-                SELECT c.cover_b64 FROM title_covers c
+                SELECT c.cover_data FROM title_covers c
                 JOIN titles t ON t.id = c.title_id
-                WHERE t.code = %s AND c.cover_b64 IS NOT NULL AND c.cover_b64 != ''
+                WHERE t.code = %s AND c.cover_data IS NOT NULL
                 LIMIT 1
                 """,
                 (code_upper,),
             ).fetchone()
             if row and row[0]:
-                b64_data = row[0]
-                if b64_data.startswith("data:image/"):
-                    b64_data = b64_data.split(",", 1)[1]
-                try:
-                    image_bytes = base64.b64decode(b64_data)
-                    media_type = _guess_image_mime(image_bytes)
-                    # Backfill disk (normalized JPEG + thumb) so subsequent
-                    # requests avoid the DB entirely.
-                    _crud_write_cover(code_upper, row[0])
-                    return image_bytes, media_type
-                except Exception:
-                    pass
+                image_bytes = bytes(row[0])
+                # Backfill disk (normalized JPEG + thumb) so subsequent
+                # requests avoid the DB entirely.
+                _crud_write_cover(code_upper, image_bytes)
+                return image_bytes, _guess_image_mime(image_bytes)
         finally:
             conn.close()
     except Exception:

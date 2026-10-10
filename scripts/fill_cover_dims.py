@@ -52,25 +52,23 @@ def main() -> None:
 
         # Rows without a disk cover: fall back to decoding the title_covers
         # blob, fetched one row at a time to bound memory.
-        import base64
         import io
         filled_ids = {t[0] for t in todo}
         blob_ids = [
             r[0] for r in conn.execute(
                 "SELECT t.id FROM titles t "
                 "JOIN title_covers c ON c.title_id = t.id "
-                "WHERE (t.cover_w IS NULL OR t.cover_h IS NULL) AND c.cover_b64 IS NOT NULL"
+                "WHERE (t.cover_w IS NULL OR t.cover_h IS NULL) AND c.cover_data IS NOT NULL"
             ).fetchall()
         ]
         for _id in blob_ids:
             if _id in filled_ids:
                 continue
-            b64 = conn.execute(
-                "SELECT cover_b64 FROM title_covers WHERE title_id = %s", [_id]
+            data = conn.execute(
+                "SELECT cover_data FROM title_covers WHERE title_id = %s", [_id]
             ).fetchone()[0]
             try:
-                data = b64.split(",", 1)[1] if b64.startswith("data:image/") else b64
-                with Image.open(io.BytesIO(base64.b64decode(data))) as img:
+                with Image.open(io.BytesIO(bytes(data))) as img:
                     todo.append((_id, (img.width, img.height)))
             except Exception:
                 continue

@@ -43,14 +43,29 @@ def _cover_dims_from_b64(b64_data: str | None) -> tuple[int, int] | None:
         return None
 
 
-def _normalize_b64_to_jpeg(b64_data: str) -> bytes | None:
-    """Decode base64 cover and normalize to JPEG bytes."""
-    if not b64_data:
+def cover_bytes(cover: str | bytes | None) -> bytes | None:
+    """Raw image bytes from a base64 / data-URI string (pipeline form) or bytes.
+
+    title_covers.cover_data stores these raw bytes (BYTEA).
+    """
+    if not cover:
         return None
-    if b64_data.startswith("data:image/"):
-        b64_data = b64_data.split(",", 1)[1]
+    if isinstance(cover, (bytes, memoryview)):
+        return bytes(cover)
+    if cover.startswith("data:"):
+        cover = cover.split(",", 1)[1]
     try:
-        raw = base64.b64decode(b64_data)
+        return base64.b64decode(cover)
+    except Exception:
+        return None
+
+
+def _normalize_to_jpeg(cover: str | bytes | None) -> bytes | None:
+    """Normalize a cover (base64 / data URI / raw bytes) to JPEG bytes."""
+    raw = cover_bytes(cover)
+    if not raw:
+        return None
+    try:
         img = Image.open(io.BytesIO(raw))
         if img.mode in ("RGBA", "P", "LA"):
             img = img.convert("RGB")
@@ -71,9 +86,9 @@ def _safe_code(code: str) -> str:
     return code_lower
 
 
-def _write_cover_to_disk(code: str, cover_b64: str | None) -> None:
-    """Persist cover_b64 to images/titles/{code}/{code}.jpg for static serving."""
-    if not cover_b64:
+def _write_cover_to_disk(code: str, cover: str | bytes | None) -> None:
+    """Persist a cover (base64 / data URI / raw bytes) to images/titles/{code}/{code}.jpg."""
+    if not cover:
         return
     try:
         code_lower = _safe_code(code)
@@ -84,7 +99,7 @@ def _write_cover_to_disk(code: str, cover_b64: str | None) -> None:
     out_path = out_dir / f"{code_lower}.jpg"
     if out_path.exists() and out_path.stat().st_size > 0:
         return
-    jpeg_bytes = _normalize_b64_to_jpeg(cover_b64)
+    jpeg_bytes = _normalize_to_jpeg(cover)
     if not jpeg_bytes:
         return
     try:

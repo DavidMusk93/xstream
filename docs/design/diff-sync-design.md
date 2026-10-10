@@ -98,8 +98,8 @@ cover_map = await download_covers_batch(
 
 **Existing cover protection**:
 
-- `upsert_title` in `core/db/crud.py` preserves `cover_b64` when an update receives `cover_b64=None`
-- `TitleSyncSink.write_batch` omits `cover_b64` from the `ON CONFLICT DO UPDATE` column list, so existing covers are never overwritten during incremental refresh
+- `upsert_title` in `core/db/crud.py` preserves the existing cover when an update carries none
+- `TitleSyncSink.write_batch` never touches `title_covers` in the `ON CONFLICT DO UPDATE`, so existing covers are never overwritten during incremental refresh
 - The `ON CONFLICT DO UPDATE` carries `WHERE (titles.cols) IS DISTINCT FROM (EXCLUDED.cols)`: backfill candidates the source cannot fix (~200 of the 408 missing-metadata rows per run) arrive unchanged every sync and are now no-ops instead of full row rewrites. `updated` counts only rows whose metadata or cover actually changed; fresh covers for unchanged rows still land (their ids are looked up since `RETURNING` skips them)
 
 ### Phase 3: Incremental Database Write
@@ -129,7 +129,7 @@ Only INSERT new titles; skip existing ones entirely:
 |---|---|
 | **First sync (empty database)** | `new_items = all_items`; degenerates to full sync, but HTTP is still ~10× faster than Playwright |
 | **Large batch (> 20 new titles)** | `MAX_NEW_TITLES = 20` caps ingestion per star to avoid overwhelming the system |
-| **Cover download failure / unusable cover** | `upsert_title` and `write_batch` preserve existing `cover_b64` on conflict; a **new** title without a usable cover is skipped entirely (stays "new", retries next sync). Covers taller than wide (`COVER_MAX_HW_RATIO = 1.0` in `sinks.py`) are vertical front-cover thumbnails — the blob is dropped and the title is treated as coverless |
+| **Cover download failure / unusable cover** | `upsert_title` and `write_batch` preserve the existing cover on conflict; a **new** title without a usable cover is skipped entirely (stays "new", retries next sync). Covers taller than wide (`COVER_MAX_HW_RATIO = 1.0` in `sinks.py`) are vertical front-cover thumbnails — the blob is dropped and the title is treated as coverless |
 | **Titles without any HD candidate** | `load_title_codes_missing_metadata` also flags titles whose `all_magnets` lack `[FHD]`/`[FHDC]`/`[4K]`/`[8KVR]`/`[4KVR]` (e.g. synced from the narrow RSS window during the 2026-08 ijav outage), so the backfill path refreshes their magnets when a source lists them again. `[4K]`/VR tags count as HD — makers hhd800 never covers (FALENO/DAHLIA, VR) must not be re-backfilled forever |
 | **Titles without a valid magnet** | `write_batch` skips items with no candidates whose btih hash extracts to 40 hex chars; such rows are never recorded (unplayable). `scripts/cleanup_bad_titles.py` applies the same rule offline to legacy rows |
 | **Repeatedly sink-rejected titles** | Skips (`no_magnet` / `no_cover` / `bad_cover`) are upserted into `title_blacklist`; `_drop_blacklisted` filters them before the diff in later syncs so their covers are never re-downloaded. Entries older than 7 days get one retry pass; a successful write clears the entry (`clear_blacklist_entries`) |
@@ -146,7 +146,7 @@ Only INSERT new titles; skip existing ones entirely:
 |---|---|---|
 | Replace `PlaywrightFetcher` with `HttpxFetcher` | `scrapers/v2/tasks/sync_titles.py` | ✅ Done |
 | Cover download only for `new_items` | `scrapers/v2/tasks/sync_titles.py` | ✅ Done |
-| Preserve existing `cover_b64` in UPSERT | `core/db/crud.py` + `scrapers/v2/sinks.py` | ✅ Done |
+| Preserve existing cover in UPSERT | `core/db/crud.py` + `scrapers/v2/sinks.py` | ✅ Done |
 | Add `tests/test_diff_sync.py` | `tests/test_diff_sync.py` | ✅ Done |
 | HTTP vs Playwright benchmark | — | ❌ Not implemented |
 

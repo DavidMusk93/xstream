@@ -26,7 +26,7 @@ async def main() -> None:
         SELECT t.id, t.code, t.cover_url
         FROM titles t
         LEFT JOIN title_covers c ON c.title_id = t.id
-        WHERE c.cover_b64 IS NULL OR c.cover_b64 = ''
+        WHERE c.cover_data IS NULL
         ORDER BY t.release_date_sort DESC NULLS LAST
     """).fetchall()
     conn.close()
@@ -56,11 +56,11 @@ async def main() -> None:
             dims = db._cover_dims_from_b64(b64)
             conn.execute(
                 """
-                INSERT INTO title_covers (title_id, cover_b64) VALUES (%s, %s)
+                INSERT INTO title_covers (title_id, cover_data) VALUES (%s, %s)
                 ON CONFLICT (title_id) DO UPDATE SET
-                    cover_b64 = EXCLUDED.cover_b64, updated_at = now()
+                    cover_data = EXCLUDED.cover_data, updated_at = now()
                 """,
-                (title_id, b64),
+                (title_id, db.cover_bytes(b64)),
             )
             if dims:
                 conn.execute(
