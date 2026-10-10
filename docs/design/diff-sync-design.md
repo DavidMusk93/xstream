@@ -100,6 +100,7 @@ cover_map = await download_covers_batch(
 
 - `upsert_title` in `core/db/crud.py` preserves `cover_b64` when an update receives `cover_b64=None`
 - `TitleSyncSink.write_batch` omits `cover_b64` from the `ON CONFLICT DO UPDATE` column list, so existing covers are never overwritten during incremental refresh
+- The `ON CONFLICT DO UPDATE` carries `WHERE (titles.cols) IS DISTINCT FROM (EXCLUDED.cols)`: backfill candidates the source cannot fix (~200 of the 408 missing-metadata rows per run) arrive unchanged every sync and are now no-ops instead of full row rewrites. `updated` counts only rows whose metadata or cover actually changed; fresh covers for unchanged rows still land (their ids are looked up since `RETURNING` skips them)
 
 ### Phase 3: Incremental Database Write
 

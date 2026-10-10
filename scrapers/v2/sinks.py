@@ -183,13 +183,36 @@ class TitleSyncSink:
                             magnet_hash = EXCLUDED.magnet_hash,
                             all_magnets = EXCLUDED.all_magnets,
                             updated_at = now()
+                        -- Backfill candidates the source cannot fix (~200 per
+                        -- run) arrive unchanged every sync: skip the no-op
+                        -- rewrite. Unchanged rows are not RETURNed.
+                        WHERE (titles.star_code, titles.star_name, titles.title,
+                               titles.release_date, titles.release_date_sort,
+                               titles.views, titles.likes, titles.resolution,
+                               titles.cover_url, titles.magnet, titles.magnet_hash,
+                               titles.all_magnets)
+                        IS DISTINCT FROM
+                              (EXCLUDED.star_code, EXCLUDED.star_name, EXCLUDED.title,
+                               EXCLUDED.release_date, EXCLUDED.release_date_sort,
+                               EXCLUDED.views, EXCLUDED.likes, EXCLUDED.resolution,
+                               EXCLUDED.cover_url, EXCLUDED.magnet, EXCLUDED.magnet_hash,
+                               EXCLUDED.all_magnets)
                         RETURNING id, code
                         """,
                         flat,
                     ).fetchall()
                     id_by_code = {row[1]: row[0] for row in rows}
+                    changed_codes = set(id_by_code)
 
                     new_covers = [v for v in values if v["cover_b64"]]
+                    unreturned = [v["code"] for v in new_covers if v["code"] not in id_by_code]
+                    if unreturned:
+                        id_by_code.update(
+                            (code, title_id) for title_id, code in managed.execute(
+                                "SELECT id, code FROM titles WHERE star_id = %s AND code = ANY(%s)",
+                                (self.star_id, unreturned),
+                            ).fetchall()
+                        )
                     if new_covers:
                         with managed.cursor() as cur:
                             cur.executemany(
@@ -223,9 +246,14 @@ class TitleSyncSink:
                 db.record_blacklist_skips(managed, self.star_id, list(skips.items()))
 
                 # Count insert vs update this round; skipped new codes (no
-                # usable cover) must not inflate the new count.
+                # usable cover) must not inflate the new count, and existing
+                # rows count as updated only if metadata or cover changed.
                 new_count = sum(1 for v in values if v["code"] in new_codes)
-                updated_count = len(values) - new_count
+                updated_count = sum(
+                    1 for v in values
+                    if v["code"] not in new_codes
+                    and (v["code"] in changed_codes or v["cover_b64"])
+                )
 
                 return {
                     "new": max(0, new_count),

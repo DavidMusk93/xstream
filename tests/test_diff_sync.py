@@ -1219,6 +1219,48 @@ async def test_sink_skips_new_title_without_cover(sink_db):
     assert [(r[0], r[1]) for r in rows] == [("ABC-014", old_item.title)]
 
 
+@pytest.mark.asyncio
+async def test_sink_skips_unchanged_rewrite(sink_db):
+    """An identical re-sync is a no-op: no row version, not counted as updated."""
+    from scrapers.v2 import sinks
+
+    sink_db.execute("INSERT INTO stars (id, name) VALUES (1, 'Star Q5')")
+    sink = sinks.TitleSyncSink(star_id=1, star_code="ABC", star_name="Test")
+    item = _vi_item("ABC-016", "magnet:?xt=urn:btih:" + "ab" * 20)
+    await sink.write_batch([item], {"ABC-016"}, {"ABC-016": _jpeg_b64(4, 2)})
+    xmin, updated_at = sink_db.execute(
+        "SELECT xmin::text, updated_at FROM titles WHERE code = 'ABC-016'"
+    ).fetchone()
+
+    result = await sink.write_batch([item], set(), {})
+    assert result["updated"] == 0
+    assert sink_db.execute(
+        "SELECT xmin::text, updated_at FROM titles WHERE code = 'ABC-016'"
+    ).fetchone() == (xmin, updated_at)
+
+    item.views = (item.views or 0) + 1
+    result = await sink.write_batch([item], set(), {})
+    assert result["updated"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sink_cover_fix_on_unchanged_row(sink_db):
+    """A fresh cover lands even when the row's metadata is unchanged."""
+    from scrapers.v2 import sinks
+
+    sink_db.execute("INSERT INTO stars (id, name) VALUES (1, 'Star Q6')")
+    sink = sinks.TitleSyncSink(star_id=1, star_code="ABC", star_name="Test")
+    item = _vi_item("ABC-017", "magnet:?xt=urn:btih:" + "ac" * 20)
+    await sink.write_batch([item], {"ABC-017"}, {"ABC-017": _jpeg_b64(4, 2)})
+    sink_db.execute("UPDATE titles SET cover_w = NULL, cover_h = NULL WHERE code = 'ABC-017'")
+
+    result = await sink.write_batch([item], set(), {"ABC-017": _jpeg_b64(8, 4)})
+    assert result["updated"] == 1
+    assert sink_db.execute(
+        "SELECT cover_w, cover_h FROM titles WHERE code = 'ABC-017'"
+    ).fetchone() == (8, 4)
+
+
 # ── Title blacklist: sink records skips, sync filters them ───────────
 # Repeatedly sink-rejected titles land in title_blacklist; the sync
 # pipeline filters them before the diff so no cover is downloaded for
