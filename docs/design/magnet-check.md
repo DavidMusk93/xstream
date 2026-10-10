@@ -57,8 +57,10 @@ alive，不消耗网络校验。
 scope 语义（`crud.load_titles_for_magnet_check`）：
 
 - `unchecked`：从未校验，或 sync 换了主 hash（`magnet_hash IS DISTINCT FROM magnet_checked_hash`）
-- `dead`：重试已标记 dead 的
-- `changed`：unchecked OR dead（sync 后默认）
+- `dead`：重试已标记 dead 的（不受退避影响，用于手动强制重试）
+- `changed`：unchecked OR 距上次校验超过 `DEAD_RECHECK_INTERVAL`（3 天）的 dead（sync 后默认）。
+  退避原因：sync 每 6h 触发一次，无退避时同一批永久死链每轮重探（~30 个里仅 2–6 个复活，每轮 150–570s）；
+  主 hash 变化仍由 unchecked 分支立即重查
 - `all`：所有有 magnet 的 title（历史全量，约 2265 个，最坏 1-2 小时）
 
 ## 已知限制

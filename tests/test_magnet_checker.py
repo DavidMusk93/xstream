@@ -140,9 +140,16 @@ def test_load_titles_for_magnet_check_scopes(temp_db):
     assert len(db.load_titles_for_magnet_check("unchecked", conn=conn)) == 1
     assert len(db.load_titles_for_magnet_check("changed", conn=conn)) == 1
 
-    # Marked dead -> in dead / changed scopes
+    # Freshly marked dead -> in dead scope, backed off from changed
     db.update_magnet_check_dead(title_id, live_hash, conn=conn)
     assert len(db.load_titles_for_magnet_check("dead", conn=conn)) == 1
+    assert db.load_titles_for_magnet_check("changed", conn=conn) == []
+
+    # Dead and not rechecked for DEAD_RECHECK_INTERVAL -> back in changed
+    conn.execute(
+        "UPDATE titles SET magnet_checked_at = now() - interval '4 days' WHERE id = %s",
+        (title_id,),
+    )
     assert len(db.load_titles_for_magnet_check("changed", conn=conn)) == 1
 
     with pytest.raises(ValueError):

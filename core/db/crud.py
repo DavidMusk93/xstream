@@ -520,6 +520,10 @@ def insert_user_events(events: list[dict], conn=None) -> int:
 
 # ── Magnet liveness check ───────────────────────────────────────────
 
+# Post-sync checks run every 6h; without a backoff the same permanently dead
+# magnets were re-probed each run (2-6 revivals out of ~30, 150-570s/run).
+DEAD_RECHECK_INTERVAL = "3 days"
+
 @trace_db
 def load_titles_for_magnet_check(scope: str = "changed", conn=None) -> list[dict]:
     """Load titles whose primary magnet needs a liveness check.
@@ -528,7 +532,8 @@ def load_titles_for_magnet_check(scope: str = "changed", conn=None) -> list[dict
       - unchecked: never checked, or primary hash changed since the last check
       - dead:      currently marked dead (retry)
       - all:       every title with a magnet (full historical sweep)
-      - changed:   unchecked OR dead (post-sync default)
+      - changed:   unchecked OR dead not rechecked for DEAD_RECHECK_INTERVAL
+                   (post-sync default; a new primary hash is caught by unchecked)
     """
     where = "magnet IS NOT NULL AND magnet != ''"
     hash_changed = "magnet_hash IS DISTINCT FROM magnet_checked_hash"
@@ -537,7 +542,11 @@ def load_titles_for_magnet_check(scope: str = "changed", conn=None) -> list[dict
     elif scope == "dead":
         where += " AND magnet_status = 'dead'"
     elif scope == "changed":
-        where += f" AND (magnet_checked_at IS NULL OR {hash_changed} OR magnet_status = 'dead')"
+        where += (
+            f" AND (magnet_checked_at IS NULL OR {hash_changed}"
+            f" OR (magnet_status = 'dead'"
+            f" AND magnet_checked_at < now() - interval '{DEAD_RECHECK_INTERVAL}'))"
+        )
     elif scope != "all":
         raise ValueError(f"unknown magnet check scope: {scope}")
 
