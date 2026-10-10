@@ -1,195 +1,189 @@
 <template>
-  <section :id="id" class="scroll-mt-32">
-    <!-- Section header -->
-    <div class="flex items-baseline justify-between mb-4 px-1">
-      <div class="flex items-baseline gap-3">
-        <h2 class="text-[24px] sm:text-[30px] font-bold text-foreground tracking-tight">
+  <section :id="id" class="group/star">
+    <!-- Section header: name sits on the page, the shelf below is one surface -->
+    <div class="flex items-end justify-between gap-4 mb-4 sm:mb-5 px-1">
+      <div class="min-w-0">
+        <h2 class="text-[26px] sm:text-[32px] font-bold text-foreground leading-tight truncate">
           {{ star.name }}
         </h2>
-        <span class="text-[15px] text-foreground-muted font-medium">
-          {{ star.titles?.length ?? 0 }}
-        </span>
+        <p class="mt-0.5 text-[14px] text-foreground-muted tabular-nums">
+          {{ star.titles?.length ?? 0 }} titles<span v-if="star.number"> · No. {{ star.number }}</span>
+        </p>
       </div>
       <button
-        class="w-10 h-10 rounded-full text-foreground-muted hover:text-[#ff453a] hover:bg-black/[0.04] transition-colors flex items-center justify-center active:scale-[0.97]"
-        title="Delete Star"
+        class="btn-icon text-foreground-muted hover:text-danger hover:bg-danger/10 sm:opacity-0 sm:group-hover/star:opacity-100 focus-visible:opacity-100"
+        title="Unfollow star"
+        aria-label="Unfollow star"
+        :disabled="deleting"
         @click="onDelete"
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="3 6 5 6 21 6" />
           <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-          <line x1="10" y1="11" x2="10" y2="17" />
-          <line x1="14" y1="11" x2="14" y2="17" />
         </svg>
       </button>
     </div>
 
-    <!-- Large display -->
-    <div
-      v-if="activeTitle"
-      class="flex flex-col sm:flex-row gap-6 sm:gap-8 mb-5 p-5 sm:p-7 rounded-3xl bg-white border border-black/[0.06] shadow-sm"
-    >
-      <!-- Large image -->
-      <div class="w-full sm:w-[300px] md:w-[360px] lg:w-[440px] shrink-0 rounded-2xl overflow-hidden bg-black shadow-md">
-        <img
-          v-if="activeTitle.cover_url && !activeImgError"
-          :src="activeTitle.cover_url"
-          :srcset="heroSrcset(activeTitle)"
-          sizes="(min-width: 1024px) 440px, (min-width: 768px) 360px, (min-width: 640px) 300px, calc(100vw - 32px)"
-          :alt="activeTitle.code"
-          class="w-full h-auto block bg-[#F2F2F7]"
-          :style="{ aspectRatio: coverAR(activeTitle) }"
-          loading="lazy"
-          decoding="async"
-          @error="activeImgError = true"
-        />
-        <div
-          v-else
-          class="flex flex-col items-center justify-center p-6 text-center bg-gradient-to-br from-[#F2F2F7] to-[#E5E5EA]"
-          :style="{ aspectRatio: coverAR(activeTitle) }"
-        >
-          <span class="text-[19px] font-semibold text-foreground/60">{{ activeTitle.code }}</span>
-          <span class="mt-1.5 text-[14px] text-foreground-muted/60 line-clamp-3">{{ activeTitle.title }}</span>
-        </div>
-      </div>
-
-      <!-- Info -->
-      <div class="flex-1 min-w-0 flex flex-col justify-center">
-        <div class="flex items-center gap-2 mb-3">
-          <span class="px-2 py-0.5 rounded bg-black text-white text-[11px] font-bold">#{{ activeTitle.number || activeIndex + 1 }}</span>
-          <span
-            v-if="activeTitle.magnet_status !== 'dead' && (activeTitle.resolution?.toLowerCase().includes('1080') || activeTitle.resolution?.toLowerCase().includes('4k'))"
-            class="px-1.5 py-0.5 rounded bg-black/[0.06] text-foreground text-[11px] font-bold"
-          >
-            HD
-          </span>
-          <span
-            v-if="activeTitle.magnet_status === 'dead'"
-            class="px-1.5 py-0.5 rounded bg-black/[0.08] text-foreground-muted text-[11px] font-bold"
-          >
-            链接失效
-          </span>
-        </div>
-        <h3 class="text-[28px] sm:text-[36px] font-bold text-foreground leading-[1.1] tracking-tight">
-          {{ activeTitle.code }}
-        </h3>
-        <p class="mt-3 text-[15px] sm:text-[17px] text-foreground-muted leading-relaxed">
-          {{ activeTitle.title }}
-        </p>
-        <p v-if="activeTitle.date" class="mt-4 text-[14px] text-foreground-muted/70">
-          {{ fmtDate(activeTitle.date) }}
-        </p>
-
-        <!-- Action buttons (Copy is the real primary action: 49 copies vs
-             1 in-browser play in the first two weeks of tracking) -->
-        <div class="flex items-center gap-2.5 sm:gap-3 mt-7 shrink-0">
-          <button
-            :disabled="!activePlayable"
-            class="flex items-center gap-2 px-5 sm:px-6 py-2.5 rounded-full bg-[#ff375f] text-white text-[15px] font-semibold transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
-            :class="copied ? '!bg-[#30d158]' : ''"
-            @click="copyMagnet"
-          >
-            <svg v-if="!copied" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="9" y="9" width="13" height="13" rx="2"/>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-            </svg>
-            <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-              <polyline points="20 6 9 17 4 12"/>
-            </svg>
-            <span>{{ copied ? 'Copied' : 'Copy' }}</span>
-          </button>
-
-          <button
-            :disabled="!activePlayable"
-            class="flex items-center gap-2 px-5 sm:px-6 py-2.5 rounded-full border border-black/[0.08] text-foreground text-[15px] font-medium transition-all hover:bg-black/[0.03] disabled:opacity-30 disabled:cursor-not-allowed active:scale-[0.97] shrink-0"
-            @click="onPlay"
-          >
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M8 5v14l11-7z"/>
-            </svg>
-            <span>{{ activeTitle.magnet_status === 'dead' ? '链接失效' : 'Play' }}</span>
-          </button>
-
-          <button
-            class="flex items-center gap-2 px-5 sm:px-6 py-2.5 rounded-full border border-black/[0.08] text-foreground text-[15px] font-medium transition-all hover:bg-black/[0.03] active:scale-[0.97] shrink-0"
-            :class="activeLiked ? '!border-[#ff375f]/50 !text-[#ff375f]' : ''"
-            :disabled="liking"
-            @click="toggleLike"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" :fill="activeLiked ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-            </svg>
-            <span>{{ activeLiked ? 'Liked' : 'Like' }}</span>
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Thumbnail row -->
-    <div class="relative group/row">
-      <div
-        ref="rowRef"
-        class="flex gap-3 sm:gap-4 items-start overflow-x-auto scrollbar-hide pb-4 pt-1 px-1 snap-x snap-mandatory"
-        @scroll.passive="onRowScroll"
-      >
-        <!-- Windowed rendering: spacers keep the scroll width exact while
-             only the visible ±THUMB_BUFFER thumbnails exist in the DOM -->
-        <div v-if="leadPad > 0" class="shrink-0 h-px" :style="{ width: `${leadPad}px` }" />
-        <button
-          v-for="{ title, idx } in windowedTitles"
-          :key="title.code"
-          class="group/thumb relative shrink-0 w-[120px] sm:w-[150px] md:w-[180px] rounded-xl overflow-hidden bg-black transition-all duration-200 snap-start active:scale-[0.97]"
-          :class="[
-            activeIndex === idx ? 'ring-2 ring-[#ff375f] opacity-100' : 'opacity-70 hover:opacity-100',
-            title.magnet_status === 'dead' ? 'grayscale opacity-50' : '',
-          ]"
-          @click="activeIndex = idx"
-        >
-          <!-- One-click magnet copy: the real primary workflow (select+copy
-               required two clicks before) -->
-          <span
-            v-if="title.magnet"
-            role="button"
-            tabindex="-1"
-            class="absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition hover:bg-[#ff375f]"
-            :class="{ '!opacity-100 !bg-[#30d158]': copiedCode === title.code }"
-            title="Copy magnet"
-            @click.stop="copyTitleMagnet(title)"
-          >
-            <svg v-if="copiedCode !== title.code" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="9" y="9" width="13" height="13" rx="2"/>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-            </svg>
-            <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-              <polyline points="20 6 9 17 4 12"/>
-            </svg>
-          </span>
+    <div class="surface overflow-hidden">
+      <!-- Hero -->
+      <div v-if="activeTitle" class="flex flex-col sm:flex-row gap-5 sm:gap-8 p-4 sm:p-6">
+        <div class="w-full sm:w-[300px] md:w-[360px] lg:w-[440px] shrink-0 rounded-[18px] overflow-hidden bg-fill">
           <img
-            v-if="title.cover_url && !thumbErrors[title.code]"
-            :src="title.cover_thumb_url || `/api/cover/${title.code}?thumb=1`"
-            :alt="title.code"
-            class="w-full h-auto block bg-[#F2F2F7]"
-            :style="{ aspectRatio: coverAR(title) }"
+            v-if="activeTitle.cover_url && !activeImgError"
+            ref="heroImg"
+            :key="activeTitle.code"
+            :src="activeTitle.cover_url"
+            :srcset="heroSrcset(activeTitle)"
+            sizes="(min-width: 1024px) 440px, (min-width: 768px) 360px, (min-width: 640px) 300px, calc(100vw - 32px)"
+            :alt="activeTitle.code"
+            class="w-full h-auto block transition-opacity duration-500 ease-spring"
+            :class="heroLoaded ? 'opacity-100' : 'opacity-0'"
+            :style="{ aspectRatio: coverAR(activeTitle) }"
+            loading="lazy"
             decoding="async"
-            @error="thumbErrors[title.code] = true"
+            @load="heroLoaded = true"
+            @error="activeImgError = true"
           />
           <div
             v-else
-            class="flex items-center justify-center p-2 text-center bg-gradient-to-br from-[#F2F2F7] to-[#E5E5EA]"
-            :style="{ aspectRatio: coverAR(title) }"
+            class="flex flex-col items-center justify-center p-6 text-center"
+            :style="{ aspectRatio: coverAR(activeTitle) }"
           >
-            <span class="text-[11px] font-semibold text-foreground/60">{{ title.code }}</span>
+            <span class="text-[19px] font-semibold text-foreground/50">{{ activeTitle.code }}</span>
+            <span class="mt-1.5 text-[14px] text-foreground-muted/70 line-clamp-3">{{ activeTitle.title }}</span>
           </div>
-          <div class="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] font-bold">
-            #{{ title.number || idx + 1 }}
+        </div>
+
+        <Transition name="swap" mode="out-in">
+          <div :key="activeTitle.code" class="flex-1 min-w-0 flex flex-col justify-center sm:py-2">
+            <div class="flex items-center flex-wrap gap-x-2 gap-y-1 text-[13px] font-medium text-foreground-muted tabular-nums">
+              <span>#{{ activeTitle.number || activeIndex + 1 }}</span>
+              <template v-if="activeTitle.date">
+                <span class="text-foreground-muted/40">·</span>
+                <span>{{ fmtDate(activeTitle.date) }}</span>
+              </template>
+              <span v-if="activeIsHd" class="chip bg-black/[0.06] text-foreground">HD</span>
+              <span v-if="activeTitle.magnet_status === 'dead'" class="chip bg-danger/10 text-danger">Unavailable</span>
+            </div>
+            <h3 class="mt-2 text-[30px] sm:text-[40px] font-bold text-foreground leading-[1.05]">
+              {{ activeTitle.code }}
+            </h3>
+            <p class="mt-3 text-[15px] sm:text-[17px] text-foreground-muted leading-relaxed line-clamp-3">
+              {{ activeTitle.title }}
+            </p>
+
+            <!-- Copy is the real primary action: 49 copies vs 1 in-browser
+                 play in the first two weeks of tracking -->
+            <div class="flex items-center gap-2.5 mt-6 sm:mt-7">
+              <button
+                class="btn flex-1 sm:flex-none sm:px-6"
+                :class="copied ? 'btn-success' : 'btn-primary'"
+                :disabled="!activePlayable"
+                @click="copyMagnet"
+              >
+                <svg v-if="!copied" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                {{ copied ? 'Copied' : 'Copy Magnet' }}
+              </button>
+
+              <button class="btn btn-secondary flex-1 sm:flex-none sm:px-6" :disabled="!activePlayable" @click="onPlay">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12.5-7.5z" /></svg>
+                Play
+              </button>
+
+              <button
+                class="btn-icon w-11 h-11"
+                :class="activeLiked ? 'bg-accent/10 text-accent hover:bg-accent/15' : 'bg-black/[0.05] hover:bg-black/[0.08]'"
+                :aria-pressed="activeLiked"
+                :aria-label="activeLiked ? 'Unlike' : 'Like'"
+                :disabled="liking"
+                @click="toggleLike"
+              >
+                <svg
+                  width="18" height="18" viewBox="0 0 24 24"
+                  :fill="activeLiked ? 'currentColor' : 'none'"
+                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                  class="transition-transform duration-300 ease-spring"
+                  :class="activeLiked ? 'scale-110' : 'scale-100'"
+                >
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                </svg>
+              </button>
+            </div>
           </div>
-        </button>
-        <div v-if="trailPad > 0" class="shrink-0 h-px" :style="{ width: `${trailPad}px` }" />
+        </Transition>
       </div>
 
-      <!-- Fade edges -->
-      <div class="pointer-events-none absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-void to-transparent opacity-0 sm:opacity-100" />
-      <div class="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-void to-transparent opacity-0 sm:opacity-100" />
+      <!-- Thumbnail rail -->
+      <div class="border-t border-black/[0.05]">
+        <div
+          ref="rowRef"
+          class="flex gap-3 sm:gap-4 items-start overflow-x-auto scrollbar-hide px-4 sm:px-6 py-4 sm:py-5 snap-x snap-mandatory scroll-px-4 sm:scroll-px-6"
+          @scroll.passive="onRowScroll"
+        >
+          <!-- Windowed rendering: spacers keep the scroll width exact while
+               only the visible ±THUMB_BUFFER thumbnails exist in the DOM -->
+          <div v-if="leadPad > 0" class="shrink-0 h-px" :style="{ width: `${leadPad}px` }" />
+          <button
+            v-for="{ title, idx } in windowedTitles"
+            :key="title.code"
+            class="group/thumb relative shrink-0 w-[112px] sm:w-[144px] md:w-[168px] rounded-xl overflow-hidden bg-fill snap-start transition-[opacity,transform,box-shadow] duration-300 ease-spring active:scale-[0.96] active:duration-100"
+            :class="[
+              activeIndex === idx
+                ? 'ring-2 ring-accent ring-offset-2 ring-offset-white'
+                : 'opacity-[0.72] hover:opacity-100',
+              title.magnet_status === 'dead' ? 'grayscale !opacity-40' : '',
+            ]"
+            :aria-label="title.code"
+            :aria-current="activeIndex === idx"
+            @click="activeIndex = idx"
+          >
+            <!-- One-click magnet copy: the real primary workflow -->
+            <span
+              v-if="title.magnet"
+              role="button"
+              tabindex="-1"
+              class="absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-full bg-black/55 backdrop-blur-md text-white flex items-center justify-center opacity-0 scale-90 group-hover/thumb:opacity-100 group-hover/thumb:scale-100 transition duration-200 ease-spring hover:bg-accent"
+              :class="{ '!opacity-100 !scale-100 !bg-success': copiedCode === title.code }"
+              title="Copy magnet"
+              @click.stop="copyTitleMagnet(title)"
+            >
+              <svg v-if="copiedCode !== title.code" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+              <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </span>
+            <img
+              v-if="title.cover_url && !thumbErrors[title.code]"
+              :src="title.cover_thumb_url || `/api/cover/${title.code}?thumb=1`"
+              :alt="title.code"
+              class="w-full h-auto block"
+              :style="{ aspectRatio: coverAR(title) }"
+              decoding="async"
+              @error="thumbErrors[title.code] = true"
+            />
+            <div
+              v-else
+              class="flex items-center justify-center p-2 text-center"
+              :style="{ aspectRatio: coverAR(title) }"
+            >
+              <span class="text-[11px] font-semibold text-foreground/50">{{ title.code }}</span>
+            </div>
+            <span class="absolute bottom-1.5 left-1.5 chip !px-1.5 bg-black/55 backdrop-blur-md text-white text-[10px] tabular-nums">
+              {{ title.number || idx + 1 }}
+            </span>
+          </button>
+          <div v-if="trailPad > 0" class="shrink-0 h-px" :style="{ width: `${trailPad}px` }" />
+        </div>
+      </div>
     </div>
   </section>
 </template>
@@ -216,6 +210,21 @@ const activeTitle = computed(() => props.star.titles?.[activeIndex.value] || nul
 
 const activeImgError = ref(false)
 const thumbErrors = ref<Record<string, boolean>>({})
+
+// Hero fades in once decoded instead of painting top-to-bottom. A cached
+// image can finish before the listener runs, so also trust `complete`.
+const heroImg = ref<HTMLImageElement | null>(null)
+const heroLoaded = ref(false)
+watch(heroImg, (img) => {
+  if (img?.complete && img.naturalWidth > 0) heroLoaded.value = true
+}, { flush: 'post' })
+
+const activeIsHd = computed(() => {
+  const t = activeTitle.value
+  if (!t || t.magnet_status === 'dead') return false
+  const res = t.resolution?.toLowerCase() ?? ''
+  return res.includes('1080') || res.includes('4k')
+})
 
 // Reserve each cover's box at its true aspect ratio so the layout never
 // jumps when bytes arrive. Fallback 3/2: virtually all covers are
@@ -329,6 +338,12 @@ watch(() => props.star.titles, (titles, prev) => {
 
 watch(activeIndex, () => {
   activeImgError.value = false
+})
+
+// Keyed on the code, not the index: a refetch can shift the kept title's
+// index without remounting its <img>, and would leave it invisible.
+watch(() => activeTitle.value?.code, () => {
+  heroLoaded.value = false
 })
 
 function onPlay() {

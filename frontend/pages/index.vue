@@ -1,178 +1,83 @@
 <template>
   <div class="min-h-screen bg-void">
-    <!-- Top bar -->
-    <header class="fixed top-0 left-0 right-0 z-40 bg-white/95 sm:bg-white/90 sm:backdrop-blur-xl border-b border-black/[0.06]">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-        <div class="flex items-center gap-2.5">
-          <img src="/logo.png" alt="xstream logo" class="w-8 h-8 -my-1 rounded-full" />
-          <h1 class="text-[19px] font-semibold text-foreground tracking-tight">
-            xstream
-          </h1>
-          <span
-            class="w-2 h-2 rounded-full"
-            :class="health?.status === 'ok' ? 'bg-[#30d158]' : 'bg-[#ff453a]'"
-          />
-        </div>
-        <div class="flex items-center gap-2">
-          <NuxtLink
-            to="/search"
-            class="flex items-center gap-2 h-10 px-4 rounded-full text-[14px] font-medium bg-black/[0.04] text-foreground hover:bg-black/[0.08] transition-all active:scale-[0.97]"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <span class="hidden sm:inline">Search</span>
-          </NuxtLink>
-          <button
-          class="flex items-center gap-2 h-10 px-4 rounded-full text-[14px] font-medium transition-all duration-200 active:scale-[0.97] disabled:cursor-default"
-          :class="syncRunning
-            ? 'bg-black/[0.04] text-foreground-muted'
-            : 'bg-black text-white hover:bg-black/85 shadow-sm'"
+    <AppHeader :offline="health != null && health.status !== 'ok'">
+      <template #actions>
+        <NuxtLink to="/search" class="btn-icon" title="Search" aria-label="Search">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7.5" />
+            <line x1="21" y1="21" x2="16.5" y2="16.5" />
+          </svg>
+        </NuxtLink>
+        <button class="btn-icon" title="Follow a star" aria-label="Follow a star" @click="addOpen = true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+        </button>
+        <EventPanel />
+        <CachePanel :stars="displayStars" />
+        <button
+          class="btn btn-sm ml-1 sm:ml-2 !px-3 sm:!px-4"
+          :class="syncRunning ? 'btn-secondary !opacity-100' : 'btn-dark'"
           :disabled="syncRunning"
+          title="Sync new releases"
           @click="startSync"
         >
           <svg
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
+            width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
             :class="{ 'animate-spin': syncRunning }"
           >
             <polyline points="23 4 23 10 17 10" />
             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
           </svg>
-          <span v-if="syncRunning" class="tabular-nums">{{ syncProgressText || 'Syncing…' }}</span>
+          <span v-if="syncRunning" class="tabular-nums">{{ syncProgressText || 'Syncing' }}</span>
           <span v-else class="hidden sm:inline">Refresh</span>
         </button>
-        </div>
-      </div>
-    </header>
-
-    <!-- Star navigation pills -->
-    <div class="fixed top-14 left-0 right-0 z-30 bg-white/95 sm:bg-white/90 sm:backdrop-blur-xl border-b border-black/[0.06]">
+      </template>
       <StarNav :stars="displayStars" />
-    </div>
+    </AppHeader>
 
-    <!-- Main content -->
-    <main class="pt-[120px] pb-24">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 space-y-12">
-        <!-- Add Star Panel -->
-        <div class="p-5 sm:p-6 rounded-2xl bg-white border border-black/[0.06] shadow-sm">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-[17px] font-semibold text-foreground tracking-tight">Add Star</h2>
-            <span class="text-[13px] text-foreground-muted">ijavtorrent actress page</span>
-          </div>
-          <div class="flex items-center gap-3">
-            <input
-              v-model="newStarUrl"
-              type="text"
-              placeholder="https://ijavtorrent.com/actress/xxx-xxx-12345"
-              class="flex-1 h-12 px-4 rounded-xl bg-[#F5F5F7] text-[15px] text-foreground placeholder:text-foreground-muted/50 outline-none border border-black/[0.06] focus:border-[#ff375f]/40 transition-colors"
-              @keydown.enter="addStar"
-            />
-            <button
-              class="h-12 px-6 rounded-xl bg-[#ff375f] text-white text-[15px] font-semibold transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed"
-              :disabled="addingStar || !newStarUrl.trim()"
-              @click="addStar"
-            >
-              <span v-if="addingStar" class="flex items-center gap-2">
-                <svg class="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                  <path d="M21 12a9 9 0 1 1-6.22-8.56" />
-                </svg>
-                Adding...
-              </span>
-              <span v-else>Add</span>
-            </button>
-          </div>
-          <p v-if="addError" class="mt-3 text-[14px] text-[#ff453a]">{{ addError }}</p>
-          <p v-if="addSuccess" class="mt-3 text-[14px] text-[#30d158]">{{ addSuccess }}</p>
-        </div>
-
-        <!-- Recently Added Panel -->
-        <div v-if="recentStars.length" class="p-5 sm:p-6 rounded-2xl bg-white border border-black/[0.06] shadow-sm">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-[17px] font-semibold text-foreground tracking-tight">Recently Added</h2>
-            <button class="text-[13px] text-foreground-muted hover:text-foreground transition-colors" @click="clearRecent">
-              Clear
-            </button>
-          </div>
-          <div class="flex flex-wrap gap-2.5">
-            <div
-              v-for="s in recentStars"
-              :key="s.code"
-              class="group flex items-center gap-2 px-3.5 py-2 rounded-full bg-[#F2F2F7] text-[14px] text-foreground hover:bg-[#E5E5EA] transition-all cursor-pointer active:scale-[0.97]"
-              @click="scrollToStar(s.code)"
-            >
-              <span class="w-1.5 h-1.5 rounded-full bg-[#ff375f]" />
-              {{ s.name }}
-              <span class="text-foreground-muted">{{ s.code }}</span>
-            </div>
-          </div>
+    <main class="pt-[calc(env(safe-area-inset-top)+128px)] sm:pt-[calc(env(safe-area-inset-top)+140px)] pb-32">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6">
+        <!-- Large title -->
+        <div class="mb-10 sm:mb-14 px-1">
+          <h1 class="text-[34px] sm:text-[44px] font-bold text-foreground leading-[1.05]">Library</h1>
+          <p class="mt-1.5 text-[15px] sm:text-[17px] text-foreground-muted tabular-nums min-h-[1.5em]">
+            <template v-if="pending">Loading…</template>
+            <template v-else-if="!error">{{ displayStars.length }} stars · {{ titleCount }} titles</template>
+          </p>
         </div>
 
         <!-- Loading skeletons -->
         <div v-if="pending" class="space-y-16 md:space-y-24">
-          <div
-            v-for="n in 3"
-            :key="n"
-            class="space-y-3"
-          >
-            <Skeleton class="h-8 w-48 rounded-lg" />
-            <div class="flex flex-col sm:flex-row gap-5">
-              <Skeleton class="w-full sm:w-[280px] md:w-[340px] lg:w-[400px] aspect-[3/2] rounded-xl" />
-              <div class="flex-1 space-y-3 py-4">
-                <Skeleton class="h-8 w-3/4 rounded-lg" />
-                <Skeleton class="h-4 w-full rounded" />
-                <Skeleton class="h-4 w-5/6 rounded" />
-                <Skeleton class="h-4 w-4/6 rounded" />
-                <div class="flex gap-3 pt-3">
-                  <Skeleton class="h-10 w-24 rounded-full" />
-                  <Skeleton class="h-10 w-28 rounded-full" />
-                  <Skeleton class="h-10 w-20 rounded-full" />
-                </div>
-              </div>
-            </div>
-            <div class="flex gap-3 overflow-hidden">
-              <Skeleton v-for="i in 6" :key="i" class="shrink-0 w-[100px] sm:w-[120px] md:w-[140px] aspect-[3/2] rounded-lg" />
-            </div>
-          </div>
+          <StarCardSkeleton v-for="n in 2" :key="n" />
         </div>
 
         <!-- Error -->
-        <div v-else-if="error" class="text-center py-40">
-          <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#ff453a]/10 text-[#ff453a] mb-5">
-            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="12" y1="8" x2="12" y2="12"/>
-              <line x1="12" y1="16" x2="12.01" y2="16"/>
+        <div v-else-if="error" class="text-center py-32">
+          <div class="inline-flex items-center justify-center w-14 h-14 rounded-full bg-danger/10 text-danger mb-5">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
           </div>
-          <p class="text-[17px] text-[#ff453a]">Failed to load data</p>
-          <button
-            class="mt-5 px-5 py-2.5 rounded-full bg-black/[0.06] text-foreground text-[14px] font-medium hover:bg-black/[0.1] active:scale-[0.97] transition-all"
-            @click="refreshNuxtData('stars')"
-          >
-            Retry
-          </button>
+          <p class="text-[19px] font-semibold text-foreground">Couldn't load your library</p>
+          <p class="mt-1 text-[15px] text-foreground-muted">The server may be restarting.</p>
+          <button class="btn btn-secondary mt-6" @click="refreshNuxtData('stars')">Try Again</button>
         </div>
 
         <!-- Empty state -->
         <div v-else-if="displayStars.length === 0" class="text-center py-32">
-          <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-black/[0.04] text-foreground-muted mb-4">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-              <circle cx="12" cy="7" r="4"/>
-            </svg>
+          <p class="text-[22px] font-bold text-foreground">No stars yet</p>
+          <p class="mt-1.5 text-[15px] text-foreground-muted">Follow someone to start tracking their releases.</p>
+          <div class="mt-7 flex items-center justify-center gap-2.5">
+            <button class="btn btn-primary" @click="addOpen = true">Follow a Star</button>
+            <NuxtLink to="/search" class="btn btn-secondary">Search</NuxtLink>
           </div>
-          <p class="text-[15px] text-foreground-muted">No stars yet. Add one above.</p>
         </div>
 
-        <!-- Star Cards -->
+        <!-- Star shelves -->
         <div v-else class="space-y-16 md:space-y-24">
           <div
             v-for="(star, index) in displayStars"
@@ -180,7 +85,7 @@
             :key="star.code"
             v-observe
             :data-code="star.code"
-            class="star-section"
+            class="star-section scroll-mt-[calc(env(safe-area-inset-top)+116px)]"
           >
             <StarCard
               v-if="visibleCodes.has(star.code)"
@@ -189,36 +94,15 @@
               @play="openVideo"
               @deleted="onStarDeleted"
             />
-            <div v-else class="space-y-3">
-              <Skeleton class="h-8 w-40 rounded-lg" />
-              <div class="flex flex-col sm:flex-row gap-5">
-                <Skeleton class="w-full sm:w-[280px] md:w-[340px] lg:w-[400px] aspect-[3/2] rounded-xl" />
-                <div class="flex-1 space-y-3 py-4">
-                  <Skeleton class="h-8 w-3/4 rounded-lg" />
-                  <Skeleton class="h-4 w-full rounded" />
-                  <Skeleton class="h-4 w-5/6 rounded" />
-                  <Skeleton class="h-4 w-4/6 rounded" />
-                  <div class="flex gap-3 pt-3">
-                    <Skeleton class="h-10 w-24 rounded-full" />
-                    <Skeleton class="h-10 w-28 rounded-full" />
-                    <Skeleton class="h-10 w-20 rounded-full" />
-                  </div>
-                </div>
-              </div>
-              <div class="flex gap-3 overflow-hidden">
-                <Skeleton v-for="i in 6" :key="i" class="shrink-0 w-[100px] sm:w-[120px] md:w-[140px] aspect-[3/2] rounded-lg" />
-              </div>
-            </div>
+            <StarCardSkeleton v-else />
           </div>
         </div>
       </div>
     </main>
 
+    <AddStarSheet v-model:open="addOpen" :stars="displayStars" @jump="scrollToStar" />
     <VideoModal v-model:open="modalOpen" :hash="activeHash" :code="activeCode" :star-code="activeStarCode" />
-    <CachePanel :stars="displayStars" />
-    <EventPanel />
 
-    <!-- Sync progress toast -->
     <SyncToast
       :visible="toastVisible"
       :state="toastState"
@@ -236,13 +120,6 @@ interface HealthResponse {
   status: string
 }
 
-interface RecentStar {
-  name: string
-  code: string
-  url: string
-  addedAt: number
-}
-
 const config = useRuntimeConfig()
 const { data: health } = useFetch<HealthResponse>('/api/health', { baseURL: config.public.apiBase, server: false })
 const { stars, pending, error } = useStars()
@@ -256,34 +133,17 @@ const displayStars = computed(() =>
   (stars.value ?? []).filter(s => !deletedCodes.value.has(s.code))
 )
 
+const titleCount = computed(() =>
+  displayStars.value.reduce((n, s) => n + (s.titles?.length ?? 0), 0)
+)
+
 const visibleCodes = ref<Set<string>>(new Set())
+const addOpen = ref(false)
 
 const modalOpen = ref(false)
 const activeHash = ref('')
 const activeCode = ref('')
 const activeStarCode = ref('')
-
-const newStarUrl = ref('')
-const addingStar = ref(false)
-const addError = ref('')
-const addSuccess = ref('')
-const recentStars = ref<RecentStar[]>([])
-
-onMounted(() => {
-  try {
-    const raw = localStorage.getItem('recentStars')
-    if (raw) recentStars.value = JSON.parse(raw)
-  } catch { /* ignore */ }
-})
-
-function saveRecent() {
-  localStorage.setItem('recentStars', JSON.stringify(recentStars.value.slice(0, 20)))
-}
-
-function clearRecent() {
-  recentStars.value = []
-  localStorage.removeItem('recentStars')
-}
 
 function scrollToStar(code: string) {
   const el = document.getElementById(`star-${code.toLowerCase()}`)
@@ -294,51 +154,8 @@ function scrollToStar(code: string) {
 
 function onStarDeleted(code: string) {
   deletedCodes.value.add(code)
-  recentStars.value = recentStars.value.filter(s => s.code !== code)
-  saveRecent()
   track('delete_star', { code })
   addLog({ kind: 'action', title: `Deleted star ${code}`, state: 'success' })
-}
-
-async function addStar() {
-  const url = newStarUrl.value.trim()
-  if (!url) return
-  addError.value = ''
-  addSuccess.value = ''
-  addingStar.value = true
-
-  try {
-    const res = await $fetch('/api/stars/add', {
-      baseURL: config.public.apiBase,
-      method: 'POST',
-      body: { star_page_url: url },
-    }) as any
-
-    const addedCode = res.code as string
-    const addedName = res.name as string
-    const titlesFound = res.titles_found as number
-
-    addSuccess.value = `Added ${addedName} (${addedCode}), ${titlesFound} titles found, syncing in background...`
-    newStarUrl.value = ''
-    track('add_star', { code: addedCode, meta: { name: addedName, titles_found: titlesFound } })
-    addLog({ kind: 'action', title: `Added star ${addedName}`, detail: `${titlesFound} titles found, syncing in background`, state: 'success' })
-
-    recentStars.value.unshift({
-      name: addedName,
-      code: addedCode,
-      url: res.star_page_url,
-      addedAt: Date.now(),
-    })
-    saveRecent()
-
-    await refreshNuxtData('stars')
-  } catch (e: any) {
-    const msg = e?.data?.detail || e?.message || 'Failed to add'
-    addError.value = msg
-    addLog({ kind: 'action', title: 'Add star failed', detail: msg, state: 'error' })
-  } finally {
-    addingStar.value = false
-  }
 }
 
 function openVideo(magnet: string, code = '', starCode = '') {
@@ -504,8 +321,7 @@ function handleSyncError(data: any) {
   finishToast('Sync failed', data.error || '', 'error')
 }
 
-function handleStarReady(data: any) {
-  addSuccess.value = `Added ${data.name} (${data.code}), ${data.titles_count} titles ready`
+function handleStarReady() {
   refreshNuxtData('stars')
 }
 

@@ -1,65 +1,52 @@
 <template>
-  <div class="min-h-screen bg-void flex items-center justify-center px-6 relative overflow-hidden">
-    <div class="w-full max-w-[380px] relative z-10">
-      <!-- Logo area -->
-      <div class="flex flex-col items-center mb-10">
-        <img src="/logo.png" alt="xstream logo" class="w-[96px] h-[96px] mb-6 drop-shadow-sm rounded-2xl" />
-        <h1
-          class="text-[32px] font-semibold text-foreground tracking-[-0.02em]"
-        >
-          xstream
-        </h1>
-        <p class="text-[15px] text-foreground-muted mt-2 font-light">
-          {{ randomGreeting }}
-        </p>
+  <div class="relative min-h-[100dvh] bg-void flex flex-col items-center justify-center px-6">
+    <div class="login-enter w-full max-w-[360px]">
+      <div class="flex flex-col items-center mb-10 text-center">
+        <img src="/logo.png" alt="xstream" class="w-[88px] h-[88px] mb-6 rounded-[22px] shadow-card" />
+        <h1 class="text-[34px] font-bold text-foreground leading-tight">xstream</h1>
+        <p class="mt-1.5 text-[15px] text-foreground-muted">{{ randomGreeting }}</p>
       </div>
 
-      <!-- Form -->
-      <div class="space-y-3">
-        <div class="relative group">
+      <form class="space-y-3" @submit.prevent="submit">
+        <div class="relative" :class="shake ? 'animate-shake' : ''">
           <input
             ref="inputRef"
             v-model="password"
             :type="showPassword ? 'text' : 'password'"
-            placeholder="🔑 Passcode"
-            class="w-full h-[52px] px-12 rounded-[16px] bg-white border border-black/[0.08] text-foreground text-[17px] text-center placeholder:text-foreground-muted/40 outline-none transition-all duration-200 focus:border-[#ff375f]/50 focus:shadow-[0_0_0_4px_rgba(255,55,95,0.1)]"
-            :class="{ 'border-[#ff375f]/50 shadow-[0_0_0_4px_rgba(255,55,95,0.1)]': error }"
-            @keydown.enter="submit"
+            autocomplete="current-password"
+            placeholder="Passcode"
+            aria-label="Passcode"
+            class="w-full h-[52px] px-12 rounded-2xl bg-white shadow-card border text-foreground text-[17px] text-center placeholder:text-foreground-muted/60 outline-none transition-[border-color,box-shadow] duration-200 focus:border-accent/40 focus:shadow-[0_0_0_4px_rgba(255,55,95,0.10)]"
+            :class="error ? 'border-danger/40' : 'border-transparent'"
+            @input="error = ''"
           />
-          <!-- Toggle visibility -->
           <button
             type="button"
-            class="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-foreground-muted/50 hover:text-foreground-muted transition-colors"
+            class="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full flex items-center justify-center text-foreground-muted/60 hover:text-foreground-muted hover:bg-black/[0.04] transition"
+            :aria-label="showPassword ? 'Hide passcode' : 'Show passcode'"
             @click="showPassword = !showPassword"
           >
-            {{ showPassword ? '🙈' : '👁️' }}
+            <svg v-if="!showPassword" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+            <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 19c-6.5 0-10-7-10-7a18.45 18.45 0 0 1 5.06-5.94" />
+              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c6.5 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19" />
+              <line x1="2" y1="2" x2="22" y2="22" />
+            </svg>
           </button>
         </div>
 
-        <!-- Error message -->
-        <p
-          v-if="error"
-          class="text-[14px] text-[#ff375f] text-center min-h-[1.25em] transition-all"
-          :class="shake ? 'animate-shake' : ''"
-        >
-          {{ error }} 👻
-        </p>
-        <p v-else class="min-h-[1.25em]" />
+        <p class="min-h-[1.5em] text-[14px] text-danger text-center">{{ error }}</p>
 
-        <!-- Enter button -->
-        <button
-          @click="submit"
-          class="w-full h-[52px] rounded-[16px] bg-[#ff375f] text-white text-[17px] font-semibold transition-all duration-200 hover:brightness-110 active:scale-[0.97] flex items-center justify-center gap-2"
-        >
-          <span>🚀 Enter</span>
+        <button type="submit" class="btn btn-primary w-full h-[52px] text-[17px]" :disabled="!password.trim()">
+          Enter
         </button>
-      </div>
-
-      <!-- Footer -->
-      <div class="h-10 flex items-center justify-center">
-        <span class="text-[12px] text-foreground-muted/40">{{ randomFooter }}</span>
-      </div>
+      </form>
     </div>
+
+    <p class="absolute bottom-[max(24px,env(safe-area-inset-bottom))] text-[12px] text-foreground-muted/60">{{ randomFooter }}</p>
   </div>
 </template>
 
@@ -87,11 +74,11 @@ const randomGreeting = greetings[Math.floor(Math.random() * greetings.length)]
 
 // Whimsical footer
 const footers = [
-  '🔮 Today\'s fortune: great for viewing',
-  '🍿 Don\'t forget the popcorn',
-  '👻 Wrong passwords summon ghosts',
-  '🎬 Please silence your devices',
-  '🌙 It\'s late, keep it quiet',
+  'Today\'s fortune: great for viewing',
+  'Don\'t forget the popcorn',
+  'Wrong passwords summon ghosts',
+  'Please silence your devices',
+  'It\'s late, keep it quiet',
 ]
 const randomFooter = footers[Math.floor(Math.random() * footers.length)]
 
@@ -133,5 +120,13 @@ onMounted(() => {
 }
 .animate-shake {
   animation: shake 0.4s ease-in-out;
+}
+
+@keyframes login-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.login-enter {
+  animation: login-enter 0.6s var(--ease-spring) both;
 }
 </style>

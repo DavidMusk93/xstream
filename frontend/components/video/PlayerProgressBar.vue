@@ -23,7 +23,7 @@
       class="absolute bottom-full mb-2 -translate-x-1/2 pointer-events-none z-10"
       :style="{ left: bubbleLeft + '%' }"
     >
-      <div class="flex items-center gap-1.5 bg-black/80 backdrop-blur-md border border-white/10 rounded-full px-2.5 py-1 text-[11px] text-white/90 font-mono tabular-nums whitespace-nowrap">
+      <div class="flex items-center gap-1.5 bg-black/70 backdrop-blur-md rounded-full px-2.5 py-1 text-[12px] font-medium text-white tabular-nums whitespace-nowrap">
         <span
           v-if="bubbleState !== null"
           class="w-1.5 h-1.5 rounded-full"
@@ -34,7 +34,13 @@
       </div>
     </div>
 
-    <div class="relative h-1.5 sm:h-2 bg-white/15 rounded-full">
+    <div class="relative h-2">
+    <!-- Track thickens on hover/scrub via scaleY (transform only); the thumb
+         sits outside it so it is never distorted -->
+    <div
+      class="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1 bg-white/20 rounded-full overflow-hidden transition-transform duration-300 ease-spring"
+      :class="scrubbing ? 'scale-y-[1.75]' : 'group-hover:scale-y-[1.75]'"
+    >
       <!-- Download-state map (server piece bitmap, live via SSE) -->
       <template v-if="segments.length">
         <div
@@ -57,15 +63,16 @@
 
       <!-- Playhead fill -->
       <div
-        class="absolute h-full bg-[#ff375f] rounded-full"
+        class="absolute h-full bg-accent rounded-full"
         :style="{ width: displayPercent + '%' }"
       />
-      <!-- Thumb -->
-      <div
-        class="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow transition-opacity"
-        :class="scrubbing ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
-        :style="{ left: 'calc(' + displayPercent + '% - 8px)' }"
-      />
+    </div>
+    <!-- Thumb -->
+    <div
+      class="absolute top-1/2 w-3.5 h-3.5 -mt-[7px] -ml-[7px] bg-white rounded-full shadow-[0_1px_4px_rgba(0,0,0,0.4)] transition-[opacity,transform] duration-200 ease-spring"
+      :class="scrubbing ? 'opacity-100 scale-125' : 'opacity-0 scale-50 group-hover:opacity-100 group-hover:scale-100'"
+      :style="{ left: displayPercent + '%' }"
+    />
     </div>
   </div>
 </template>

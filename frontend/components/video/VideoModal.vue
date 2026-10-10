@@ -1,13 +1,14 @@
 <template>
   <Teleport to="body">
+    <Transition name="player" :duration="{ enter: 450, leave: 200 }">
     <div
       v-if="isOpen"
-      class="fixed inset-0 z-[100] flex items-center justify-center bg-black/92 backdrop-blur-xl"
+      class="player-root fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl"
       @click.self="close"
     >
       <div
         ref="containerRef"
-        class="relative w-full h-full sm:w-[92vw] sm:max-w-6xl sm:h-auto sm:aspect-video bg-black sm:rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10"
+        class="player-stage relative w-full h-full sm:w-[92vw] sm:max-w-6xl sm:h-auto sm:aspect-video bg-black sm:rounded-[22px] overflow-hidden shadow-2xl"
         @dblclick="onDblClick"
         @touchstart="onTouchStart"
         @touchend="onTouchEnd"
@@ -16,24 +17,17 @@
       >
         <!-- Top bar -->
         <div
-          class="absolute top-0 inset-x-0 z-30 flex items-center justify-between p-3 sm:p-4 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300"
+          class="absolute top-0 inset-x-0 z-30 flex items-center justify-between gap-4 pl-5 pr-3 pt-[max(12px,env(safe-area-inset-top))] pb-10 sm:pt-4 bg-gradient-to-b from-black/60 to-transparent transition-opacity duration-300"
           :class="{ 'opacity-0 pointer-events-none': controlsHidden }"
         >
-          <button
-            class="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md text-white flex items-center justify-center transition hover:bg-white/20 active:scale-95"
-            @click="toggleFullscreen"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path v-if="isFullscreen" d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3m13-3h-3a2 2 0 0 0-2 2v3"/>
-              <path v-else d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
-            </svg>
-          </button>
+          <p class="text-[15px] font-semibold text-white/95 truncate">{{ code }}</p>
 
           <button
-            class="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md text-white flex items-center justify-center transition hover:bg-white/20 active:scale-95"
+            class="w-10 h-10 shrink-0 rounded-full bg-white/[0.12] backdrop-blur-md text-white flex items-center justify-center transition hover:bg-white/20 active:scale-[0.92]"
+            aria-label="Close player"
             @click="close"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"/>
               <line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -71,7 +65,7 @@
         <!-- Custom controls -->
         <div
           v-show="!loading && !errorMsg"
-          class="absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-4 sm:px-5 pb-5 pt-14 transition-opacity duration-300"
+          class="absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-4 sm:px-6 pb-[max(16px,env(safe-area-inset-bottom))] sm:pb-5 pt-16 transition-opacity duration-300"
           :class="{ 'opacity-0 pointer-events-none': controlsHidden }"
           @mousemove="showControls"
           @touchstart="showControls"
@@ -87,23 +81,25 @@
           />
 
           <!-- Controls row -->
-          <div class="flex items-center justify-between mt-3">
-            <div class="flex items-center gap-3">
+          <div class="flex items-center justify-between mt-2.5 -mx-2">
+            <div class="flex items-center gap-1">
               <button
-                class="w-10 h-10 rounded-full bg-white/10 text-white flex items-center justify-center transition hover:bg-white/20 active:scale-[0.97]"
+                class="w-11 h-11 rounded-full text-white flex items-center justify-center transition hover:bg-white/10 active:scale-[0.9]"
+                :aria-label="isPlaying ? 'Pause' : 'Play'"
                 @click="togglePlay"
               >
-                <svg v-if="!isPlaying" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M8 5v14l11-7z"/>
+                <svg v-if="!isPlaying" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M7 4.5v15l12.5-7.5z"/>
                 </svg>
-                <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="6" y="4" width="4" height="16"/>
-                  <rect x="14" y="4" width="4" height="16"/>
+                <svg v-else width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="4.5" width="4" height="15" rx="1"/>
+                  <rect x="14" y="4.5" width="4" height="15" rx="1"/>
                 </svg>
               </button>
 
               <button
-                class="w-10 h-10 rounded-full bg-white/10 text-white flex items-center justify-center transition hover:bg-white/20 active:scale-[0.97]"
+                class="w-11 h-11 rounded-full text-white flex items-center justify-center transition hover:bg-white/10 active:scale-[0.9]"
+                :aria-label="isMuted ? 'Unmute' : 'Mute'"
                 @click="toggleMute"
               >
                 <svg v-if="isMuted" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -118,13 +114,14 @@
                 </svg>
               </button>
 
-              <span class="text-[13px] text-white/90 font-mono tabular-nums">
-                {{ formatTime(currentTime) }} / {{ formatTime(duration) }}
+              <span class="ml-1.5 text-[13px] font-medium text-white/90 tabular-nums">
+                {{ formatTime(currentTime) }}<span class="text-white/45"> / {{ formatTime(duration) }}</span>
               </span>
             </div>
 
             <button
-              class="w-10 h-10 rounded-full bg-white/10 text-white flex items-center justify-center transition hover:bg-white/20 active:scale-[0.97]"
+              class="w-11 h-11 rounded-full text-white flex items-center justify-center transition hover:bg-white/10 active:scale-[0.9]"
+              :aria-label="isFullscreen ? 'Exit full screen' : 'Full screen'"
               @click="toggleFullscreen"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -138,18 +135,19 @@
         <!-- Loading overlay -->
         <div
           v-if="loading"
-          class="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-black/80 z-20"
+          class="absolute inset-0 flex flex-col items-center justify-center bg-black z-20 px-6 text-center"
         >
-          <div class="w-12 h-12 rounded-full border-4 border-white/10 border-t-[#ff375f] animate-spin" />
+          <span class="spinner w-7 h-7 text-white/70" />
+          <p class="mt-6 text-[17px] font-semibold text-white">{{ statusText }}</p>
 
-          <div class="w-80 max-w-[85vw]">
-            <div class="h-2 bg-white/10 rounded-full overflow-hidden">
+          <div class="mt-5 w-72 max-w-full">
+            <div class="h-1 bg-white/[0.12] rounded-full overflow-hidden">
               <div
-                class="h-full bg-[#ff375f] rounded-full transition-all duration-500"
+                class="h-full bg-white rounded-full transition-[width] duration-700 ease-spring"
                 :style="{ width: Math.min(loadingProgress, 100) + '%' }"
               />
             </div>
-            <div class="mt-2 flex justify-between text-xs text-white/60">
+            <div class="mt-2 flex justify-between text-[12px] text-white/50 tabular-nums">
               <span>
                 {{ status?.state?.includes('checking') ? 'Verifying' : 'Downloading' }}
                 {{ loadingProgress.toFixed(1) }}%
@@ -158,45 +156,39 @@
             </div>
           </div>
 
-          <p class="text-white text-lg font-semibold">
-            {{ statusText }}
-          </p>
-          <p class="text-white/60 text-sm">
-            {{ cacheRatio }}
-          </p>
-          <p class="text-white/40 text-xs">
-            {{ detailStatus }}
+          <p v-if="cacheRatio || detailStatus" class="mt-4 text-[12px] text-white/40 tabular-nums">
+            {{ [cacheRatio, detailStatus].filter(Boolean).join(' · ') }}
           </p>
         </div>
 
         <!-- Error overlay -->
         <div
           v-if="errorMsg"
-          class="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/85 z-20 px-6 text-center"
+          class="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black z-20 px-6 text-center"
         >
-          <div class="w-14 h-14 rounded-full bg-white/10 flex items-center justify-center text-[#ff453a]">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <div class="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white/80">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10"/>
               <line x1="12" y1="8" x2="12" y2="12"/>
               <line x1="12" y1="16" x2="12.01" y2="16"/>
             </svg>
           </div>
-          <p class="text-white/90 text-base font-medium max-w-md">{{ errorMsg }}</p>
+          <p class="text-white/90 text-[15px] font-medium max-w-md">{{ errorMsg }}</p>
           <button
             v-if="retryCount < MAX_RETRIES"
-            class="px-5 py-2 rounded-full bg-white text-black text-sm font-semibold transition hover:bg-white/90 active:scale-95"
+            class="btn btn-sm bg-white text-black hover:bg-white/90"
             @click="doRetry"
           >
-            Retry
+            Try Again
           </button>
         </div>
 
         <!-- Buffer status overlay -->
         <div
           v-if="buffering && !loading"
-          class="absolute bottom-24 left-4 z-30 bg-black/50 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-full text-xs text-white/80 flex items-center gap-2"
+          class="absolute top-[max(64px,calc(env(safe-area-inset-top)+52px))] left-1/2 -translate-x-1/2 z-30 bg-black/55 backdrop-blur-md px-3.5 py-1.5 rounded-full text-[12px] text-white/85 flex items-center gap-2 whitespace-nowrap max-w-[90%] truncate"
         >
-          <div class="w-3 h-3 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+          <span class="spinner w-3 h-3 text-white/80" />
           {{ statusText }}
         </div>
 
@@ -205,12 +197,13 @@
           v-if="showGestureHint"
           class="absolute inset-0 flex items-center justify-center z-40 pointer-events-none"
         >
-          <div class="bg-black/60 text-white px-5 py-2 rounded-full text-sm font-medium animate-fade-out">
+          <div class="bg-black/55 backdrop-blur-md text-white px-5 py-2.5 rounded-full text-[15px] font-semibold tabular-nums animate-fade-out">
             {{ gestureHintText }}
           </div>
         </div>
       </div>
     </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -1020,14 +1013,16 @@ function showHint(text: string) {
 onMounted(() => {
   const handler = (e: KeyboardEvent) => {
     if (!isOpen.value) return
-    const v = videoRef.value
-    if (!v) return
-
     if (e.key === 'Escape') {
       e.preventDefault()
       logInfo('player', 'key Escape')
       close()
-    } else if (e.key === 'ArrowLeft') {
+      return
+    }
+    const v = videoRef.value
+    if (!v) return
+
+    if (e.key === 'ArrowLeft') {
       e.preventDefault()
       const delta = e.shiftKey ? 5 : 10
       const prev = v.currentTime
@@ -1080,6 +1075,25 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.player-enter-active {
+  transition: opacity 0.3s ease;
+}
+.player-enter-active .player-stage {
+  transition: transform 0.45s var(--ease-spring), opacity 0.3s var(--ease-spring);
+}
+.player-leave-active,
+.player-leave-active .player-stage {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.player-enter-from,
+.player-leave-to {
+  opacity: 0;
+}
+.player-enter-from .player-stage,
+.player-leave-to .player-stage {
+  transform: scale(0.96);
+}
+
 .animate-fade-out {
   animation: fade-out 0.8s ease-out forwards;
 }

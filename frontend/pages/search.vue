@@ -1,98 +1,92 @@
 <template>
   <div class="min-h-screen bg-void">
-    <!-- Top bar -->
-    <header class="fixed top-0 left-0 right-0 z-40 bg-white/95 sm:bg-white/90 sm:backdrop-blur-xl border-b border-black/[0.06]">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center gap-3">
-        <NuxtLink
-          to="/"
-          class="flex items-center justify-center w-9 h-9 rounded-full bg-black/[0.04] text-foreground hover:bg-black/[0.08] transition-all active:scale-[0.97]"
-          aria-label="Back to home"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <AppHeader>
+      <template #leading>
+        <NuxtLink to="/" class="btn-icon -ml-1" aria-label="Back to library">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 18 9 12 15 6" />
           </svg>
         </NuxtLink>
-        <h1 class="text-[19px] font-semibold text-foreground tracking-tight">Search</h1>
-        <span class="text-[13px] text-foreground-muted">ijavtorrent · sukebei</span>
-      </div>
-    </header>
+        <span class="text-[17px] font-semibold text-foreground">Search</span>
+      </template>
+    </AppHeader>
 
-    <main class="pt-[72px] pb-24">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 space-y-8">
-        <!-- Search panel -->
-        <div class="p-5 sm:p-6 rounded-2xl bg-white border border-black/[0.06] shadow-sm">
-          <div class="flex items-center gap-3">
-            <div class="relative flex-1">
-              <svg class="absolute left-4 top-1/2 -translate-y-1/2 text-foreground-muted/60" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              <input
-                v-model="query"
-                type="text"
-                placeholder="番号或关键词，如 SONE-560"
-                class="w-full h-12 pl-11 pr-4 rounded-full bg-[#F5F5F7] text-[15px] text-foreground placeholder:text-foreground-muted/50 outline-none border border-transparent focus:border-[#ff375f]/40 focus:bg-white transition-colors"
-                @keydown.enter="search"
-              />
-            </div>
+    <main class="pt-[calc(env(safe-area-inset-top)+88px)] pb-32">
+      <div class="max-w-5xl mx-auto px-4 sm:px-6">
+        <!-- Search field -->
+        <form class="relative" role="search" @submit.prevent="search">
+          <svg class="absolute left-5 top-1/2 -translate-y-1/2 text-foreground-muted pointer-events-none" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7.5" />
+            <line x1="21" y1="21" x2="16.5" y2="16.5" />
+          </svg>
+          <input
+            ref="inputRef"
+            v-model="query"
+            type="search"
+            enterkeyhint="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Code, keyword, or actress"
+            class="w-full h-14 pl-[52px] pr-[120px] rounded-full bg-white shadow-card text-[17px] text-foreground placeholder:text-foreground-muted/70 outline-none border border-transparent focus:border-accent/40 focus:shadow-[0_0_0_4px_rgba(255,55,95,0.10)] transition-[border-color,box-shadow] duration-200 [&::-webkit-search-cancel-button]:hidden"
+          />
+          <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
             <button
-              class="h-12 px-6 rounded-full bg-[#ff375f] text-white text-[15px] font-semibold transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-              :disabled="loading || query.trim().length < 2"
-              @click="search"
+              v-if="query"
+              type="button"
+              class="w-7 h-7 rounded-full bg-black/[0.08] text-foreground-muted flex items-center justify-center hover:bg-black/[0.12] transition active:scale-[0.9]"
+              aria-label="Clear"
+              @click="clearQuery"
             >
-              <span v-if="loading" class="flex items-center gap-2">
-                <svg class="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                  <path d="M21 12a9 9 0 1 1-6.22-8.56" />
-                </svg>
-                Searching...
-              </span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+            <button type="submit" class="btn btn-primary h-10 px-4" :disabled="loading || query.trim().length < 2">
+              <span v-if="loading" class="spinner w-4 h-4" />
               <span v-else>Search</span>
             </button>
           </div>
-          <p v-if="errorMsg" class="mt-3 text-[14px] text-[#ff453a]">{{ errorMsg }}</p>
+        </form>
+        <p v-if="errorMsg" class="mt-3 px-5 text-[14px] text-danger">{{ errorMsg }}</p>
+
+        <!-- Idle -->
+        <div v-if="!searched && !loading" class="pt-24 text-center">
+          <p class="text-[17px] font-semibold text-foreground">Find something new</p>
+          <p class="mt-1.5 text-[15px] text-foreground-muted">Search ijavtorrent and sukebei by code, title, or name.</p>
         </div>
 
         <!-- Loading skeletons -->
-        <div v-if="loading" class="space-y-6">
-          <div
-            v-for="n in 3"
-            :key="n"
-            class="flex flex-col sm:flex-row gap-6 sm:gap-8 p-5 sm:p-7 rounded-3xl bg-white border border-black/[0.06] shadow-sm"
-          >
-            <Skeleton class="w-full sm:w-[300px] md:w-[340px] shrink-0 aspect-[3/2] rounded-2xl" />
-            <div class="flex-1 space-y-3 py-1">
+        <div v-else-if="loading" class="mt-10 space-y-5">
+          <div v-for="n in 3" :key="n" class="surface flex flex-col sm:flex-row gap-5 sm:gap-8 p-4 sm:p-6">
+            <Skeleton class="w-full sm:w-[280px] md:w-[320px] shrink-0 aspect-[3/2] !rounded-[18px]" />
+            <div class="flex-1 space-y-3 sm:py-4">
+              <Skeleton class="h-4 w-28 rounded" />
               <Skeleton class="h-9 w-40 rounded-lg" />
               <Skeleton class="h-4 w-full rounded" />
-              <Skeleton class="h-4 w-2/3 rounded" />
-              <Skeleton class="h-10 w-64 rounded-full" />
+              <Skeleton class="h-11 w-56 !rounded-full" />
             </div>
           </div>
         </div>
 
-        <!-- Empty state -->
-        <div v-else-if="searched && items.length === 0 && actresses.length === 0" class="text-center py-32">
-          <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-black/[0.04] text-foreground-muted mb-4">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-          </div>
-          <p class="text-[15px] text-foreground-muted">No results for "{{ lastQuery }}"</p>
+        <!-- Empty -->
+        <div v-else-if="items.length === 0 && actresses.length === 0" class="pt-24 text-center">
+          <p class="text-[17px] font-semibold text-foreground">No Results for “{{ lastQuery }}”</p>
+          <p class="mt-1.5 text-[15px] text-foreground-muted">Check the spelling or try a title code.</p>
         </div>
 
-        <!-- Results: hero cards in the home page's StarCard language -->
-        <div v-else-if="searched && (items.length || actresses.length)" class="space-y-6">
+        <template v-else>
           <!-- Actress directory matches: always followable, even when the
                video search found nothing for the name -->
-          <div v-if="actresses.length" class="space-y-3">
-            <p class="text-[13px] text-foreground-muted px-1">Actresses matching "{{ lastQuery }}"</p>
-            <div class="flex gap-4 overflow-x-auto scrollbar-hide pb-2 px-1">
+          <section v-if="actresses.length" class="mt-10">
+            <h2 class="px-1 text-[22px] font-bold text-foreground">Actresses</h2>
+            <div class="mt-4 -mx-4 sm:mx-0 flex gap-3 overflow-x-auto scrollbar-hide px-4 sm:px-0 pb-2 items-start">
               <div
                 v-for="a in actresses"
                 :key="a.url"
-                class="shrink-0 w-[150px] p-4 rounded-2xl bg-white border border-black/[0.06] shadow-sm flex flex-col items-center gap-2.5"
+                class="surface shrink-0 w-[148px] p-3 flex flex-col gap-3"
               >
-                <div class="w-20 h-20 rounded-full overflow-hidden bg-[#F2F2F7] flex items-center justify-center">
+                <!-- Natural aspect ratio, never cropped -->
+                <div class="rounded-2xl overflow-hidden bg-fill">
                   <img
                     v-if="a.image && !failedCovers.has(a.url)"
                     :src="a.image"
@@ -100,184 +94,156 @@
                     referrerpolicy="no-referrer"
                     loading="lazy"
                     decoding="async"
-                    class="w-full h-full object-cover"
+                    class="w-full h-auto block"
                     @error="failedCovers.add(a.url)"
                   />
-                  <span v-else class="text-[22px] font-semibold text-foreground-muted/50">{{ a.name.charAt(0) }}</span>
+                  <div v-else class="aspect-square flex items-center justify-center text-[28px] font-semibold text-foreground-muted/50">
+                    {{ a.name.charAt(0) }}
+                  </div>
                 </div>
-                <p class="text-[13px] font-medium text-foreground text-center leading-tight line-clamp-2">{{ a.name }}</p>
+                <p class="px-1 text-[14px] font-semibold text-foreground leading-tight line-clamp-2">{{ a.name }}</p>
                 <button
-                  class="flex items-center gap-1.5 h-8 px-4 rounded-full text-[12px] font-medium transition-all active:scale-[0.97] disabled:cursor-default border"
-                  :class="isFollowed(a.url)
-                    ? 'border-[#30d158]/40 bg-[#30d158]/10 text-[#30d158]'
-                    : 'border-black/[0.08] text-foreground hover:bg-black/[0.03]'"
+                  class="btn btn-sm w-full"
+                  :class="isFollowed(a.url) ? 'bg-success/10 text-success disabled:!opacity-100' : 'btn-secondary'"
                   :disabled="isFollowed(a.url) || followingUrls.has(a.url)"
                   @click="follow(null, a)"
                 >
-                  <svg v-if="isFollowed(a.url)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                  <svg v-else-if="followingUrls.has(a.url)" class="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                    <path d="M21 12a9 9 0 1 1-6.22-8.56" />
-                  </svg>
-                  <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
+                  <span v-if="followingUrls.has(a.url)" class="spinner w-3.5 h-3.5" />
                   {{ isFollowed(a.url) ? 'Following' : 'Follow' }}
                 </button>
               </div>
             </div>
-          </div>
+          </section>
 
-          <template v-if="items.length">
-          <p class="text-[13px] text-foreground-muted px-1">{{ items.length }} results for "{{ lastQuery }}"</p>
-
-          <div
-            v-for="item in items"
-            :key="item.code"
-            class="flex flex-col sm:flex-row gap-6 sm:gap-8 p-5 sm:p-7 rounded-3xl bg-white border border-black/[0.06] shadow-sm"
-          >
-            <!-- Cover: natural aspect ratio, never cropped -->
-            <div class="relative w-full sm:w-[300px] md:w-[340px] shrink-0 rounded-2xl overflow-hidden bg-black shadow-md">
-              <img
-                v-if="item.cover_url && !failedCovers.has(item.code)"
-                :src="item.cover_url"
-                :alt="item.code"
-                referrerpolicy="no-referrer"
-                loading="lazy"
-                decoding="async"
-                class="w-full h-auto block bg-[#F2F2F7]"
-                style="aspect-ratio: 3 / 2"
-                @error="failedCovers.add(item.code)"
-              />
-              <div
-                v-else
-                class="flex flex-col items-center justify-center p-6 text-center bg-gradient-to-br from-[#F2F2F7] to-[#E5E5EA]"
-                style="aspect-ratio: 3 / 2"
-              >
-                <span class="text-[19px] font-semibold text-foreground/60">{{ item.code }}</span>
-                <span v-if="item.title" class="mt-1.5 text-[14px] text-foreground-muted/60 line-clamp-3">{{ item.title }}</span>
-              </div>
-              <span
-                v-if="item.in_library"
-                class="absolute top-2 left-2 px-2.5 py-1 rounded-full bg-[#30d158] text-white text-[11px] font-semibold shadow-sm"
-              >
-                已在库
-              </span>
+          <section v-if="items.length" class="mt-10">
+            <div class="px-1 flex items-baseline justify-between">
+              <h2 class="text-[22px] font-bold text-foreground">Titles</h2>
+              <span class="text-[14px] text-foreground-muted tabular-nums">{{ items.length }} results</span>
             </div>
 
-            <!-- Info -->
-            <div class="flex-1 min-w-0 flex flex-col justify-center">
-              <div class="flex items-center gap-2 mb-3">
-                <span
-                  v-if="isHd(item)"
-                  class="px-1.5 py-0.5 rounded bg-black/[0.06] text-foreground text-[11px] font-bold"
-                >
-                  HD
-                </span>
-                <span
-                  v-if="item.source === 'sukebei'"
-                  class="px-1.5 py-0.5 rounded bg-[#FF9F0A]/10 text-[#FF9F0A] text-[11px] font-bold"
-                >
-                  sukebei
-                </span>
-              </div>
-              <h3 class="text-[28px] sm:text-[36px] font-bold text-foreground leading-[1.1] tracking-tight">
-                {{ item.code }}
-              </h3>
-              <p v-if="item.title" class="mt-3 text-[15px] sm:text-[17px] text-foreground-muted leading-relaxed line-clamp-2">
-                {{ item.title }}
-              </p>
-              <p class="mt-3 text-[14px] text-foreground-muted/70">
-                <span v-if="item.release_date">{{ fmtDate(item.release_date) }}</span>
-                <span v-if="item.views != null"> · {{ formatCount(item.views) }} views</span>
-              </p>
-
-              <!-- Actions: copy best magnet + follow actresses -->
-              <div class="flex items-center gap-2.5 sm:gap-3 mt-6 flex-wrap">
-                <button
-                  v-if="bestMagnet(item)"
-                  class="flex items-center gap-2 px-5 sm:px-6 py-2.5 rounded-full bg-[#ff375f] text-white text-[15px] font-semibold transition-all hover:brightness-110 active:scale-[0.97] shrink-0"
-                  :class="copiedKey === item.code ? '!bg-[#30d158]' : ''"
-                  @click="copyMagnet(item, bestMagnet(item)!, item.code)"
-                >
-                  <svg v-if="copiedKey !== item.code" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="9" y="9" width="13" height="13" rx="2"/>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                  </svg>
-                  <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-                    <polyline points="20 6 9 17 4 12"/>
-                  </svg>
-                  <span>{{ copiedKey === item.code ? 'Copied' : 'Copy Magnet' }}</span>
-                </button>
-
-                <button
-                  v-for="star in item.stars"
-                  :key="star.url"
-                  class="flex items-center gap-1.5 h-10 px-5 rounded-full text-[14px] font-medium transition-all active:scale-[0.97] disabled:cursor-default border"
-                  :class="isFollowed(star.url)
-                    ? 'border-[#30d158]/40 bg-[#30d158]/10 text-[#30d158]'
-                    : 'border-black/[0.08] text-foreground hover:bg-black/[0.03]'"
-                  :disabled="isFollowed(star.url) || followingUrls.has(star.url)"
-                  @click="follow(item, star)"
-                >
-                  <svg v-if="isFollowed(star.url)" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                  <svg v-else-if="followingUrls.has(star.url)" class="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                    <path d="M21 12a9 9 0 1 1-6.22-8.56" />
-                  </svg>
-                  <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                  {{ isFollowed(star.url) ? `${star.name} · Following` : `Follow ${star.name}` }}
-                </button>
-                <p v-if="!item.stars.length" class="text-[12px] text-foreground-muted/60 py-1">
-                  该来源无演员信息 — 可按演员名搜索后关注
-                </p>
-              </div>
-
-              <!-- Magnet candidates: hash visible, one-click copy per row -->
-              <div v-if="item.magnets?.length" class="mt-5 space-y-2">
-                <div
-                  v-for="(m, i) in item.magnets"
-                  :key="i"
-                  class="flex items-center gap-2.5 h-10 pl-3.5 pr-1.5 rounded-xl bg-[#F5F5F7] text-[12px] min-w-0"
-                >
+            <div class="mt-4 space-y-5">
+              <article
+                v-for="item in items"
+                :key="item.code"
+                class="surface flex flex-col sm:flex-row gap-5 sm:gap-8 p-4 sm:p-6"
+              >
+                <!-- Cover: natural aspect ratio, never cropped -->
+                <div class="relative w-full sm:w-[280px] md:w-[320px] shrink-0 self-start rounded-[18px] overflow-hidden bg-fill">
+                  <img
+                    v-if="item.cover_url && !failedCovers.has(item.code)"
+                    :src="item.cover_url"
+                    :alt="item.code"
+                    referrerpolicy="no-referrer"
+                    loading="lazy"
+                    decoding="async"
+                    class="w-full h-auto block"
+                    @error="failedCovers.add(item.code)"
+                  />
+                  <div v-else class="flex flex-col items-center justify-center p-6 text-center aspect-[3/2]">
+                    <span class="text-[19px] font-semibold text-foreground/50">{{ item.code }}</span>
+                  </div>
                   <span
-                    v-if="m.is_hd"
-                    class="shrink-0 px-1.5 py-0.5 rounded bg-black/[0.06] text-foreground text-[10px] font-bold"
+                    v-if="item.in_library"
+                    class="absolute top-2.5 left-2.5 chip bg-white/90 backdrop-blur-md text-foreground shadow-sm"
                   >
-                    HD
+                    <span class="w-1.5 h-1.5 rounded-full bg-success" />In Library
                   </span>
-                  <span v-if="m.resolution" class="shrink-0 font-semibold text-foreground">{{ m.resolution }}</span>
-                  <span v-if="m.size" class="shrink-0 text-foreground-muted">{{ m.size }}</span>
-                  <span v-if="m.seeds" class="shrink-0 text-foreground-muted">{{ m.seeds }} seeds</span>
-                  <span class="flex-1 min-w-0 truncate font-mono text-[11px] text-foreground-muted/50">{{ shortHash(m.magnet) }}</span>
-                  <button
-                    class="shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-[0.97]"
-                    :class="copiedKey === magnetKey(item, i)
-                      ? 'bg-[#30d158] text-white'
-                      : 'text-foreground-muted hover:bg-black/[0.06] hover:text-foreground'"
-                    title="Copy magnet"
-                    @click="copyMagnet(item, m, magnetKey(item, i))"
-                  >
-                    <svg v-if="copiedKey !== magnetKey(item, i)" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <rect x="9" y="9" width="13" height="13" rx="2"/>
-                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                    </svg>
-                    <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-                      <polyline points="20 6 9 17 4 12"/>
-                    </svg>
-                  </button>
                 </div>
-              </div>
+
+                <div class="flex-1 min-w-0 flex flex-col justify-center">
+                  <div class="flex items-center flex-wrap gap-x-2 gap-y-1 text-[13px] font-medium text-foreground-muted tabular-nums">
+                    <span v-if="item.release_date">{{ fmtDate(item.release_date) }}</span>
+                    <template v-if="item.views != null">
+                      <span v-if="item.release_date" class="text-foreground-muted/40">·</span>
+                      <span>{{ formatCount(item.views) }} views</span>
+                    </template>
+                    <span v-if="isHd(item)" class="chip bg-black/[0.06] text-foreground">HD</span>
+                    <span v-if="item.source === 'sukebei'" class="chip bg-warning/10 text-warning">sukebei</span>
+                  </div>
+                  <h3 class="mt-2 text-[28px] sm:text-[34px] font-bold text-foreground leading-[1.05]">
+                    {{ item.code }}
+                  </h3>
+                  <p v-if="item.title" class="mt-2.5 text-[15px] text-foreground-muted leading-relaxed line-clamp-2">
+                    {{ item.title }}
+                  </p>
+
+                  <div class="flex items-center gap-2 mt-5 flex-wrap">
+                    <button
+                      v-if="bestMagnet(item)"
+                      class="btn"
+                      :class="copiedKey === item.code ? 'btn-success' : 'btn-primary'"
+                      @click="copyMagnet(item, bestMagnet(item)!, item.code)"
+                    >
+                      <svg v-if="copiedKey !== item.code" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
+                      <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      {{ copiedKey === item.code ? 'Copied' : 'Copy Magnet' }}
+                    </button>
+
+                    <button
+                      v-for="star in item.stars"
+                      :key="star.url"
+                      class="btn"
+                      :class="isFollowed(star.url) ? 'bg-success/10 text-success disabled:!opacity-100' : 'btn-secondary'"
+                      :disabled="isFollowed(star.url) || followingUrls.has(star.url)"
+                      @click="follow(item, star)"
+                    >
+                      <span v-if="followingUrls.has(star.url)" class="spinner w-3.5 h-3.5" />
+                      <svg v-else-if="isFollowed(star.url)" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                      {{ star.name }}
+                    </button>
+                  </div>
+                  <p v-if="!item.stars.length" class="mt-2.5 text-[12px] text-foreground-muted">
+                    No actress info from this source — search the name to follow.
+                  </p>
+
+                  <!-- Magnet candidates as an inset grouped list -->
+                  <div
+                    v-if="item.magnets?.length"
+                    class="mt-5 rounded-2xl bg-black/[0.03] divide-y divide-black/[0.05] overflow-hidden"
+                  >
+                    <div
+                      v-for="(m, i) in item.magnets"
+                      :key="i"
+                      class="flex items-center gap-2.5 h-11 pl-4 pr-1.5 text-[13px] min-w-0"
+                    >
+                      <span v-if="m.resolution" class="shrink-0 font-semibold text-foreground">{{ m.resolution }}</span>
+                      <span v-if="m.size" class="shrink-0 text-foreground-muted tabular-nums">{{ m.size }}</span>
+                      <span v-if="m.seeds" class="shrink-0 text-foreground-muted tabular-nums">{{ m.seeds }} seeds</span>
+                      <span class="flex-1 min-w-0 truncate font-mono text-[11px] text-foreground-muted/50">{{ shortHash(m.magnet) }}</span>
+                      <button
+                        class="shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition active:scale-[0.9]"
+                        :class="copiedKey === magnetKey(item, i)
+                          ? 'bg-success text-white'
+                          : 'text-foreground-muted hover:bg-black/[0.06] hover:text-foreground'"
+                        title="Copy magnet"
+                        @click="copyMagnet(item, m, magnetKey(item, i))"
+                      >
+                        <svg v-if="copiedKey !== magnetKey(item, i)" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                          <rect x="9" y="9" width="13" height="13" rx="2" />
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                        </svg>
+                        <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </article>
             </div>
-          </div>
-          </template>
-        </div>
+          </section>
+        </template>
       </div>
     </main>
 
@@ -307,6 +273,14 @@ const actresses = ref<SearchResultActress[]>([])
 const loading = ref(false)
 const searched = ref(false)
 const errorMsg = ref('')
+const inputRef = ref<HTMLInputElement>()
+
+function clearQuery() {
+  query.value = ''
+  inputRef.value?.focus()
+}
+
+onMounted(() => inputRef.value?.focus())
 
 // Local follow state: server-reported `followed` plus optimistic updates,
 // so a follow reflects on every card of the same actress immediately.

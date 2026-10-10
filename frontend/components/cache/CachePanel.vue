@@ -1,180 +1,135 @@
 <template>
-  <div class="fixed bottom-4 right-4 z-50">
-    <!-- Toggle button -->
+  <div ref="rootRef" class="sm:relative">
     <button
-      class="w-14 h-14 rounded-full bg-white border border-black/[0.08] text-foreground flex items-center justify-center shadow-lg transition-all duration-200 active:scale-[0.97] relative hover:border-black/20 hover:shadow-xl"
+      class="btn-icon relative"
+      :class="isOpen ? 'bg-black/[0.06]' : ''"
+      title="Downloads"
+      aria-label="Downloads"
+      :aria-expanded="isOpen"
       @click="isOpen = !isOpen"
-      title="Cache Manager"
     >
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-        <polyline points="17 8 12 3 7 8"/>
-        <line x1="12" y1="3" x2="12" y2="15"/>
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3v12" />
+        <polyline points="7 10 12 15 17 10" />
+        <path d="M5 21h14" />
       </svg>
-      <span v-if="activeCount > 0" class="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#30d158] border-2 border-white shadow-[0_0_8px_rgba(48,209,88,0.4)]" />
+      <span v-if="activeCount > 0" class="absolute top-2 right-2 w-2 h-2 rounded-full bg-success ring-2 ring-white" />
     </button>
 
-    <!-- Panel -->
-    <Transition name="slide">
+    <Transition name="pop">
       <div
         v-if="isOpen"
-        class="absolute bottom-20 sm:bottom-16 right-0 w-[92vw] sm:w-[440px] max-h-[calc(100dvh-180px)] sm:max-h-[calc(100dvh-180px)] bg-white/95 backdrop-blur-xl border border-black/[0.06] rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+        class="popover fixed sm:absolute left-3 right-3 sm:left-auto sm:right-0 top-[calc(env(safe-area-inset-top)+60px)] sm:top-full sm:mt-2 sm:w-[420px] max-h-[calc(100dvh-84px)] origin-top-right overflow-hidden flex flex-col z-50"
       >
         <!-- Header -->
-        <div class="p-4 border-b border-black/[0.06] flex items-center justify-between">
-          <div>
-            <h3 class="font-semibold text-[15px] text-foreground tracking-tight">Cache Manager</h3>
-            <div class="text-[12px] text-foreground-muted mt-0.5">
-              {{ items.length }} items · {{ activeCount }} active
-            </div>
+        <div class="px-5 pt-5 pb-4">
+          <div class="flex items-baseline justify-between gap-3">
+            <h3 class="text-[17px] font-semibold text-foreground">Downloads</h3>
+            <span class="text-[13px] text-foreground-muted tabular-nums">
+              {{ metrics?.used_human ?? '0 B' }} of {{ metrics?.max_human ?? '0 B' }}
+            </span>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="mt-3 h-1.5 bg-black/[0.06] rounded-full overflow-hidden">
             <div
-              v-if="refreshing"
-              class="w-4 h-4 rounded-full border-2 border-black/[0.08] border-t-[#ff375f] animate-spin"
-            />
-            <div class="text-right">
-              <div class="text-[13px] text-foreground-muted font-mono tabular-nums">
-                {{ metrics?.used_human ?? '0 B' }} / {{ metrics?.max_human ?? '0 B' }}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Capacity bar -->
-        <div class="px-4 py-2.5 bg-[#F5F5F7] border-b border-black/[0.04]">
-          <div class="h-1.5 bg-black/[0.06] rounded-full overflow-hidden">
-            <div
-              class="h-full rounded-full transition-all duration-500"
-              :class="usedPct > 90 ? 'bg-[#ff453a]' : usedPct > 70 ? 'bg-[#ff9f0a]' : 'bg-[#30d158]'"
+              class="h-full rounded-full transition-[width] duration-700 ease-spring"
+              :class="usedPct > 90 ? 'bg-danger' : usedPct > 70 ? 'bg-warning' : 'bg-foreground/70'"
               :style="{ width: `${Math.min(usedPct, 100)}%` }"
             />
           </div>
-          <div class="mt-1.5 flex justify-between text-[11px] text-foreground-muted/70">
-            <span>{{ usedPct.toFixed(1) }}% used</span>
-            <span>{{ metrics?.torrent_count ?? 0 }} torrents</span>
+          <div class="mt-2 flex items-center justify-between text-[12px] text-foreground-muted tabular-nums">
+            <span>{{ items.length }} items · {{ activeCount }} active</span>
+            <span v-if="refreshing" class="spinner w-3 h-3 text-foreground-muted/60" />
           </div>
-        </div>
-
-        <!-- Lane legend -->
-        <div class="px-4 py-2.5 bg-[#F2F2F7] border-b border-black/[0.04] flex items-center gap-3 text-[11px] text-foreground-muted/70 flex-wrap">
-          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#10b981]" />Cached</span>
-          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#f59e0b]" />Downloading</span>
-          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#ef4444]" />Corrupt</span>
-          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#1f2937]" />Missing</span>
         </div>
 
         <!-- List -->
-        <div class="flex-1 overflow-y-auto p-2 space-y-1 min-h-0">
-          <div v-if="loading" class="p-4 space-y-3">
-            <Skeleton class="h-28 w-full rounded-xl" />
-            <Skeleton class="h-28 w-full rounded-xl" />
-            <Skeleton class="h-28 w-full rounded-xl" />
+        <div class="flex-1 overflow-y-auto min-h-0 px-2 pb-2 border-t border-black/[0.05]">
+          <div v-if="loading" class="p-3 space-y-3">
+            <Skeleton v-for="n in 3" :key="n" class="h-20 w-full !rounded-2xl" />
           </div>
 
-          <div v-else-if="enrichedItems.length === 0" class="text-center py-12 text-foreground-muted text-sm">
-            No cache items
+          <div v-else-if="enrichedItems.length === 0" class="py-14 text-center">
+            <p class="text-[15px] font-medium text-foreground">Nothing cached</p>
+            <p class="mt-1 text-[13px] text-foreground-muted">Titles you play are downloaded on demand.</p>
           </div>
 
           <div
             v-for="item in enrichedItems"
             v-else
             :key="item.hash"
-            class="p-3 rounded-xl bg-[#F2F2F7] hover:bg-[#F5F5F7] transition-colors"
+            class="group/item px-3 py-3 mt-1 rounded-2xl hover:bg-black/[0.03] transition-colors"
           >
-            <!-- Row 1: code + tags -->
-            <div class="flex items-center gap-2 mb-2">
-              <span v-if="item.number" class="text-[11px] text-foreground-muted font-mono">#{{ item.number }}</span>
-              <p class="text-[14px] font-semibold text-foreground truncate flex-1 min-w-0">
-                {{ item.displayCode }}
-              </p>
-              <span
-                class="shrink-0 text-[11px] px-2 py-0.5 rounded-full font-medium"
-                :class="qualityClass(item)"
-              >
-                {{ item.quality === 'HD' ? 'HD' : 'SD' }}
-              </span>
-              <span
-                class="shrink-0 text-[11px] px-2 py-0.5 rounded-full font-medium"
-                :class="stateClass(item)"
-              >
+            <div class="flex items-center gap-2">
+              <p class="text-[15px] font-semibold text-foreground truncate min-w-0">{{ item.displayCode }}</p>
+              <span v-if="item.quality === 'HD'" class="chip bg-black/[0.06] text-foreground">HD</span>
+              <span class="ml-auto shrink-0 flex items-center gap-1.5 text-[12px] font-medium" :class="stateTextClass(item)">
+                <span class="w-1.5 h-1.5 rounded-full bg-current" :class="{ 'animate-pulse': item.state === 'downloading' || item.state?.includes('checking') }" />
                 {{ stateLabel(item) }}
               </span>
             </div>
 
-            <!-- Row 2: tier + peers + speed -->
-            <div class="flex items-center gap-2 mb-2 text-[11px] text-foreground-muted flex-wrap">
-              <span class="px-1.5 py-0.5 rounded-md bg-black/[0.05] text-foreground/50">{{ tierLabel(item) }}</span>
-              <span v-if="item.peers > 0">{{ item.peers }} peers</span>
-              <span v-if="item.download_rate > 0" class="text-[#30d158]">↓ {{ formatSpeed(item.download_rate) }}</span>
-              <span v-if="item.upload_rate > 0" class="text-[#0a84ff]">↑ {{ formatSpeed(item.upload_rate) }}</span>
-              <span v-if="item.verified_pieces > 0 && item.state?.includes('checking')" class="text-[#ff9f0a]">
-                Verified {{ item.verified_pieces }} pcs
-              </span>
+            <!-- Piece map -->
+            <div class="mt-2.5 flex h-1.5 rounded-full overflow-hidden bg-black/[0.06]">
+              <div
+                v-for="(seg, idx) in item.piece_segments"
+                :key="idx"
+                class="h-full"
+                :style="{ width: `${100 / item.piece_segments.length}%`, backgroundColor: laneColor(seg[2]) }"
+                :title="`${seg[0].toFixed(0)}–${seg[1].toFixed(0)}%: ${laneLabel(seg[2])}`"
+              />
             </div>
 
-            <!-- Lane -->
-            <div class="mb-2">
-              <div class="flex h-2.5 rounded-md overflow-hidden">
-                <div
-                  v-for="(seg, idx) in item.piece_segments"
-                  :key="idx"
-                  class="h-full"
-                  :style="{ width: `${100 / item.piece_segments.length}%`, backgroundColor: laneColor(seg[2]) }"
-                  :title="`piece ${seg[0].toFixed(0)}%-${seg[1].toFixed(0)}%: ${laneLabel(seg[2])}`"
-                />
-              </div>
-              <div class="mt-1 flex justify-between text-[11px] text-foreground-muted/50">
-                <span>0%</span>
-                <span>piece map ({{ item.piece_segments.length }} segments)</span>
-                <span>100%</span>
-              </div>
-            </div>
-
-            <!-- Size row -->
-            <div class="flex items-center justify-between text-[11px] text-foreground-muted/60 mb-2">
+            <div class="mt-2 flex items-center flex-wrap gap-x-2 gap-y-1 text-[12px] text-foreground-muted tabular-nums whitespace-nowrap">
               <span>{{ formatSize(item.local_size) }} / {{ formatSize(item.video_size) }}</span>
-              <span class="font-mono">{{ item.hash.slice(0, 12) }}…</span>
-            </div>
+              <span class="text-foreground-muted/40">·</span>
+              <span>{{ tierLabel(item) }}</span>
+              <template v-if="item.peers > 0">
+                <span class="text-foreground-muted/40">·</span>
+                <span>{{ item.peers }} peers</span>
+              </template>
+              <span v-if="item.download_rate > 0" class="text-foreground">↓ {{ formatSpeed(item.download_rate) }}</span>
+              <span v-if="item.verified_pieces > 0 && item.state?.includes('checking')" class="text-warning">
+                {{ item.verified_pieces }} verified
+              </span>
 
-            <!-- Actions -->
-            <div class="flex gap-2">
-              <button
-                v-if="!item.head_ready && item.progress < 99.9"
-                class="flex-1 text-[12px] font-medium bg-black/[0.06] hover:bg-black/[0.1] text-foreground py-2 rounded-lg transition-all active:scale-[0.97]"
-                @click="boostItem(item.hash)"
-              >
-                Boost
-              </button>
-              <button
-                class="text-[12px] font-medium text-[#ff453a] hover:text-[#ff6961] px-3 py-2 rounded-lg bg-[#ff453a]/10 hover:bg-[#ff453a]/15 transition-all active:scale-[0.97]"
-                @click="removeItem(item.hash)"
-              >
-                Remove
-              </button>
+              <span class="ml-auto flex items-center gap-1 shrink-0 sm:opacity-0 sm:group-hover/item:opacity-100 transition-opacity">
+                <button
+                  v-if="!item.head_ready && item.progress < 99.9"
+                  class="h-7 px-2.5 rounded-full text-[12px] font-medium text-foreground hover:bg-black/[0.06] active:scale-[0.96] transition"
+                  @click="boostItem(item.hash)"
+                >
+                  Boost
+                </button>
+                <button
+                  class="h-7 px-2.5 rounded-full text-[12px] font-medium text-danger hover:bg-danger/10 active:scale-[0.96] transition"
+                  @click="removeItem(item.hash)"
+                >
+                  Remove
+                </button>
+              </span>
             </div>
           </div>
         </div>
 
         <!-- Footer -->
-        <div class="p-3 border-t border-black/[0.06] flex gap-2 bg-[#F2F2F7]">
-          <button
-            class="flex-1 text-[14px] flex items-center justify-center gap-1.5 bg-black/[0.06] hover:bg-black/[0.1] text-foreground py-3 rounded-xl transition-all font-medium active:scale-[0.97]"
-            @click="refresh(true)"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="23 4 23 10 17 10"/>
-              <polyline points="1 20 1 14 7 14"/>
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-            </svg>
-            Refresh
-          </button>
-          <button
-            class="flex-1 text-[14px] bg-[#ff453a]/10 hover:bg-[#ff453a]/15 text-[#ff453a] py-3 rounded-xl transition-all font-medium active:scale-[0.97]"
-            @click="clearAll"
-          >
-            Clear All
-          </button>
+        <div class="px-5 py-3 border-t border-black/[0.05] flex items-center justify-between gap-3">
+          <div class="hidden sm:flex items-center gap-3 text-[11px] text-foreground-muted whitespace-nowrap">
+            <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full" :style="{ background: laneColor(2) }" />Cached</span>
+            <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full" :style="{ background: laneColor(1) }" />Downloading</span>
+            <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full" :style="{ background: laneColor(3) }" />Corrupt</span>
+          </div>
+          <div class="flex items-center gap-1 ml-auto whitespace-nowrap">
+            <button class="h-8 px-3 rounded-full text-[13px] font-medium text-foreground hover:bg-black/[0.05] active:scale-[0.96] transition" @click="refresh(true)">
+              Refresh
+            </button>
+            <button
+              class="h-8 px-3 rounded-full text-[13px] font-medium text-danger hover:bg-danger/10 active:scale-[0.96] transition disabled:opacity-35"
+              :disabled="items.length === 0"
+              @click="clearAll"
+            >
+              Clear All
+            </button>
+          </div>
         </div>
       </div>
     </Transition>
@@ -189,6 +144,8 @@ const props = defineProps<{
 }>()
 
 const isOpen = ref(false)
+const rootRef = ref<HTMLElement | null>(null)
+useDismiss(rootRef, isOpen)
 const items = ref<any[]>([])
 const metrics = ref<CacheMetrics | null>(null)
 const loading = ref(false)
@@ -268,11 +225,11 @@ function formatSpeed(rate: number): string {
   return `${rate} B/s`
 }
 
-function stateClass(item: any): string {
-  if (item.state === 'finished' || item.state === 'seeding') return 'bg-[#30d158]/15 text-[#30d158]'
-  if (item.state?.includes('checking')) return 'bg-[#ff9f0a]/15 text-[#ff9f0a]'
-  if (item.state === 'downloading') return 'bg-[#0a84ff]/15 text-[#0a84ff]'
-  return 'bg-black/[0.05] text-foreground-muted'
+function stateTextClass(item: any): string {
+  if (item.state === 'finished' || item.state === 'seeding') return 'text-success'
+  if (item.state?.includes('checking')) return 'text-warning'
+  if (item.state === 'downloading') return 'text-info'
+  return 'text-foreground-muted'
 }
 
 function stateLabel(item: any): string {
@@ -288,30 +245,25 @@ function stateLabel(item: any): string {
   return map[item.state] || item.state || 'Waiting'
 }
 
-function qualityClass(item: any): string {
-  return item.quality === 'HD'
-    ? 'bg-[#ff375f]/15 text-[#ff375f]'
-    : 'bg-black/[0.05] text-foreground-muted'
-}
-
 function tierLabel(item: any): string {
   const map: Record<string, string> = {
-    hot: 'L1 Hot',
-    warm: 'L2 Warm',
-    seed: 'L3 Cold',
-    fragment: 'L4 Fragment',
+    hot: 'Hot',
+    warm: 'Warm',
+    seed: 'Cold',
+    fragment: 'Fragment',
   }
   return map[item.tier] || item.tier || '-'
 }
 
 function laneColor(state: number): string {
+  // Missing is transparent so the track shows through, as in the player.
   const colors: Record<number, string> = {
-    0: '#1f2937',
-    1: '#f59e0b',
-    2: '#10b981',
-    3: '#ef4444',
+    0: 'transparent',
+    1: '#FF9F0A',
+    2: 'rgba(29,29,31,0.72)',
+    3: '#FF453A',
   }
-  return colors[state] || '#1f2937'
+  return colors[state] || 'transparent'
 }
 
 function laneLabel(state: number): string {
@@ -425,14 +377,3 @@ onUnmounted(() => {
 })
 </script>
 
-<style scoped>
-.slide-enter-active,
-.slide-leave-active {
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.slide-enter-from,
-.slide-leave-to {
-  opacity: 0;
-  transform: translateY(8px) scale(0.97);
-}
-</style>
