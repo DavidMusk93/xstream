@@ -16,6 +16,28 @@ Fluid Interfaces* translated to the web).
   bar, header popovers, toasts, the video modal.
 - No floating corner buttons: every tool lives in the top bar.
 
+### Taste (owner feedback, 2026-10)
+
+Rules distilled from the owner's corrections; check new UI against them.
+
+- **The work is the protagonist.** Covers get the space (~60% width on
+  desktop); text is a caption to the cover, not a peer column. A cover
+  boxed into a card next to empty text reads "not modern".
+- **Icons over labels for repeated actions.** Copy / Play / Like are
+  icon-only circles; the name lives in a tooltip.
+- **Controls live where the action happens and appear on intent.**
+  Stepping arrows sit on the cover's edges and show on hover / focus /
+  swipe; never a permanent toolbar row for an occasional action.
+- **Follow the real workflow.** Users decide after seeing the big cover,
+  so copy exists only there — not on every thumbnail.
+- **State labels tell the disk truth.** Never echo an engine state word
+  (libtorrent `finished`) that contradicts what is actually cached.
+- **Motion reference: [archify.si](https://archify.si/zh)** — 0.9s
+  rise + fade reveals on `cubic-bezier(0.22,1,0.36,1)`, focus/dim on
+  hover, mono numbered eyebrows, big tabular stats split by hairlines;
+  hover feedback stays short (~200ms).
+- **Logo: sensual through curve and contrast, never explicit imagery.**
+
 ---
 
 ## Branding
