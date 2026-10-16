@@ -180,7 +180,7 @@ ops changes → `docs/ops/`, lessons → `docs/skill/`.
 
 - **Before starting work**: query nmem first — `read_working_memory` for the daily briefing, `memory_search` for prior decisions and lessons.
 - **After producing durable knowledge** (root causes, design decisions, verified procedures): `memory_add` with the proper `unit_type`, and keep AGENTS.md + `docs/` in sync in the same change.
-- **nmem is a knowledge base, not a running log.** Each memory is a structured markdown document: `# title`, `> TL;DR` one-line conclusion, then context, rules/procedure, and file pointers. Draw flows, pipelines, state machines and layouts as ASCII graphs, not prose.
+- **nmem is a knowledge base, not a running log.** Each memory is a structured markdown document: `# title`, `> TL;DR` one-line conclusion, then context, rules/procedure, and file pointers. Draw flows, pipelines, state machines and layouts as ASCII graphs, not prose — plain printable ASCII only (`+ - | > < v ^`), no box-drawing characters, no Unicode arrows/bullets, no tab characters.
 - **Memories are immutable.** Never `memory_update` or rewrite an existing memory. Related, corrected or reformatted knowledge → `memory_add` a new memory linked with `evolves_from_id` + `evolves_relation` (`replaces` / `enriches` / `confirms`); `memory_search` first to find the chain head.
 
 ---
