@@ -134,7 +134,7 @@ sheet on phones, centered card from `sm:`), `star/StarCardSkeleton.vue`.
 
 One glass layer: logo + wordmark (an `Offline` chip appears only when
 `/api/health` fails) on the left; icon actions on the right — Search, Follow
-(+), Activity, Downloads, then the dark `Refresh` pill (spinner + `done/total`
+(+), Inject from X, Activity, Downloads, then the dark `Refresh` pill (spinner + `done/total`
 while syncing). On the home page `StarNav` is the second row of the same
 layer; the active pill (`bg-foreground text-white`) auto-centers in the rail
 as you scroll. The page owns the tracking (a band observer at 30–40% of the
@@ -191,7 +191,24 @@ order) and the name sit above.
   Hovering the gallery dims the other cards (focus/dim) and lifts the
   hovered one. The right edge fades out (`.fade-edge-r`). **No copy on
   thumbnails** — users copy only after viewing the hero.
-- Unfollow (trash icon) shows on hover on desktop, always on touch.
+- Unfollow (trash icon) and Inject (X glyph) show on hover on desktop,
+  always on touch.
+- X rail (`XFeed`, only when posts exist): avatar + name + @handle with a
+  hairline and mono `Updated …`, then a snap rail of up to 5 white cards
+  (`w-[276/320px]`, `rounded-[20px]`, `shadow-card`): mono index + relative
+  time, Pinned / Repost chip, 15px text clamped to 6 lines (`Show more`),
+  links in `info` blue, first image at natural ratio (`max-h-[220px]`,
+  `+N` chip), compact reply/repost/like/view counts. A bound account with
+  no posts only shows `@handle` in the eyebrow.
+
+### Inject from X
+
+`XInjectSheet`, opened from the header X icon (Auto/batch) or a shelf's X
+icon (pre-selected star). Native `<select>`, a one-line status (`@handle ·
+N posts · checked 3h ago`), a monospace textarea, `Not on X` + accent
+`Inject`, then a muted "Let an agent do it" box with `Copy brief` and the
+accepted formats. Everything is labelled for agents (`aria-label`,
+`name`). Protocol: [x-inject.md](x-inject.md).
 
 **Image rule**: preserve original aspect ratio everywhere (covers, actress
 photos). Never `object-cover`, never stretch.

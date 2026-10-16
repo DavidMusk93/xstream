@@ -1,3 +1,4 @@
+import type { XInjectResult } from '~/types/api'
 import { getTraceId, syncTraceIdFromResponse } from './useLogger'
 
 function _headers() {
@@ -76,7 +77,19 @@ export function useApi() {
     return res._data as { running: boolean; elapsed?: number; last_error?: string | null }
   }
 
+  async function injectX(star: string | null, content: string) {
+    const res = await $fetch.raw('/api/social/x', {
+      baseURL: config.public.apiBase,
+      method: 'POST',
+      headers: _headers(),
+      body: { star, content },
+    })
+    syncTraceIdFromResponse(res)
+    return res._data as { updated: number; results: XInjectResult[] }
+  }
+
   return {
+    injectX,
     addTorrent,
     getCacheMetrics,
     getCacheItems,

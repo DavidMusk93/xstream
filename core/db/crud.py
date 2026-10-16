@@ -465,6 +465,201 @@ def delete_star_by_code(code: str, conn=None) -> bool:
             managed.close()
 
 
+# ── X binding (injected posts) ──────────────────────────────────────
+
+X_MAX_POSTS = 5
+
+
+@trace_db
+def find_star(key: str, conn=None) -> tuple[int, str, str] | None:
+    """Resolve a star by code, name, jp name or ijav handle -> (id, code, name)."""
+    managed, should_close = _managed_conn(conn)
+    try:
+        return managed.execute(
+            """
+            SELECT id, code, name FROM stars
+            WHERE lower(code) = lower(%s) OR lower(name) = lower(%s)
+               OR lower(jp_name) = lower(%s) OR lower(handle) = lower(%s)
+            ORDER BY (lower(code) = lower(%s)) DESC, id
+            LIMIT 1
+            """,
+            (key, key, key, key, key),
+        ).fetchone()
+    finally:
+        if should_close:
+            managed.close()
+
+
+@trace_db
+def save_x_profile(
+    star_id: int,
+    handle: str | None,
+    name: str | None,
+    avatar: str | None,
+    posts: list[dict],
+    not_found: bool = False,
+    conn=None,
+) -> dict:
+    """Merge an injected X profile into a star; returns the stored profile.
+
+    Posts merge with the stored ones by post id (an inject of 2 new posts
+    never drops the other 3) and only the newest X_MAX_POSTS are kept. A
+    different handle replaces the account and its posts; not_found clears
+    everything but stamps x_checked_at so agents can skip the star.
+    """
+    managed, should_close = _managed_conn(conn)
+    try:
+        with managed.transaction():
+            row = managed.execute(
+                "SELECT x_handle, x_name, x_avatar FROM stars WHERE id = %s FOR UPDATE",
+                (star_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(f"star {star_id} not found")
+            old_handle, old_name, old_avatar = row
+
+            if not_found:
+                managed.execute(
+                    "UPDATE stars SET x_handle = NULL, x_name = NULL, x_avatar = NULL,"
+                    " x_checked_at = timezone('UTC', now()) WHERE id = %s",
+                    (star_id,),
+                )
+                managed.execute(
+                    "DELETE FROM social_posts WHERE star_id = %s AND platform = 'x'", (star_id,)
+                )
+                return {"handle": None, "posts": []}
+
+            switched = bool(old_handle and handle and old_handle.lower() != handle.lower())
+            handle = handle or old_handle
+            if not switched:
+                name = name or old_name
+                avatar = avatar or old_avatar
+
+            merged: dict[str, dict] = {}
+            if not switched:
+                for post_id, content, url, posted_at, media, meta in managed.execute(
+                    "SELECT post_id, content, post_url, posted_at, media, meta FROM social_posts"
+                    " WHERE star_id = %s AND platform = 'x'",
+                    (star_id,),
+                ).fetchall():
+                    meta = meta or {}
+                    merged[post_id or content] = {
+                        "id": post_id, "text": content, "url": url, "posted_at": posted_at,
+                        "media": media or [], "stats": meta.get("stats") or {},
+                        "pinned": bool(meta.get("pinned")), "author": meta.get("author"),
+                    }
+            for p in posts:
+                merged[p["id"]] = p
+
+            by_content: dict[str, dict] = {}
+            for p in sorted(merged.values(), key=lambda p: p["posted_at"] is None):
+                by_content.setdefault(p["text"], p)
+            kept = sorted(
+                by_content.values(),
+                key=lambda p: (
+                    p["posted_at"] is not None,
+                    p["posted_at"] or 0,
+                    int(p["id"]) if p["id"] and p["id"].isdigit() else 0,
+                ),
+                reverse=True,
+            )[:X_MAX_POSTS]
+
+            managed.execute(
+                "UPDATE stars SET x_handle = %s, x_name = %s, x_avatar = %s, x_checked_at = timezone('UTC', now())"
+                " WHERE id = %s",
+                (handle, name, avatar, star_id),
+            )
+            managed.execute(
+                "DELETE FROM social_posts WHERE star_id = %s AND platform = 'x'", (star_id,)
+            )
+            if kept:
+                managed.cursor().executemany(
+                    """
+                    INSERT INTO social_posts
+                        (star_id, platform, post_id, content, post_url, posted_at, media, meta)
+                    VALUES (%s, 'x', %s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        (
+                            star_id, p["id"], p["text"], p["url"], p["posted_at"],
+                            Jsonb(p["media"]),
+                            Jsonb({"stats": p["stats"], "pinned": p["pinned"], "author": p["author"]}),
+                        )
+                        for p in kept
+                    ],
+                )
+            return {"handle": handle, "posts": kept}
+    finally:
+        if should_close:
+            managed.close()
+
+
+def _iso_utc(dt) -> str | None:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ") if dt else None
+
+
+@trace_db
+def load_x_profiles(conn=None) -> dict[str, dict]:
+    """{star code: profile} for every star an inject has touched."""
+    managed, should_close = _managed_conn(conn)
+    try:
+        rows = managed.execute(
+            """
+            SELECT s.code, s.x_handle, s.x_name, s.x_avatar, s.x_checked_at,
+                   p.post_id, p.content, p.post_url, p.posted_at, p.media, p.meta
+            FROM stars s
+            LEFT JOIN social_posts p ON p.star_id = s.id AND p.platform = 'x'
+            WHERE s.x_checked_at IS NOT NULL
+            ORDER BY s.code, p.posted_at DESC NULLS LAST,
+                     length(p.post_id) DESC, p.post_id DESC
+            """
+        ).fetchall()
+    finally:
+        if should_close:
+            managed.close()
+    out: dict[str, dict] = {}
+    for code, handle, name, avatar, checked_at, post_id, content, url, posted_at, media, meta in rows:
+        prof = out.setdefault(code, {
+            "handle": handle,
+            "name": name or "",
+            "avatar": avatar or "",
+            "checked_at": _iso_utc(checked_at),
+            "posts": [],
+        })
+        if content is None:
+            continue
+        meta = meta or {}
+        prof["posts"].append({
+            "id": post_id or "",
+            "text": content,
+            "url": url or "",
+            "posted_at": _iso_utc(posted_at),
+            "media": media or [],
+            "stats": meta.get("stats") or {},
+            "pinned": bool(meta.get("pinned")),
+            "author": meta.get("author") or "",
+        })
+    return out
+
+
+@trace_db
+def list_x_status(conn=None) -> list[tuple]:
+    """(code, name, jp_name, x_handle, x_checked_at, post_count) for every star."""
+    managed, should_close = _managed_conn(conn)
+    try:
+        return managed.execute(
+            """
+            SELECT s.code, s.name, s.jp_name, s.x_handle, s.x_checked_at,
+                   (SELECT count(*) FROM social_posts p WHERE p.star_id = s.id AND p.platform = 'x')
+            FROM stars s
+            ORDER BY s.x_checked_at NULLS FIRST, s.name
+            """
+        ).fetchall()
+    finally:
+        if should_close:
+            managed.close()
+
+
 # ── Sync run history ────────────────────────────────────────────────
 
 @trace_db

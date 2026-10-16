@@ -20,6 +20,7 @@ System architecture, module design, and algorithm specifications.
 | [deletion-design.md](design/deletion-design.md) | Safe actor deletion flow design |
 | [diff-sync-design.md](design/diff-sync-design.md) | Diff-Sync incremental sync algorithm design |
 | [magnet-check.md](design/magnet-check.md) | Magnet liveness check: dead-magnet detection, auto-swap, dead marking |
+| [x-inject.md](design/x-inject.md) | X inject: star X accounts + newest 5 posts pasted by an agent (HTML/text/JSON), no X API |
 | [ui-design.md](design/ui-design.md) | Frontend design spec |
 
 ## `docs/analysis/` — Root Cause Analysis & Investigations

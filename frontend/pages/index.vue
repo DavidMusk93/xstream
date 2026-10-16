@@ -14,6 +14,9 @@
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
         </button>
+        <button class="btn-icon" title="Inject from X" aria-label="Inject from X" @click="openInject('')">
+          <XGlyph class="w-[16px] h-[16px]" />
+        </button>
         <EventPanel />
         <CachePanel :stars="displayStars" />
         <button
@@ -111,6 +114,7 @@
               :index="index"
               @play="openVideo"
               @deleted="onStarDeleted"
+              @inject="openInject"
             />
             <StarCardSkeleton v-else />
           </div>
@@ -119,6 +123,7 @@
     </main>
 
     <AddStarSheet v-model:open="addOpen" :stars="displayStars" @jump="scrollToStar" />
+    <XInjectSheet v-model:open="injectOpen" v-model:target="injectTarget" :stars="displayStars" />
     <VideoModal v-model:open="modalOpen" :hash="activeHash" :code="activeCode" :star-code="activeStarCode" />
 
     <SyncToast
@@ -169,6 +174,13 @@ const stats = computed(() => {
 
 const visibleCodes = ref<Set<string>>(new Set())
 const addOpen = ref(false)
+const injectOpen = ref(false)
+const injectTarget = ref('')
+
+function openInject(code: string) {
+  injectTarget.value = code
+  injectOpen.value = true
+}
 
 const modalOpen = ref(false)
 const activeHash = ref('')
@@ -372,6 +384,8 @@ onMounted(() => {
   unsubs.push(onServerEvent('sync.completed', handleSyncCompleted))
   unsubs.push(onServerEvent('sync.error', handleSyncError))
   unsubs.push(onServerEvent('star.ready', handleStarReady))
+  // Injected X posts (this tab, another device, or an agent via the API).
+  unsubs.push(onServerEvent('star.social', handleStarReady))
   // Server coalesced our event queue (slow client) — refetch state once.
   unsubs.push(onServerEvent('sync.resync_required', () => {
     fetchSyncStatus(true)

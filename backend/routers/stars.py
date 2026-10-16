@@ -116,6 +116,9 @@ def _build_stars_response() -> list[dict[str, Any]]:
         for row in title_rows:
             db_data[row[0]] = {"titles": row[1]}
 
+        from core import db
+        x_profiles = db.load_x_profiles(conn)
+
         cover_files = _scan_cover_files(
             {t["code"] for d in db_data.values() for t in d["titles"]}
         )
@@ -150,6 +153,7 @@ def _build_stars_response() -> list[dict[str, Any]]:
                 "type": a.get("type", "solo"),
                 "note": a.get("note", ""),
                 "titles": titles,
+                "x": x_profiles.get(code),
             })
 
         def _latest_date(star):

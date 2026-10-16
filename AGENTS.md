@@ -53,15 +53,17 @@ detail: `docs/design/architecture-decisions.md`.
 | `TorrentEngine` | `backend/services/torrent_engine.py` | libtorrent session, cache mgmt, tiered eviction, moov scan, orphan GC |
 | `PieceStateTracker` | `backend/services/piece_tracker.py` | 3×int bitmap piece state machine |
 | `video_stream` | `backend/services/video_stream.py` | Range streaming, hole detection, seek priority |
-| Routers | `backend/routers/` | `stream.py` (`/stream`, `/api/check`), `torrents.py`, `stars.py`, `cache.py`, `sync.py` (in-process sync + 6h scheduler), `track.py` (behavior 埋点), `auth.py`, `log.py`, `events.py` (SSE), `magnets.py` (liveness check + purge-dead), `search.py`, `test_helper.py` (debug, no auth) |
+| Routers | `backend/routers/` | `stream.py` (`/stream`, `/api/check`), `torrents.py`, `stars.py`, `cache.py`, `sync.py` (in-process sync + 6h scheduler), `track.py` (behavior 埋点), `auth.py`, `log.py`, `events.py` (SSE), `magnets.py` (liveness check + purge-dead), `search.py`, `social.py` (X inject), `test_helper.py` (debug, no auth) |
 | `search_router` | `backend/routers/search.py` | `/api/search?q=` — ijavtorrent (`?searchTerm=`; the old `?s=` returns the homepage since 2026-09) + sukebei fallback, sync-consistent filtering; items carry `magnets[]` sorted by `TitleSyncSink._score_magnet` (reuse it, never re-rank by hand), `in_library` + `followed` enrichment; name queries also hit ijav's live `/actresses?searchTerm=` directory search (`parse_actress_directory` in extractors.py) so an actress is followable even with zero video hits — offline fallback: local index `data/actress_index.json` (mtime-cached, rebuilt weekly-ish by `scripts/build_actress_index.py`); follow reuses `POST /api/stars/add` |
 | `EventBus` | `core/events.py` | In-process pub/sub for SSE |
+| X inject | `backend/services/x_inject.py` + `routers/social.py` | Star ↔ X account + newest 5 posts, injected by an agent/owner (HTML / text / JSON) — never the X API; `POST /api/social/x`, `GET /api/social/x/pending` (see `docs/design/x-inject.md`) |
 | `MagnetChecker` | `backend/services/magnet_checker.py` | Dead-magnet detection, auto-swap (see `docs/design/magnet-check.md`) |
 | Scraper pipeline | `scrapers/v2/` | `tasks/sync_titles.py`: sources → fetchers → extractors → sinks (see `docs/design/diff-sync-design.md`) |
 
 Track events (`/api/track`): `star_view`, `play`, `play_ready`, `play_timeout`,
 `play_error`, `play_watch`, `copy_magnet` (meta.source: hero/search),
-`like`/`unlike`, `add_star` (meta.source: home/search), `delete_star`, `search`.
+`like`/`unlike`, `add_star` (meta.source: home/search), `delete_star`, `search`,
+`x_inject`.
 
 ---
 
@@ -162,6 +164,7 @@ Full index with summaries: `docs/README.md`. Most-used:
 | Database schema & access rules | `docs/design/database.md` |
 | Diff-Sync incremental sync | `docs/design/diff-sync-design.md` |
 | Magnet liveness check | `docs/design/magnet-check.md` |
+| X inject (star X accounts, no API) | `docs/design/x-inject.md` |
 | SSE push architecture | `docs/design/sse-push-architecture.md` |
 | UI design spec (apple-design) | `docs/design/ui-design.md` |
 | Ops runbook (Caddy, ports, logs, commands) | `docs/ops/runbook.md` |

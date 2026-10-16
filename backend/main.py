@@ -17,7 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import time
 import uuid
 
-from backend.routers import stream_router, check_router, torrents_router, cache_router, auth_router, log_router, sync_router, track_router, stars, search, test_router, events_router, magnets_router
+from backend.routers import stream_router, check_router, torrents_router, cache_router, auth_router, log_router, sync_router, track_router, stars, search, social, test_router, events_router, magnets_router
 from backend.services.torrent_engine import TorrentEngine
 from core import get_logger, set_trace_id
 from core.db.connection import _conn as _db_conn
@@ -199,6 +199,7 @@ app.include_router(auth_router)
 app.include_router(log_router)
 app.include_router(stars.router)
 app.include_router(search.router)
+app.include_router(social.router)
 app.include_router(sync_router)
 app.include_router(track_router)
 app.include_router(test_router)

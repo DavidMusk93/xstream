@@ -6,24 +6,41 @@
         <p class="eyebrow">
           <span class="text-accent">{{ String((index ?? 0) + 1).padStart(2, '0') }}</span>
           <span class="tabular-nums">{{ star.titles?.length ?? 0 }} titles</span>
+          <a
+            v-if="star.x?.handle && !star.x.posts?.length"
+            :href="`https://x.com/${star.x.handle}`"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="hover:text-foreground transition-colors"
+          >@{{ star.x.handle }}</a>
           <span class="h-px w-10 bg-black/10" />
         </p>
         <h2 class="mt-2 text-[28px] sm:text-[36px] font-bold text-foreground leading-[1.1] truncate">
           {{ star.name }}
         </h2>
       </div>
-      <button
-        class="btn-icon text-foreground-muted hover:text-danger hover:bg-danger/10 sm:opacity-0 sm:group-hover/star:opacity-100 focus-visible:opacity-100"
-        title="Unfollow star"
-        aria-label="Unfollow star"
-        :disabled="deleting"
-        @click="onDelete"
-      >
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="3 6 5 6 21 6" />
-          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-        </svg>
-      </button>
+      <div class="flex items-center gap-1 shrink-0">
+        <button
+          class="btn-icon text-foreground-muted hover:text-foreground sm:opacity-0 sm:group-hover/star:opacity-100 focus-visible:opacity-100"
+          :title="`Inject X posts for ${star.name}`"
+          :aria-label="`Inject X posts for ${star.name}`"
+          @click="emit('inject', star.code)"
+        >
+          <XGlyph class="w-[15px] h-[15px]" />
+        </button>
+        <button
+          class="btn-icon text-foreground-muted hover:text-danger hover:bg-danger/10 sm:opacity-0 sm:group-hover/star:opacity-100 focus-visible:opacity-100"
+          title="Unfollow star"
+          aria-label="Unfollow star"
+          :disabled="deleting"
+          @click="onDelete"
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+          </svg>
+        </button>
+      </div>
     </div>
 
     <div v-reveal="0.08">
@@ -213,6 +230,8 @@
         </button>
         <div v-if="trailPad > 0" class="shrink-0 h-px" :style="{ width: `${trailPad}px` }" />
       </div>
+
+      <XFeed v-if="star.x?.posts?.length" :profile="star.x" :star="star.name" />
     </div>
   </section>
 </template>
@@ -228,6 +247,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'play', magnet: string, code: string, starCode: string): void
   (e: 'deleted', code: string): void
+  (e: 'inject', code: string): void
 }>()
 
 const { track } = useTrack()

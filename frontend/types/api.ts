@@ -56,11 +56,37 @@ export interface Title {
   user_liked?: boolean
 }
 
-export interface Post {
-  platform: string
-  content: string
+export interface XPost {
+  id: string
+  text: string
   url: string
-  posted_at: string
+  /** UTC ISO-8601, e.g. 2026-10-16T05:00:00Z */
+  posted_at: string | null
+  /** pbs.twimg.com "small" variants, at most 4 */
+  media: string[]
+  stats: { replies?: number; reposts?: number; likes?: number; views?: number }
+  pinned: boolean
+  /** Status author; differs from the profile handle on reposts */
+  author: string
+}
+
+/** Injected X binding. handle null + checked_at = checked, no account. */
+export interface XProfile {
+  handle: string | null
+  name: string
+  avatar: string
+  checked_at: string | null
+  posts: XPost[]
+}
+
+export interface XInjectResult {
+  star: string | null
+  name?: string
+  ok: boolean
+  handle?: string | null
+  posts?: number
+  received?: number
+  error?: string
 }
 
 export interface Star {
@@ -72,7 +98,7 @@ export interface Star {
   note?: string
   number?: number
   titles: Title[]
-  posts: Post[]
+  x?: XProfile | null
 }
 
 export interface SearchResultStar {
