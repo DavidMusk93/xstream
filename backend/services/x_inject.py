@@ -34,6 +34,7 @@ MAX_POSTS = 5
 MAX_TEXT = 1200
 MAX_MEDIA = 4
 MAX_NAME = 80
+MAX_EN = 600
 
 _X_EPOCH_MS = 1288834974657
 _HANDLE_RE = re.compile(r"^[A-Za-z0-9_]{1,15}$")
@@ -62,6 +63,7 @@ _STAT_ALIASES = {
 }
 _TIME_KEYS = ("posted_at", "time", "date", "created_at", "timestamp", "datetime")
 _TEXT_KEYS = ("text", "content", "full_text", "body")
+_EN_KEYS = ("en", "text_en", "english", "translation")
 _URL_KEYS = ("url", "link", "permalink", "post_url")
 _MEDIA_KEYS = ("media", "images", "photos", "image")
 _HANDLE_KEYS = ("handle", "username", "screen_name", "x", "account", "user")
@@ -83,6 +85,7 @@ class XPost:
     stats: dict[str, int] = field(default_factory=dict)
     pinned: bool = False
     author: str | None = None
+    en: str | None = None
 
 
 @dataclass
@@ -241,8 +244,10 @@ def _make_post(
     pinned: bool = False,
     author: str | None = None,
     post_id: str | None = None,
+    en: str | None = None,
 ) -> XPost | None:
     text = clean_text(text)
+    en = clean_text(en)[:MAX_EN] or None
     media = [m for m in dict.fromkeys(media or []) if m][:MAX_MEDIA]
     status = _status_parts(url)
     canonical_url = None
@@ -250,7 +255,9 @@ def _make_post(
         author = author or status[0]
         post_id = status[1]
         canonical_url = f"https://x.com/{status[0]}/status/{status[1]}"
-    if not text and not media:
+    # A status URL plus only `en` is a translation patch; the stored post
+    # supplies the rest on merge.
+    if not text and not media and not (en and status):
         return None
     if post_id and not post_id.isdigit():
         post_id = None
@@ -267,6 +274,7 @@ def _make_post(
         stats={k: v for k, v in (stats or {}).items() if v is not None},
         pinned=pinned,
         author=clean_handle(author) if author else None,
+        en=en,
     )
 
 
@@ -331,6 +339,7 @@ def _json_post(item: Any) -> XPost | None:
         pinned=bool(item.get("pinned")),
         author=clean_handle(item.get("author")),
         post_id=str(post_id) if post_id is not None else None,
+        en=_first(item, _EN_KEYS) if isinstance(_first(item, _EN_KEYS), str) else None,
     )
 
 
@@ -460,6 +469,7 @@ def _text_block(lines: list[str]) -> XPost | None:
     media: list[str] = []
     stats: dict[str, int] = {}
     pinned = False
+    en_lines: list[str] = []
     for line in lines:
         s = line.strip()
         status = _STATUS_RE.search(s)
@@ -488,13 +498,16 @@ def _text_block(lines: list[str]) -> XPost | None:
             if key in _TEXT_KEYS:
                 text_lines.append(value)
                 continue
+            if key in _EN_KEYS:
+                en_lines.append(value)
+                continue
         if s and posted_at is None and (t := parse_time(s)) and not s.isdigit():
             posted_at = t
             continue
         text_lines.append(line.rstrip())
     return _make_post(
         text="\n".join(text_lines), url=url, posted_at=posted_at,
-        media=media, stats=stats, pinned=pinned,
+        media=media, stats=stats, pinned=pinned, en="\n".join(en_lines),
     )
 
 

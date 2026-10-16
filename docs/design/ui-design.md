@@ -193,14 +193,19 @@ order) and the name sit above.
   thumbnails** — users copy only after viewing the hero.
 - Unfollow (trash icon) and Inject (X glyph) show on hover on desktop,
   always on touch.
-- X rail (`XFeed`, only when posts exist): one line — 24px avatar, name,
-  @handle, hairline, mono `18m ago` — over a **fixed-height strip**
-  (`224 / 260px`) of up to 5 tiles; each whole tile links to the post.
+- X rail (`XFeed`, only when posts exist): one line — 24px avatar, the
+  star's English name (X display name in the tooltip), @handle, hairline,
+  mono `18m ago` — over a **fixed-height strip** (`224 / 260px`) of up to
+  5 tiles. Copy is the post's English `en` (original in the tooltip), and
+  **nothing is elided**: a small X button on each tile opens the post.
   Photo posts: the image fills the strip height at its natural ratio
   (width follows the photo, `object-contain`, never cropped), a 2-line
-  caption + time + likes on a bottom scrim, `+N` / Pinned / Repost chips.
-  Text posts: a white pull-quote tile (`w-[216/248px]`) whose type scales
-  with length (≤28 chars 23px semibold, ≤80 17px, else 14px; line-clamped),
+  3-line caption + time + likes on a bottom scrim, `+N` / Pinned / Repost
+  chips; hover (pointer) or tap (touch) opens the full caption over a
+  deeper scrim, scrolling if long — only when the caption is truncated.
+  Text posts: a white pull-quote tile whose width (`216/248`, `256/304`,
+  `288/360px`) and type (23 / 17 / 15 / 14px) scale with length; overflow
+  scrolls inside the tile with a bottom fade until the end is reached;
   entities in `info` blue, likes + views footer. Rejected design: fixed
   320px cards stretched to the tallest post — portrait photos and short
   posts left most of each card empty. Photos stay `opacity-0` until

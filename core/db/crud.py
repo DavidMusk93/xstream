@@ -547,8 +547,17 @@ def save_x_profile(
                         "id": post_id, "text": content, "url": url, "posted_at": posted_at,
                         "media": media or [], "stats": meta.get("stats") or {},
                         "pinned": bool(meta.get("pinned")), "author": meta.get("author"),
+                        "en": meta.get("en"),
                     }
             for p in posts:
+                old = merged.get(p["id"])
+                if not p["text"] and not p["media"]:
+                    # Translation patch: only `en` changes on a stored post.
+                    if old and p.get("en"):
+                        merged[p["id"]] = {**old, "en": p["en"]}
+                    continue
+                if old and not p.get("en") and old.get("en") and old["text"] == p["text"]:
+                    p = {**p, "en": old["en"]}
                 merged[p["id"]] = p
 
             by_content: dict[str, dict] = {}
@@ -583,7 +592,10 @@ def save_x_profile(
                         (
                             star_id, p["id"], p["text"], p["url"], p["posted_at"],
                             Jsonb(p["media"]),
-                            Jsonb({"stats": p["stats"], "pinned": p["pinned"], "author": p["author"]}),
+                            Jsonb({
+                                "stats": p["stats"], "pinned": p["pinned"],
+                                "author": p["author"], "en": p.get("en"),
+                            }),
                         )
                         for p in kept
                     ],
@@ -638,6 +650,7 @@ def load_x_profiles(conn=None) -> dict[str, dict]:
             "stats": meta.get("stats") or {},
             "pinned": bool(meta.get("pinned")),
             "author": meta.get("author") or "",
+            "en": meta.get("en") or "",
         })
     return out
 

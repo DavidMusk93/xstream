@@ -31,6 +31,7 @@ sees, and the backend normalizes it.
 | JSON single | `{"handle", "name", "avatar", "posts": [{"url", "text", "posted_at", "media", "likes", ...}]}` or a bare post list |
 | JSON batch | `{"stars": [{"star": "<code\|name\|jp\|ijav handle>", ...single...}]}` |
 | Not found | `none` / `not found` / `无`, `{"handle": null}`, `{"found": false}` |
+| Translation | per-post `en` (JSON) or an `en:` line (text): English shown on cards instead of the original. `{url, en}` alone is a **patch** that only sets `en` on a stored post |
 
 Normalization rules:
 
@@ -40,7 +41,11 @@ Normalization rules:
   `name=small` ≈ 680px; video/card thumbs kept); avatar → `_bigger` (73px).
   Anything else is dropped, so injected content cannot make browsers fetch
   arbitrary hosts. Status links are canonicalized to `https://x.com/u/status/id`.
-- Text clamped to 1200 chars; posts deduped by id (text hash when no URL);
+- **English**: cards show `en` when present (original on hover via `title`).
+  The agent writes it — concise, cute, flirty, emoji kept; xstream has no
+  LLM key and never translates server-side. A re-inject without `en` keeps
+  the stored translation while the original text is unchanged.
+- Text clamped to 1200 chars (`en` 600); posts deduped by id (text hash when no URL);
   newest 5 kept (ties broken by snowflake id).
 
 ## Storage (see `database.md`)
@@ -48,7 +53,7 @@ Normalization rules:
 - `stars.x_handle / x_name / x_avatar / x_checked_at`. `x_checked_at` set
   with `x_handle NULL` = "checked, no account" (agents skip it).
 - `social_posts` rows with `platform='x'`, `post_id`, `media JSONB`,
-  `meta JSONB {stats, pinned, author}`.
+  `meta JSONB {stats, pinned, author, en}`.
 - `save_x_profile` semantics: posts **merge** with stored ones by id (an
   inject of 2 new posts keeps the other 3); a **different handle** replaces
   the account and drops its posts; not-found clears both; name/avatar keep
@@ -69,7 +74,8 @@ Normalization rules:
   `XInjectSheet`: native star `<select>` (Auto = batch), status line,
   monospace textarea (`name="content"`, ⌘/Ctrl+Enter submits), `Not on X`
   and `Inject`. "Copy brief" copies a ready prompt for an agent listing the
-  selected or pending stars and the JSON reply shape.
+  selected or pending stars (stale, or with posts lacking `en`) and the
+  JSON reply shape, including the `en` style rule.
 - `XFeed` under the gallery: one-line header, then a fixed-height strip of
   up to 5 tiles — photos at natural ratio with a caption scrim, text posts
   as length-scaled pull-quotes; text renders via interpolation, never

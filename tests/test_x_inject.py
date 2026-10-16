@@ -179,6 +179,24 @@ def test_inject_merge_switch_and_clear(client):
     assert client.get("/api/social/x/pending").json()["count"] == 0
 
 
+def test_translation_field_and_patch(client):
+    [p] = parse_payload(f"@yua_mikami\n---\n{STATUS}\n新作です\nen: New drop, darling~", "MIDV-001")
+    assert (p.posts[0].text, p.posts[0].en) == ("新作です", "New drop, darling~")
+    client.post("/api/social/x", json={"star": "MIDV-001", "content": X_HTML})
+
+    # {url, en} only: translates the stored post, never blanks its text.
+    patch = {"posts": [{"url": STATUS, "en": "Fresh post, just for you"}, {"url": STATUS[:-1] + "9", "en": "ghost"}]}
+    client.post("/api/social/x", json={"star": "MIDV-001", "content": patch})
+    posts = {p["id"]: p for p in _stored()["posts"]}
+    assert len(posts) == 2
+    assert posts["1846000000000000000"]["text"] == "New post"
+    assert posts["1846000000000000000"]["en"] == "Fresh post, just for you"
+
+    # A re-scrape without `en` keeps the translation while the text is unchanged.
+    client.post("/api/social/x", json={"star": "MIDV-001", "content": X_HTML})
+    assert {p["id"]: p for p in _stored()["posts"]}["1846000000000000000"]["en"] == "Fresh post, just for you"
+
+
 def test_inject_errors(client):
     assert client.post("/api/social/x", json={"star": "nobody", "content": "none"}).status_code == 404
     assert client.post("/api/social/x", json={"content": "none"}).status_code == 404

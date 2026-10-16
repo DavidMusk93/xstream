@@ -68,6 +68,8 @@ export interface XPost {
   pinned: boolean
   /** Status author; differs from the profile handle on reposts */
   author: string
+  /** English rendering supplied by the injecting agent; shown over `text` */
+  en: string
 }
 
 /** Injected X binding. handle null + checked_at = checked, no account. */

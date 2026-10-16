@@ -37,11 +37,13 @@ INJECT_HELP = {
         "name": "display name", "avatar": "https://pbs.twimg.com/profile_images/...",
         "posts": [{"url": "https://x.com/<user>/status/<id>", "text": "...",
                    "posted_at": "ISO-8601", "media": ["https://pbs.twimg.com/media/..."],
-                   "likes": 0, "reposts": 0, "replies": 0, "views": 0}],
+                   "likes": 0, "reposts": 0, "replies": 0, "views": 0,
+                   "en": "concise, cute, flirty English translation"}],
     },
     "json_batch": {"stars": [{"star": "<code|name>", "handle": "...", "posts": []}]},
     "text": "@handle line, then posts separated by '---' lines (status URL + text); 'none' = no account",
     "keep": "newest 5 posts per star; posts merge by id across injects",
+    "translate": "send {url, en} only to add a translation to a stored post",
 }
 
 
@@ -53,7 +55,7 @@ class InjectRequest(BaseModel):
 def _post_dict(p: XPost) -> dict[str, Any]:
     return {
         "id": p.id, "text": p.text, "url": p.url, "posted_at": p.posted_at,
-        "media": p.media, "stats": p.stats, "pinned": p.pinned, "author": p.author,
+        "media": p.media, "stats": p.stats, "pinned": p.pinned, "author": p.author, "en": p.en,
     }
 
 

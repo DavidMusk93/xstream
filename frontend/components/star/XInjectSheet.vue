@@ -80,6 +80,7 @@
           <li><span class="text-foreground font-medium">x.com HTML</span> — the profile page's outerHTML; posts, time, media and counts are read from it.</li>
           <li><span class="text-foreground font-medium">Text</span> — an <code class="font-mono">@handle</code> line, then posts split by <code class="font-mono">---</code>, each with its status link.</li>
           <li><span class="text-foreground font-medium">JSON</span> — <code class="font-mono">{handle, posts:[{url, text}]}</code> or <code class="font-mono">{stars:[{star, …}]}</code>; <code class="font-mono">handle: null</code> = no account.</li>
+          <li>Add <code class="font-mono">en</code> per post (or an <code class="font-mono">en:</code> line) for the English shown on cards; <code class="font-mono">{url, en}</code> alone translates a stored post.</li>
           <li>Newest 5 posts are kept; re-injecting merges by post id. API: <code class="font-mono">POST /api/social/x</code>.</li>
         </ul>
       </details>
@@ -98,6 +99,7 @@ const PLACEHOLDER = `@handle
 ---
 https://x.com/handle/status/1846…
 Post text
+en: English line
 ---
 …or paste x.com HTML / JSON`
 
@@ -118,7 +120,7 @@ const sortedStars = computed(() => [...props.stars].sort((a, b) => a.name.locale
 const selected = computed(() => props.stars.find(s => s.code === target.value) || null)
 const pendingStars = computed(() => props.stars.filter((s) => {
   const t = s.x?.checked_at ? Date.parse(s.x.checked_at) : 0
-  return !t || Date.now() - t > STALE_MS
+  return !t || Date.now() - t > STALE_MS || !!s.x?.posts.some(p => !p.en)
 }))
 const briefStars = computed(() => (selected.value ? [selected.value] : pendingStars.value))
 
@@ -183,10 +185,12 @@ function buildBrief(): string {
   return [
     'Task: for each Japanese actress below, find her official X (x.com) account and read her 5 most recent posts.',
     'Skip accounts you are not confident are hers. If none exists, return "handle": null.',
+    'Copy "text" verbatim. Also write "en": an English rendering that is concise, cute and flirty —'
+      + ' playful and a little seductive, never vulgar; keep her emoji and #tags, drop filler.',
     'Reply with JSON only, no prose:',
     '{"stars":[{"star":"<code>","handle":"<username|null>","name":"<display name>","avatar":"https://pbs.twimg.com/profile_images/…",'
       + '"posts":[{"url":"https://x.com/<user>/status/<id>","text":"<full text>","posted_at":"<ISO-8601>",'
-      + '"media":["https://pbs.twimg.com/media/…"],"replies":0,"reposts":0,"likes":0,"views":0,"pinned":false}]}]}',
+      + '"en":"<English>","media":["https://pbs.twimg.com/media/…"],"replies":0,"reposts":0,"likes":0,"views":0,"pinned":false}]}]}',
     '',
     'Stars:',
     ...lines,
