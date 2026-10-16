@@ -193,13 +193,21 @@ order) and the name sit above.
   thumbnails** — users copy only after viewing the hero.
 - Unfollow (trash icon) and Inject (X glyph) show on hover on desktop,
   always on touch.
-- X rail (`XFeed`, only when posts exist): avatar + name + @handle with a
-  hairline and mono `Updated …`, then a snap rail of up to 5 white cards
-  (`w-[276/320px]`, `rounded-[20px]`, `shadow-card`): mono index + relative
-  time, Pinned / Repost chip, 15px text clamped to 6 lines (`Show more`),
-  links in `info` blue, first image at natural ratio (`max-h-[220px]`,
-  `+N` chip), compact reply/repost/like/view counts. A bound account with
-  no posts only shows `@handle` in the eyebrow.
+- X rail (`XFeed`, only when posts exist): one line — 24px avatar, name,
+  @handle, hairline, mono `18m ago` — over a **fixed-height strip**
+  (`224 / 260px`) of up to 5 tiles; each whole tile links to the post.
+  Photo posts: the image fills the strip height at its natural ratio
+  (width follows the photo, `object-contain`, never cropped), a 2-line
+  caption + time + likes on a bottom scrim, `+N` / Pinned / Repost chips.
+  Text posts: a white pull-quote tile (`w-[216/248px]`) whose type scales
+  with length (≤28 chars 23px semibold, ≤80 17px, else 14px; line-clamped),
+  entities in `info` blue, likes + views footer. Rejected design: fixed
+  320px cards stretched to the tallest post — portrait photos and short
+  posts left most of each card empty. Photos stay `opacity-0` until
+  `load` + `decode()` succeed (twimg JPEGs paint top-down while
+  downloading, which showed half images); a failed image falls back to
+  the text tile. A bound account with no posts only shows `@handle` in
+  the eyebrow.
 
 ### Inject from X
 

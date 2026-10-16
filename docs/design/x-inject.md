@@ -70,10 +70,10 @@ Normalization rules:
   monospace textarea (`name="content"`, ⌘/Ctrl+Enter submits), `Not on X`
   and `Inject`. "Copy brief" copies a ready prompt for an agent listing the
   selected or pending stars and the JSON reply shape.
-- `XFeed` under the gallery: avatar + name + @handle, `Updated …`, then a
-  snap rail of up to 5 cards (index eyebrow, relative time, Pinned/Repost
-  chip, linkified text via interpolation — never `v-html` — clamped to 6
-  lines, first image at natural ratio + `+N`, compact counts).
+- `XFeed` under the gallery: one-line header, then a fixed-height strip of
+  up to 5 tiles — photos at natural ratio with a caption scrim, text posts
+  as length-scaled pull-quotes; text renders via interpolation, never
+  `v-html` (layout detail: `ui-design.md`).
 - Cost: posts ride the existing ETag-cached `/api/stars` payload (≈1–2KB
-  per bound star); no timers or polling; images are lazy, `no-referrer`,
-  `small` variants, one per card.
+  per bound star); no timers or polling; images are lazy, `fetchpriority=low`,
+  `no-referrer`, `small` variants, one per tile, revealed only once decoded.
