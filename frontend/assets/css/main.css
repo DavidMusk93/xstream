@@ -81,6 +81,39 @@ textarea:focus-visible {
 }
 
 @layer components {
+  /* Hero stepping controls: hidden until the cover is hovered / focused
+     (desktop) or a swipe sets .controls-shown (touch). */
+  .hero-nav {
+    @apply absolute top-1/2 w-10 h-10 -mt-5 rounded-full flex items-center justify-center
+      bg-white/85 text-foreground shadow-[0_6px_18px_-6px_rgba(0,0,0,0.35)];
+    opacity: 0;
+    transform: scale(0.88);
+    transition: opacity 0.2s var(--ease-out), transform 0.3s var(--ease-out), background-color 0.2s;
+  }
+  .hero-nav:hover { @apply bg-white; }
+  .hero-nav:active { transform: scale(0.92); transition-duration: 0.1s; }
+  .hero-count {
+    @apply absolute bottom-3 right-3 sm:bottom-4 sm:right-4 h-6 px-2.5 rounded-full inline-flex items-center
+      bg-black/45 text-white text-[11px] tabular-nums pointer-events-none;
+    opacity: 0;
+    transition: opacity 0.2s var(--ease-out);
+  }
+  @media (hover: hover) {
+    .hero-stage:hover .hero-nav,
+    .hero-stage:hover .hero-count { opacity: 1; transform: none; }
+  }
+  .hero-stage:focus-within .hero-nav,
+  .hero-stage.controls-shown .hero-nav,
+  .hero-stage:focus-within .hero-count,
+  .hero-stage.controls-shown .hero-count { opacity: 1; transform: none; }
+  .hero-stage .hero-nav.is-off { opacity: 0 !important; pointer-events: none; }
+  @supports (backdrop-filter: blur(1px)) {
+    @media (min-width: 640px) {
+      .hero-nav { @apply bg-white/70 backdrop-blur-md; }
+      .hero-count { @apply backdrop-blur-md; }
+    }
+  }
+
   /* ── Materials ─────────────────────────────── */
 
   /* Floating top chrome. Blur only from sm: up — on phones a fixed
@@ -335,12 +368,17 @@ textarea:focus-visible {
     transform: none;
     filter: none;
   }
+  .hero-nav,
+  .hero-nav:active {
+    transform: none;
+  }
 }
 
 /* Reduced transparency — near-solid surfaces, no blur */
 @media (prefers-reduced-transparency: reduce) {
   .chrome,
-  .popover {
+  .popover,
+  .hero-nav {
     background-color: rgba(255, 255, 255, 0.98);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;

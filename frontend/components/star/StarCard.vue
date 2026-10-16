@@ -29,7 +29,12 @@
     <div v-reveal="0.08">
       <!-- Stage: the cover is the protagonist; info reads like a caption -->
       <div v-if="activeTitle" class="grid gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] lg:gap-12">
-        <div class="group/hero relative w-full max-w-[760px] rounded-[22px] overflow-hidden bg-fill shadow-[0_30px_60px_-34px_rgba(0,0,0,0.5)]">
+        <div
+          class="hero-stage group/hero relative w-full max-w-[760px] rounded-[22px] overflow-hidden bg-fill shadow-[0_30px_60px_-34px_rgba(0,0,0,0.5)] touch-pan-y select-none"
+          :class="{ 'controls-shown': controlsShown }"
+          @touchstart.passive="onTouchStart"
+          @touchend.passive="onTouchEnd"
+        >
           <img
             v-if="activeTitle.cover_url && !activeImgError"
             ref="heroImg"
@@ -54,28 +59,35 @@
             <span class="text-[19px] font-semibold text-foreground/50">{{ activeTitle.code }}</span>
             <span class="mt-1.5 text-[14px] text-foreground-muted/70 line-clamp-3">{{ activeTitle.title }}</span>
           </div>
+
+          <!-- Stepping lives on the cover itself: revealed by hover / focus
+               on desktop, briefly by a swipe on touch -->
+          <template v-if="total > 1">
+            <button
+              class="hero-nav left-3 sm:left-4"
+              :class="{ 'is-off': activeIndex <= 0 }"
+              aria-label="Previous title"
+              :disabled="activeIndex <= 0"
+              @click="step(-1)"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+            </button>
+            <button
+              class="hero-nav right-3 sm:right-4"
+              :class="{ 'is-off': activeIndex >= total - 1 }"
+              aria-label="Next title"
+              :disabled="activeIndex >= total - 1"
+              @click="step(1)"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+            </button>
+            <span class="hero-count font-mono">{{ activeIndex + 1 }} / {{ total }}</span>
+          </template>
         </div>
 
-        <div class="min-w-0 flex flex-col lg:py-1">
-          <!-- Position in the catalog + stepping -->
-          <div class="flex items-center gap-3">
-            <p class="font-mono text-[12px] text-foreground-muted tabular-nums">
-              <span class="text-foreground">{{ String(activeIndex + 1).padStart(2, '0') }}</span>
-              <span class="mx-1 text-foreground-muted/50">/</span>{{ String(total).padStart(2, '0') }}
-            </p>
-            <span class="h-px flex-1 bg-black/[0.08]" />
-            <div class="flex items-center gap-1">
-              <button class="btn-icon !w-9 !h-9 text-foreground disabled:opacity-25" aria-label="Previous title" :disabled="activeIndex <= 0" @click="step(-1)">
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
-              </button>
-              <button class="btn-icon !w-9 !h-9 text-foreground disabled:opacity-25" aria-label="Next title" :disabled="activeIndex >= total - 1" @click="step(1)">
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
-              </button>
-            </div>
-          </div>
-
+        <div class="min-w-0 flex flex-col lg:py-1 lg:pb-2">
           <Transition name="swap" mode="out-in">
-            <div :key="activeTitle.code" class="mt-5 lg:mt-auto">
+            <div :key="activeTitle.code" class="lg:mt-auto">
               <div class="flex items-center flex-wrap gap-x-2 gap-y-1 text-[13px] font-medium text-foreground-muted tabular-nums">
                 <span v-if="activeTitle.date">{{ fmtDate(activeTitle.date) }}</span>
                 <span v-if="activeIsHd" class="chip bg-black/[0.06] text-foreground">HD</span>
@@ -233,6 +245,28 @@ function step(delta: number) {
   revealThumb(next)
 }
 
+// Touch: a horizontal swipe on the cover steps and briefly reveals the
+// controls; vertical motion stays a page scroll (touch-pan-y).
+const controlsShown = ref(false)
+let controlsTimer: ReturnType<typeof setTimeout> | null = null
+let touchX = 0
+let touchY = 0
+
+function onTouchStart(e: TouchEvent) {
+  touchX = e.touches[0].clientX
+  touchY = e.touches[0].clientY
+}
+
+function onTouchEnd(e: TouchEvent) {
+  const dx = e.changedTouches[0].clientX - touchX
+  const dy = e.changedTouches[0].clientY - touchY
+  if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return
+  step(dx < 0 ? 1 : -1)
+  controlsShown.value = true
+  if (controlsTimer) clearTimeout(controlsTimer)
+  controlsTimer = setTimeout(() => { controlsShown.value = false }, 1600)
+}
+
 // Keep the stepped-to card in view without nudging the page vertically.
 function revealThumb(idx: number) {
   const row = rowRef.value
@@ -351,6 +385,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   rowResizeObserver?.disconnect()
+  if (controlsTimer) clearTimeout(controlsTimer)
 })
 const copied = ref(false)
 const liking = ref(false)

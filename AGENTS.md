@@ -188,5 +188,5 @@ ops changes → `docs/ops/`, lessons → `docs/skill/`.
 
 - Never leak private data (covers, database content, user memories)
 - Never run destructive commands; `trash` > `rm`
-- Process hygiene: kill by PID file only (never `pkill -f` — it matches your own shell); detach servers with `setsid nohup`; wrap waits in `timeout`. See `docs/skill/agent-process-hygiene.md`
+- Process hygiene: kill by PID file only (never `pkill -f` — it matches your own shell); run builds/servers/long probes as `systemd-run` transient units (`setsid` does not survive an interrupt); keep tool calls short and poll; wrap waits in `timeout`. See `docs/skill/agent-process-hygiene.md`
 - When uncertain, ask the user first

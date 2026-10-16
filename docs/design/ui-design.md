@@ -149,11 +149,16 @@ order) and the name sit above.
 - Stage (`lg:` two columns, `1.65fr / 1fr`; stacked below): hero cover at
   natural aspect ratio (`w-full h-auto`, box reserved from `cover_w/h`), up
   to `760px`, `rounded-[22px]`, soft drop shadow; fades in once decoded.
-- Info column: mono position counter `04 / 54` + hairline + prev/next
-  chevrons on top; pinned to the bottom (`lg:mt-auto`): date and HD /
-  Unavailable chips, code headline (34 / 48 / 56px, tight tracking), 3–4
-  line title, actions. Swapping titles crossfades the block (`swap`);
-  stepping scrolls the gallery to center the new card.
+- Stepping lives on the cover, not in the info column: round glass
+  chevrons sit on its left/right edges with a `n / total` pill bottom-right
+  (`.hero-nav` / `.hero-count`). Hidden at rest; revealed by hover or
+  keyboard focus on desktop, and by a horizontal swipe on touch (the swipe
+  itself steps; controls show for 1.6s). The arrow at either end of the
+  catalog stays hidden. Vertical drags remain page scroll (`touch-pan-y`).
+- Info column (pinned to the bottom on `lg:`): date and HD / Unavailable
+  chips, code headline (34 / 48 / 56px, tight tracking), 3–4 line title,
+  actions. Swapping titles crossfades the block (`swap`); stepping scrolls
+  the gallery to center the new card.
 - Actions: three icon-only `.action` circles — **Copy Magnet** (accent
   fill, magnet icon → check + success fill + `Copied` tip), Play (dark fill),
   Like (accent tint when liked). Names come from the `data-tip` tooltip
