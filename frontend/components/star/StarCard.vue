@@ -191,7 +191,7 @@
           @click="activeIndex = idx"
         >
           <div
-            class="rounded-[14px] overflow-hidden bg-fill transition-[opacity,filter,box-shadow] duration-300 [transition-timing-function:var(--ease-out)]"
+            class="aspect-[3/2] rounded-[14px] overflow-hidden bg-fill transition-[opacity,filter,box-shadow] duration-300 [transition-timing-function:var(--ease-out)]"
             :class="[
               activeIndex === idx
                 ? 'shadow-[0_14px_30px_-16px_rgba(0,0,0,0.45)]'
@@ -199,19 +199,20 @@
               title.magnet_status === 'dead' ? 'grayscale !opacity-40' : '',
             ]"
           >
+            <!-- Fixed box + contain: every thumbnail gets the same height and
+                 an abnormal cover (portrait, wrong dims) letterboxes inside
+                 instead of stretching the rail. Never object-cover. -->
             <img
               v-if="title.cover_url && !thumbErrors[title.code]"
               :src="title.cover_thumb_url || `/api/cover/${title.code}?thumb=1`"
               :alt="title.code"
-              class="w-full h-auto block"
-              :style="{ aspectRatio: coverAR(title) }"
+              class="h-full w-full object-contain"
               decoding="async"
               @error="thumbErrors[title.code] = true"
             />
             <div
               v-else
-              class="flex items-center justify-center p-2 text-center"
-              :style="{ aspectRatio: coverAR(title) }"
+              class="flex h-full items-center justify-center p-2 text-center"
             >
               <span class="text-[11px] font-semibold text-foreground/50">{{ title.code }}</span>
             </div>
@@ -313,9 +314,11 @@ const activeIsHd = computed(() => {
   return res.includes('1080') || res.includes('4k')
 })
 
-// Reserve each cover's box at its true aspect ratio so the layout never
+// Reserve the hero's box at its true aspect ratio so the layout never
 // jumps when bytes arrive. Fallback 3/2: virtually all covers are
-// ~800x537 landscape jackets, not 2:3 portraits.
+// ~800x537 landscape jackets, not 2:3 portraits. (Gallery thumbnails use
+// a fixed 3/2 box + object-contain instead, so abnormal covers can't
+// stretch the rail.)
 function coverAR(t: Title): string {
   return t.cover_w && t.cover_h ? `${t.cover_w} / ${t.cover_h}` : '3 / 2'
 }

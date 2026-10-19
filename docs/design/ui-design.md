@@ -186,7 +186,11 @@ order) and the name sit above.
   Like (accent tint when liked). Names come from the `data-tip` tooltip
   (hover on desktop; forced visible after copy via `data-tip-show`).
 - Gallery: captioned cards `w-[148/188/212px]`, `rounded-[14px]`, caption =
-  code + `YY.MM.DD`. Active = accent dot before the code + lifted shadow (no
+  code + `YY.MM.DD`. Thumbnails sit in a fixed `aspect-[3/2]` box with
+  `object-contain`, so every card shares one height and an abnormal cover
+  (portrait, wrong dims) letterboxes instead of stretching the rail —
+  `object-cover` stays forbidden. Active = accent dot before the code +
+  lifted shadow (no
   ring); inactive covers at `opacity-[0.78]`; dead magnets grayscale.
   Hovering the gallery dims the other cards (focus/dim) and lifts the
   hovered one. The right edge fades out (`.fade-edge-r`). **No copy on
