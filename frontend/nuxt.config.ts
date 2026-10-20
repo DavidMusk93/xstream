@@ -75,7 +75,7 @@ export default defineNuxtConfig({
           // SW cache is the only thing standing between a view switch and a
           // full white reload of every image).
           // Entry budget must cover the whole library x (full + thumb).
-          urlPattern: /^\/(images|api\/cover)\/.*/,
+          urlPattern: /^\/(images|api\/cover|api\/social\/x\/media)\/.*/,
           handler: 'CacheFirst',
           options: {
             cacheName: 'image-cache',

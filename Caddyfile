@@ -35,8 +35,9 @@
     handle /api/* {
         # Compress API responses: /api/stars is a 2.5MB payload and uvicorn
         # serves it identity-encoded. SSE (/api/events, would buffer events)
-        # and cover blobs (/api/cover, already-compressed JPEGs) are excluded.
-        @compressible not path /api/events /api/cover/*
+        # and image bodies (/api/cover, /api/social/x/media — already-compressed
+        # JPEGs) are excluded.
+        @compressible not path /api/events /api/cover/* /api/social/x/media/*
         encode @compressible zstd gzip {
             minimum_length 1024
         }

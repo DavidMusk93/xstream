@@ -197,31 +197,28 @@ order) and the name sit above.
   thumbnails** — users copy only after viewing the hero.
 - Unfollow (trash icon) and Inject (X glyph) show on hover on desktop,
   always on touch.
-- X rail (`XFeed`, only when posts exist): one line — 24px avatar, the
-  star's English name (X display name in the tooltip), @handle, hairline,
-  mono `18m ago` — over a **fixed-height strip** (`224 / 260px`) of up to
-  5 tiles. Copy is the post's English `en` (original in the tooltip), and
-  **nothing is elided**: a small X button on each tile opens the post.
-  Photo posts: the image fills the strip height at its natural ratio
-  (width follows the photo, `object-contain`, never cropped), a 2-line
-  3-line caption + time + likes on a bottom scrim, `+N` / Pinned / Repost
-  chips; hover (pointer) or tap (touch) opens the full caption over a
-  deeper scrim, scrolling if long — only when the caption is truncated.
-  Text posts: a white pull-quote tile whose width (`216/248`, `256/304`,
-  `288/360px`) and type (23 / 17 / 15 / 14px) scale with length; overflow
-  scrolls inside the tile with a bottom fade until the end is reached;
-  entities in `info` blue, likes + views footer. Rejected design: fixed
-  320px cards stretched to the tallest post — portrait photos and short
-  posts left most of each card empty. Photos stay `opacity-0` until
-  `load` + `decode()` succeed (twimg JPEGs paint top-down while
-  downloading, which showed half images); a failed image falls back to
-  the text tile. A bound account with no posts only shows `@handle` in
-  the eyebrow.
+- X posts (`XSocialOverlay`, opened by the header X icon or a shelf's X
+  icon — pre-filtered to that star): a floating page (bottom sheet on
+  mobile, centered `max-w-[640px]` panel on desktop, `z-[95]`), **not**
+  part of the waterfall — posts are transient content and must not occupy
+  shelf space. A chip row filters by star; the feed is every bound
+  account's newest posts merged and sorted by time, each a card with the
+  author line (avatar, name, @handle, relative time, Pinned/Repost chip,
+  link-out X glyph), the post's English `en` (original in the tooltip)
+  with entities in `info` blue, media as a natural-ratio grid (1 image
+  full width, 2–4 in 2 columns), and a likes/views footer. Images come
+  from the local cache (`/api/social/x/media` → `/images/x/`, see
+  [x-inject.md](x-inject.md)) and stay `opacity-0` until `load` +
+  `decode()` succeed (JPEGs paint top-down while downloading, which
+  showed half images); a failed image falls back to the original twimg
+  URL once. The overlay owns the Inject button (`XInjectSheet`). A bound
+  account with no posts only shows `@handle` in the shelf eyebrow.
 
 ### Inject from X
 
-`XInjectSheet`, opened from the header X icon (Auto/batch) or a shelf's X
-icon (pre-selected star). Native `<select>`, a one-line status (`@handle ·
+`XInjectSheet`, opened from the Inject button inside `XSocialOverlay`
+(pre-selected star when the overlay is filtered). Native `<select>`, a
+one-line status (`@handle ·
 N posts · checked 3h ago`), a monospace textarea, `Not on X` + accent
 `Inject`, then a muted "Let an agent do it" box with `Copy brief` and the
 accepted formats. Everything is labelled for agents (`aria-label`,

@@ -61,6 +61,21 @@ def invalidate_stars_cache() -> None:
 
 # ── Response builder ────────────────────────────────────────────────
 
+def _rewrite_x_media_urls(x_profiles: dict[str, Any]) -> None:
+    """Point X avatars/media at the local cache proxy (services/x_media.py).
+
+    The DB keeps the original twimg URLs; only the payload is rewritten, so
+    clients load images from this machine (Caddy-static after the first
+    fetch) instead of hotlinking pbs.twimg.com.
+    """
+    from backend.services import x_media
+
+    for prof in x_profiles.values():
+        if prof.get("avatar"):
+            prof["avatar"] = x_media.proxy_url(prof["avatar"])
+        for post in prof.get("posts", []):
+            post["media"] = [x_media.proxy_url(u) for u in post.get("media") or []]
+
 def _scan_cover_files(codes: set[str]) -> dict[str, tuple[bool, bool, bool]]:
     """Map each title code -> (has_full, has_thumb, has_mid) from images/titles/.
 
@@ -118,6 +133,7 @@ def _build_stars_response() -> list[dict[str, Any]]:
 
         from core import db
         x_profiles = db.load_x_profiles(conn)
+        _rewrite_x_media_urls(x_profiles)
 
         cover_files = _scan_cover_files(
             {t["code"] for d in db_data.values() for t in d["titles"]}

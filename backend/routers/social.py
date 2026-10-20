@@ -3,8 +3,9 @@
 xstream never calls the X API (paid, unstable). An agent browsing x.com —
 or the owner — injects what it sees; see docs/design/x-inject.md.
 
-  GET  /api/social/x/pending   which stars still need a check (agent to-do list)
-  POST /api/social/x           inject HTML / text / JSON for one star or a batch
+  GET  /api/social/x/pending          which stars still need a check (agent to-do list)
+  POST /api/social/x                  inject HTML / text / JSON for one star or a batch
+  GET  /api/social/x/media/{filename} injected X images, served from the local cache
 """
 
 from __future__ import annotations
@@ -14,10 +15,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from backend.routers.auth import require_auth
 from backend.routers.stars import invalidate_stars_cache
+from backend.services import x_media
 from backend.services.x_inject import InjectError, XPost, parse_payload
 from core import db, get_logger
 from core.db.write_queue import db_read, db_write
@@ -79,6 +82,43 @@ async def x_pending(stale_hours: int = Query(default=72, ge=0, le=24 * 365)) -> 
     return {"count": len(pending), "stars": pending, "inject": INJECT_HELP}
 
 
+# Cached X images are immutable per URL — let browsers/Caddy hold them.
+_MEDIA_CACHE_HEADERS = {"Cache-Control": "public, max-age=2592000, immutable"}
+
+_MIME_BY_EXT = {
+    "jpg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+    "gif": "image/gif",
+}
+
+
+@router.get("/x/media/{filename}")
+async def x_media_file(filename: str, u: str = Query(default="")) -> Response:
+    """Serve an injected X image from the local cache (see services/x_media.py).
+
+    Disk hit -> 307 to /images/x/{filename} so Caddy serves it statically.
+    Miss -> download the original `u` (twimg only), cache it, serve the bytes.
+    """
+    if not x_media.valid_filename(filename):
+        raise HTTPException(status_code=404, detail="not found")
+    path = await asyncio.to_thread(x_media.cached_path, filename)
+    if path:
+        return RedirectResponse(
+            url=f"/images/x/{filename}", status_code=307, headers=_MEDIA_CACHE_HEADERS
+        )
+    if not u or not x_media.validate_source(u):
+        raise HTTPException(status_code=400, detail="invalid source url")
+    path = await x_media.fetch_to_cache(u)
+    if not path or path.name != filename:
+        raise HTTPException(status_code=502, detail="fetch failed")
+    return Response(
+        content=path.read_bytes(),
+        media_type=_MIME_BY_EXT.get(path.suffix.lstrip("."), "image/jpeg"),
+        headers=_MEDIA_CACHE_HEADERS,
+    )
+
+
 @router.post("/x")
 async def inject_x(request: InjectRequest) -> dict[str, Any]:
     """Parse and store injected X content; returns per-star results."""
@@ -114,6 +154,11 @@ async def inject_x(request: InjectRequest) -> dict[str, Any]:
             "received": len(prof.posts),
         })
         log.info(f"x inject: {code} handle={stored['handle']} posts={len(stored['posts'])}")
+        # Prefetch images into images/x/ so the first view hits local disk.
+        warm_urls = [stored.get("avatar") or prof.avatar]
+        for p in stored["posts"]:
+            warm_urls.extend(p.get("media") or [])
+        asyncio.create_task(x_media.warm(warm_urls))
 
     updated = [r for r in results if r["ok"]]
     if updated:

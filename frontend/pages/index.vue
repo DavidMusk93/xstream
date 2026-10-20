@@ -14,7 +14,7 @@
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
         </button>
-        <button class="btn-icon" title="Inject from X" aria-label="Inject from X" @click="openInject('')">
+        <button class="btn-icon" title="X posts" aria-label="X posts" @click="openSocial('')">
           <XGlyph class="w-[16px] h-[16px]" />
         </button>
         <EventPanel />
@@ -114,7 +114,7 @@
               :index="index"
               @play="openVideo"
               @deleted="onStarDeleted"
-              @inject="openInject"
+              @social="openSocial"
             />
             <StarCardSkeleton v-else />
           </div>
@@ -123,6 +123,7 @@
     </main>
 
     <AddStarSheet v-model:open="addOpen" :stars="displayStars" @jump="scrollToStar" />
+    <XSocialOverlay v-model:open="socialOpen" v-model:filter="socialFilter" :stars="displayStars" @inject="openInject" />
     <XInjectSheet v-model:open="injectOpen" v-model:target="injectTarget" :stars="displayStars" />
     <VideoModal v-model:open="modalOpen" :hash="activeHash" :code="activeCode" :star-code="activeStarCode" />
 
@@ -176,10 +177,21 @@ const visibleCodes = ref<Set<string>>(new Set())
 const addOpen = ref(false)
 const injectOpen = ref(false)
 const injectTarget = ref('')
+const socialOpen = ref(false)
+const socialFilter = ref('')
 
 function openInject(code: string) {
+  // The inject sheet (z-90) sits under the social overlay (z-95): close the
+  // overlay so the sheet is interactive; reopening the overlay shows the
+  // injected posts after the SSE refetch.
+  socialOpen.value = false
   injectTarget.value = code
   injectOpen.value = true
+}
+
+function openSocial(code: string) {
+  socialFilter.value = code
+  socialOpen.value = true
 }
 
 const modalOpen = ref(false)

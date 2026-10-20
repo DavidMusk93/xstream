@@ -22,9 +22,9 @@
       <div class="flex items-center gap-1 shrink-0">
         <button
           class="btn-icon text-foreground-muted hover:text-foreground sm:opacity-0 sm:group-hover/star:opacity-100 focus-visible:opacity-100"
-          :title="`Inject X posts for ${star.name}`"
-          :aria-label="`Inject X posts for ${star.name}`"
-          @click="emit('inject', star.code)"
+          :title="`X posts for ${star.name}`"
+          :aria-label="`X posts for ${star.name}`"
+          @click="emit('social', star.code)"
         >
           <XGlyph class="w-[15px] h-[15px]" />
         </button>
@@ -231,8 +231,6 @@
         </button>
         <div v-if="trailPad > 0" class="shrink-0 h-px" :style="{ width: `${trailPad}px` }" />
       </div>
-
-      <XFeed v-if="star.x?.posts?.length" :profile="star.x" :star="star.name" />
     </div>
   </section>
 </template>
@@ -248,7 +246,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'play', magnet: string, code: string, starCode: string): void
   (e: 'deleted', code: string): void
-  (e: 'inject', code: string): void
+  (e: 'social', code: string): void
 }>()
 
 const { track } = useTrack()

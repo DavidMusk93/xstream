@@ -1,10 +1,10 @@
 # X Inject — star X accounts without the X API
 
-Each star can bind one X (x.com) account and show its newest 5 posts as a
-rail under the shelf. xstream never calls the X API (paid, rate-limited,
-unstable) and never scrapes x.com itself. Content is **injected**: an agent
-(e.g. Grok browsing with the owner's account) or the owner pastes what it
-sees, and the backend normalizes it.
+Each star can bind one X (x.com) account and show its newest 5 posts in a
+floating overlay opened from the header X button. xstream never calls the
+X API (paid, rate-limited, unstable) and never scrapes x.com itself.
+Content is **injected**: an agent (e.g. Grok browsing with the owner's
+account) or the owner pastes what it sees, and the backend normalizes it.
 
 ```
  agent / owner browses x.com
@@ -70,16 +70,48 @@ Normalization rules:
 
 ## UI
 
-- Header X icon and the per-star X icon (next to unfollow) open one shared
-  `XInjectSheet`: native star `<select>` (Auto = batch), status line,
-  monospace textarea (`name="content"`, ⌘/Ctrl+Enter submits), `Not on X`
-  and `Inject`. "Copy brief" copies a ready prompt for an agent listing the
-  selected or pending stars (stale, or with posts lacking `en`) and the
-  JSON reply shape, including the `en` style rule.
-- `XFeed` under the gallery: one-line header, then a fixed-height strip of
-  up to 5 tiles — photos at natural ratio with a caption scrim, text posts
-  as length-scaled pull-quotes; text renders via interpolation, never
-  `v-html` (layout detail: `ui-design.md`).
+- The header X icon opens `XSocialOverlay`: a floating page (bottom sheet
+  on mobile, centered panel on desktop) merging every bound account's
+  newest posts into one time-sorted feed, with star filter chips. Posts
+  are transient content and never occupy the waterfall. The per-star X
+  icon (next to unfollow) opens the same overlay pre-filtered to that
+  star; the overlay's Inject button opens `XInjectSheet` (Auto = batch),
+  native star `<select>`, status line, monospace textarea
+  (`name="content"`, ⌘/Ctrl+Enter submits), `Not on X` and `Inject`.
+  "Copy brief" copies a ready prompt for an agent listing the selected or
+  pending stars (stale, or with posts lacking `en`) and the JSON reply
+  shape, including the `en` style rule.
+- `XSocialOverlay` cards: author line (avatar, name, @handle, relative
+  time, Pinned/Repost chip, link-out), `en` text (original on hover via
+  `title`), media as a natural-ratio grid, likes/views footer; text
+  renders via interpolation, never `v-html` (layout detail:
+  `ui-design.md`).
 - Cost: posts ride the existing ETag-cached `/api/stars` payload (≈1–2KB
-  per bound star); no timers or polling; images are lazy, `fetchpriority=low`,
-  `no-referrer`, `small` variants, one per tile, revealed only once decoded.
+  per bound star); no timers or polling; images are lazy, `decode()`
+  gated, and served from the local media cache below.
+
+## Media cache (`backend/services/x_media.py`)
+
+Injected posts reference `pbs.twimg.com` images; hotlinking them loaded
+poorly for users, so media is cached on this machine and served like a
+CDN (mirrors the `/api/cover` pattern):
+
+```
+ inject POST /api/social/x
+   -> x_media.warm(avatar + post media)   (background, best-effort)
+        -> images/x/{blake2b(url)[:24]}.{ext}   (atomic, image/*, <=12MB)
+ /api/stars payload (stars.py)
+   -> avatar/media rewritten to
+      /api/social/x/media/{filename}?u=<original twimg URL>
+ GET /api/social/x/media/{filename}
+   -> disk hit:  307 /images/x/{filename}  (Caddy static, immutable 30d)
+   -> disk miss: fetch u, cache, serve bytes (same cache headers)
+```
+
+- Only `https://pbs.twimg.com` is ever fetched — the endpoint can never
+  act as an open proxy. The original URL travels in `u`, so no hash→URL
+  mapping table exists and the client can fall back to the remote URL on
+  error.
+- `/images/x/` is served by Caddy's existing `/images/*` static block;
+  `/api/social/x/media/*` is excluded from Caddy compression, and the PWA
+  caches it CacheFirst like covers.
