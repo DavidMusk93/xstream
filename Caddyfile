@@ -53,6 +53,14 @@
         reverse_proxy localhost:8765
     }
 
+    # ostore object storage (Rust daemon, :8781) — network-drive API for the
+    # /files page. No encode: SSE (/ostore/api/events) must not be buffered
+    # and video bodies are already-compressed content.
+    handle /ostore/* {
+        uri strip_prefix /ostore
+        reverse_proxy localhost:8781
+    }
+
     # Everything else → Nuxt frontend
     # 增加超时，避免 Nuxt SSR 渲染慢导致 502
     reverse_proxy localhost:3000 {

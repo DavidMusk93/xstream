@@ -58,12 +58,14 @@ detail: `docs/design/architecture-decisions.md`.
 | `EventBus` | `core/events.py` | In-process pub/sub for SSE |
 | X inject | `backend/services/x_inject.py` + `routers/social.py` | Star ↔ X account + newest 5 posts, injected by an agent/owner (HTML / text / JSON) — never the X API; `POST /api/social/x`, `GET /api/social/x/pending`; images cached locally (`services/x_media.py`, `GET /api/social/x/media/{file}` → `images/x/`); shown in `XSocialOverlay` (header X button), never in the waterfall (see `docs/design/x-inject.md`) |
 | `MagnetChecker` | `backend/services/magnet_checker.py` | Dead-magnet detection, auto-swap (see `docs/design/magnet-check.md`) |
+| `play_router` | `backend/routers/play.py` | `/api/play/direct` arbitrary-magnet play (`.adhoc` disk marker protects non-DB caches from orphan GC), `/api/play/recent`, `/api/files/config` ostore credential handout (see `docs/design/ostore-integration.md`) |
+| ostore (separate repo) | `/root/ostore` (github.com/DavidMusk93/ostore) | Rust/axum object storage on :8781, bound dir `data/videos`; `/ostore/*` via Caddy; SSE + webhook object events; `/files` 网盘页 + `useOstore.ts` consume it directly |
 | Scraper pipeline | `scrapers/v2/` | `tasks/sync_titles.py`: sources → fetchers → extractors → sinks (see `docs/design/diff-sync-design.md`) |
 
 Track events (`/api/track`): `star_view`, `play`, `play_ready`, `play_timeout`,
 `play_error`, `play_watch`, `copy_magnet` (meta.source: hero/search),
 `like`/`unlike`, `add_star` (meta.source: home/search), `delete_star`, `search`,
-`x_inject`.
+`x_inject`, `play_direct`, `files_upload`, `files_delete`, `files_play`.
 
 ---
 
@@ -166,6 +168,7 @@ Full index with summaries: `docs/README.md`. Most-used:
 | Magnet liveness check | `docs/design/magnet-check.md` |
 | X inject (star X accounts, no API) | `docs/design/x-inject.md` |
 | SSE push architecture | `docs/design/sse-push-architecture.md` |
+| ostore + play-direct (arbitrary magnet, /files drive) | `docs/design/ostore-integration.md` |
 | UI design spec (apple-design) | `docs/design/ui-design.md` |
 | Ops runbook (Caddy, ports, logs, commands) | `docs/ops/runbook.md` |
 | Process lifecycle (systemd) | `docs/ops/process-lifecycle.md` |

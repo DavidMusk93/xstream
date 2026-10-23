@@ -55,6 +55,14 @@ export default defineNuxtConfig({
       skipWaiting: true,
       runtimeCaching: [
         {
+          // ostore: SSE (file events) and video byte-range streams must
+          // bypass the SW cache — a Workbox handler clones every matched
+          // response, which would buffer an endless SSE stream or whole
+          // video files. Placed before the generic /api/* entry.
+          urlPattern: /^\/ostore\/.*/,
+          handler: 'NetworkOnly',
+        },
+        {
           // Stars list must be fresh after every sync/add/delete. Keep cache
           // lifetime extremely short so a refresh always sees the latest data.
           urlPattern: /^\/api\/stars/,

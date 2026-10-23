@@ -1,4 +1,4 @@
-import type { XInjectResult } from '~/types/api'
+import type { FilesConfigResponse, PlayDirectResponse, RecentPlay, XInjectResult } from '~/types/api'
 import { getTraceId, syncTraceIdFromResponse } from './useLogger'
 
 function _headers() {
@@ -88,6 +88,45 @@ export function useApi() {
     return res._data as { updated: number; results: XInjectResult[] }
   }
 
+  async function playDirect(magnet: string) {
+    const res = await $fetch.raw('/api/play/direct', {
+      baseURL: config.public.apiBase,
+      method: 'POST',
+      headers: _headers(),
+      body: { magnet },
+    })
+    syncTraceIdFromResponse(res)
+    return res._data as PlayDirectResponse
+  }
+
+  async function listRecentPlays() {
+    const res = await $fetch.raw('/api/play/recent', {
+      baseURL: config.public.apiBase,
+      headers: _headers(),
+    })
+    syncTraceIdFromResponse(res)
+    return ((res._data as { items?: RecentPlay[] } | undefined)?.items ?? []) as RecentPlay[]
+  }
+
+  async function deleteRecentPlay(hash: string) {
+    const res = await $fetch.raw(`/api/play/${hash}`, {
+      baseURL: config.public.apiBase,
+      method: 'DELETE',
+      headers: _headers(),
+    })
+    syncTraceIdFromResponse(res)
+    return res._data as { ok: boolean }
+  }
+
+  async function filesConfig() {
+    const res = await $fetch.raw('/api/files/config', {
+      baseURL: config.public.apiBase,
+      headers: _headers(),
+    })
+    syncTraceIdFromResponse(res)
+    return res._data as FilesConfigResponse
+  }
+
   return {
     injectX,
     addTorrent,
@@ -97,5 +136,9 @@ export function useApi() {
     deleteStar,
     likeTitle,
     getSyncStatus,
+    playDirect,
+    listRecentPlays,
+    deleteRecentPlay,
+    filesConfig,
   }
 }

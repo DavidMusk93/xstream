@@ -143,3 +143,42 @@ export interface SearchResponse {
   items: SearchResultItem[]
   actresses?: SearchResultActress[]
 }
+
+export interface PlayDirectResponse {
+  hash: string
+  name: string
+  status: string
+  ready: boolean
+  peers: number
+  progress: number
+}
+
+export interface RecentPlay {
+  hash: string
+  name: string
+  /** Bytes currently on disk for this torrent. */
+  size_on_disk: number
+  /** Epoch seconds; list is sorted newest first. */
+  mtime: number
+}
+
+export interface FilesConfigResponse {
+  /** Same-origin path prefix of the ostore service, e.g. "/ostore". */
+  base_url: string
+  token: string
+}
+
+export interface OstoreEntry {
+  name: string
+  path: string
+  type: 'file' | 'dir'
+  size: number
+  /** Epoch seconds. */
+  mtime: number
+}
+
+export interface OstoreListResponse {
+  path: string
+  /** Dirs first, then files, each name-sorted. */
+  entries: OstoreEntry[]
+}

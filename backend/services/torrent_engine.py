@@ -41,6 +41,10 @@ PROGRESS_SEGMENTS = 100
 # snapshot must be deleted whenever we mutate files behind libtorrent's back
 # (punch-hole). Saves happen on pause and on graceful shutdown.
 RESUME_FILE_SUFFIX = ".resume"
+# Empty marker file inside cache/torrent/<hash>/ flagging an ad-hoc play
+# (torrent not in the titles DB). Pure-disk so orphan GC preserves the dir
+# across restarts.
+ADHOC_MARKER = ".adhoc"
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".m4v", ".webm"}
 SPAM_PATTERNS = [re.compile(p, re.I) for p in [
     r"game pack", r"996gg", r"^\d+\.txt$", r"^readme", r"\.url$", r"\.txt$"
@@ -558,6 +562,10 @@ class TorrentEngine:
                 magnet = f"magnet:?xt=urn:btih:{hash_str}"
                 info = self.add_torrent(magnet, prefetch=False)
                 loaded += 1
+                # Ad-hoc plays (POST /api/play/direct) are marked on disk;
+                # restore the flag so GC/pause semantics survive restarts.
+                if info and os.path.exists(os.path.join(entry.path, ADHOC_MARKER)):
+                    info["adhoc"] = True
                 # Migration: torrents without a fast-resume snapshot would sit
                 # in checking_files limbo (paused defers the check) and make
                 # the first play after restart pay a full-file hash check.
@@ -975,6 +983,7 @@ class TorrentEngine:
             "video_size": 0,
             "ready": False,
             "prefetch": prefetch,
+            "adhoc": False,
             "work_code": _extract_work_code(magnet) or None,
             "_last_play_time": 0,
             "_play_count": 0,
@@ -1646,6 +1655,28 @@ class TorrentEngine:
         if info:
             info["keep_cache"] = keep
 
+    def mark_adhoc(self, hash_str: str) -> bool:
+        """Mark a torrent as an ad-hoc play (not in the titles DB).
+
+        Writes the pure-disk .adhoc marker so gc_orphaned_torrents preserves
+        the cache dir across restarts. Ad-hoc torrents deliberately get no
+        keep_cache protection: pause may still clear their cache.
+        """
+        with self.lock:
+            info = self.torrents.get(hash_str)
+            if not info:
+                return False
+            info["adhoc"] = True
+        marker = os.path.join(self.cache_dir, hash_str, ADHOC_MARKER)
+        try:
+            os.makedirs(os.path.dirname(marker), exist_ok=True)
+            with open(marker, "w"):
+                pass
+        except OSError as e:
+            log.warning(f"mark_adhoc failed for {hash_str[:12]}...: {e}")
+            return False
+        return True
+
     def pause_download(self, hash_str: str) -> bool:
         """Pause download: set all piece priorities to 0.
         Non-primary works (keep_cache=false) directly remove torrent and cache files."""
@@ -2075,6 +2106,11 @@ class TorrentEngine:
         removed = 0
         for hash_str in orphaned:
             try:
+                # Ad-hoc plays are never in the titles DB; the disk marker
+                # protects their cache from being wiped here.
+                if os.path.exists(os.path.join(self.cache_dir, hash_str, ADHOC_MARKER)):
+                    log.debug(f"gc_orphaned_torrents: skipping adhoc {hash_str[:12]}...")
+                    continue
                 # If already loaded into engine, use standard removal flow to release libtorrent handles
                 with self.lock:
                     info = self.torrents.get(hash_str)
