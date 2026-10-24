@@ -133,9 +133,19 @@ sheet on phones, centered card from `sm:`), `star/StarCardSkeleton.vue`.
 ### Top bar (`AppHeader`)
 
 One glass layer: logo + wordmark (an `Offline` chip appears only when
-`/api/health` fails) on the left; icon actions on the right — Search, Follow
-(+), Inject from X, Activity, Downloads, then the dark `Refresh` pill (spinner + `done/total`
-while syncing). On the home page `StarNav` is the second row of the same
+`/api/health` fails) on the left; icon actions on the right — Search, Play,
+Files, Follow (+), X posts, Activity, Downloads, then the dark `Refresh` pill
+(spinner + `done/total` while syncing).
+
+The leading slot never shrinks. Below `sm:` the actions are a horizontal
+scroll rail (`scrollbar-hide`, `w-max ml-auto` so it right-aligns when it
+fits and scrolls from the first icon when it doesn't); a 28px gradient
+overlay in the bar color fades whichever edge hides more icons. The fades
+are overlays, never a CSS mask — a mask would also clip the `fixed`
+popovers rendered inside the rail. From `sm:` up the rail is
+`overflow-visible` (popovers anchor under their trigger there). Never let
+actions overlap the logo again: add icons to the rail, don't shrink the
+logo. On the home page `StarNav` is the second row of the same
 layer; the active pill (`bg-foreground text-white`) auto-centers in the rail
 as you scroll. The page owns the tracking (a band observer at 30–40% of the
 viewport, registered by the same `v-observe` directive that virtualizes
