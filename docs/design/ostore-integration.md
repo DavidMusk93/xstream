@@ -110,8 +110,12 @@ object.moved / object.mkdir`。
   目录在前文件在后；视频行整行点击播放。
 - 上传用 **XMLHttpRequest**（fetch 无法上报上传进度），进度驱动
   `SyncToast`（fraction + progressText）。
-- 播放走新的轻量 `FilePlayerModal`（原生 `<video controls>`，Range 由
-  ostore 支持），**不复用** torrent 专用的 `VideoModal`。
+- 预览走 `FilePreviewModal`（2026-10-24 起覆盖所有文件类型，取代只能放
+  视频的 `FilePlayerModal`；**不复用** torrent 专用的 `VideoModal`）：
+  图片 / 视频 / 音频 / PDF / Markdown / JSON / CSV / 文本代码，未知类型先
+  嗅探 1 MB 是否为文本，否则信息卡 + 下载；文本类只 Range 取前 512 KB。
+  列表图片缩略图走 ostore `GET /api/thumb/{path}?w=128`（服务端等比缩放 +
+  磁盘缓存，不下载原图）。设计细节见 ui-design.md「Files」。
 - **实时更新（2026-10-24 重做）**：旧实现页面自开
   `/ostore/api/events?token=` EventSource，每个 object.* 事件节流 1s 整页
   重新 list；而 ostore 每次（重）连都 replay 最近 100 条 → 每次重连都触发

@@ -143,5 +143,29 @@ export function useOstore() {
     return `${base_url}/api/files/${encodePath(path)}?token=${encodeURIComponent(token)}`
   }
 
-  return { init, list, upload, mkdir, move, remove, fileUrl }
+  async function thumbUrl(path: string, width: number): Promise<string> {
+    const { base_url, token } = await init()
+    return `${base_url}/api/thumb/${encodePath(path)}?w=${width}&token=${encodeURIComponent(token)}`
+  }
+
+  /**
+   * First `maxBytes` of an object as text (Range request, so a huge log is
+   * never downloaded whole). `binary` flags content that isn't text.
+   */
+  async function readText(path: string, maxBytes = 512 * 1024): Promise<{ text: string; truncated: boolean; binary: boolean }> {
+    const { base_url, token } = await init()
+    const res = await fetch(`${base_url}/api/files/${encodePath(path)}`, {
+      headers: { Authorization: `Bearer ${token}`, Range: `bytes=0-${maxBytes - 1}` },
+    })
+    if (res.status === 416) return { text: '', truncated: false, binary: false }
+    if (!res.ok) throw await parseError(res)
+    const total = Number(res.headers.get('content-range')?.split('/')[1] ?? res.headers.get('content-length') ?? 0)
+    const buf = new Uint8Array(await res.arrayBuffer())
+    const head = buf.subarray(0, 8192)
+    const binary = head.includes(0)
+    const text = binary ? '' : new TextDecoder('utf-8', { fatal: false }).decode(buf)
+    return { text, truncated: total > buf.length, binary }
+  }
+
+  return { init, list, upload, mkdir, move, remove, fileUrl, thumbUrl, readText }
 }

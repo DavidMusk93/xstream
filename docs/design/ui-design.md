@@ -254,15 +254,42 @@ title is the current folder (`All Files` at the root), then a stats row
 browser Back goes up a level. Bar actions: New Folder icon + the dark
 `Upload` pill (icon-only on phones).
 
-Listing is one `.surface` of rows: a 40px `rounded-[12px]` tile (folder =
-accent tint, video = dark tile with a play glyph, other = `fill`), name
-15/17px, `size · 3h ago` meta 13px. Folder rows navigate and video rows
-play on click — no separate Play button. Download / Rename / Delete are
-`.btn-icon`s that appear on row hover on pointer devices and are always
-visible on touch (Delete hovers to `danger`). Empty state mirrors Home's
+Listing is one `.surface` of rows: a 40px `rounded-[12px]` tile
+(`FileTile`: folder = accent tint, video = dark tile with a play glyph,
+images = a real thumbnail fitted with `object-contain` on `fill` and
+faded in after decode, audio / text / archive = glyph on `fill`, anything
+else = its extension as a 10px badge), name 15/17px, one-line truncated
+meta `Type · size · 3h ago` 13px. Every row opens on click: folders
+navigate, files open the preview. Download / Rename / Delete are
+`.btn-icon`s revealed on row hover on pointer devices (Delete hovers to
+`danger`); on touch (`hover: none`) they collapse into one `⋯` button
+opening a `Sheet` action list (Open / Download / Rename / red Delete), so
+the meta line never wraps. Empty state mirrors Home's
 (title, one line, `Upload` primary + `New Folder` secondary). Dropping
 files anywhere on the page shows a centered `.popover` card ("Drop to
 upload into …"); a dragenter/dragleave depth counter keeps it steady.
+
+**Preview** (`FilePreviewModal`) renders every type in the player's
+language — `bg-black/90` blurred scrim, stage `rounded-[22px]`
+(full-screen on phones), top bar with name, `Type · size`, Download and
+Close; StarCard `hero-nav` chevrons on the stage edges plus the `n / total`
+pill step through the folder's files (←/→ keys, horizontal swipe; Esc
+closes). Media kinds sit on a black stage, document kinds on a white one:
+
+| Kind | Rendering |
+|---|---|
+| image | fitted `object-contain`, natural ratio, visible only after `decode()` |
+| video / audio | native controls (audio: large glyph tile + title + `<audio>`) |
+| pdf | browser viewer via `<object>`; fallback card with `Open PDF` |
+| markdown | `utils/markdown.ts` (escape-first, http/mailto/relative links only) in a 3xl prose column |
+| json | pretty-printed, line-numbered mono |
+| csv / tsv | table with sticky header (first 2000 rows) |
+| text / code / logs | line-numbered mono, sticky gutter |
+| other | sniffed: shown as text when the first 1 MB has no NUL, otherwise a card (extension tile, `Type · size · No preview`, accent `Download`) |
+
+Text kinds fetch only the first 512 KB with a `Range` request and say so
+with a sticky footer. Unplayable media falls back to the same card.
+Classification lives in one table, `utils/fileKind.ts`.
 
 Rows are patched in place from `files.changed` SSE events — no refetch, no
 spinner, no skeleton after the first load (see

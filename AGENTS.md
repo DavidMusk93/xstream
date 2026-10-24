@@ -65,7 +65,7 @@ detail: `docs/design/architecture-decisions.md`.
 Track events (`/api/track`): `star_view`, `play`, `play_ready`, `play_timeout`,
 `play_error`, `play_watch`, `copy_magnet` (meta.source: hero/search),
 `like`/`unlike`, `add_star` (meta.source: home/search), `delete_star`, `search`,
-`x_inject`, `play_direct`, `files_upload`, `files_delete`, `files_play`.
+`x_inject`, `play_direct`, `files_upload`, `files_delete`, `files_play` (any file preview; meta.kind).
 
 ---
 

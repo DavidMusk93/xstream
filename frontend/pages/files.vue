@@ -122,33 +122,30 @@
           <li
             v-for="entry in entries"
             :key="entry.path"
-            class="group/row flex items-center gap-3.5 pl-4 sm:pl-5 pr-2 py-3 min-w-0 border-b border-black/[0.05] last:border-0 transition-colors duration-200"
-            :class="isOpenable(entry) ? 'cursor-pointer hover:bg-black/[0.025]' : ''"
+            class="group/row flex items-center gap-3.5 pl-4 sm:pl-5 pr-2 py-3 min-w-0 border-b border-black/[0.05] last:border-0 cursor-pointer hover:bg-black/[0.025] transition-colors duration-200"
             @click="openEntry(entry)"
           >
-            <span
-              class="shrink-0 w-10 h-10 rounded-[12px] flex items-center justify-center"
-              :class="entry.type === 'dir' ? 'bg-accent/10 text-accent' : isVideo(entry) ? 'bg-foreground text-white' : 'bg-fill text-foreground-muted'"
-            >
-              <svg v-if="entry.type === 'dir'" width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M2 6a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z" />
-              </svg>
-              <svg v-else-if="isVideo(entry)" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M7 4.5v15l12.5-7.5z" />
-              </svg>
-              <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-              </svg>
-            </span>
+            <FileTile :name="entry.name" :path="entry.path" :kind="fileKind(entry.name, entry.type)" />
 
             <div class="flex-1 min-w-0">
               <p class="text-[15px] sm:text-[17px] text-foreground truncate leading-snug">{{ entry.name }}</p>
-              <p class="mt-0.5 text-[13px] font-medium text-foreground-muted tabular-nums">
-                <template v-if="entry.type === 'file'">{{ humanSize(entry.size) }}<span class="mx-1.5 text-foreground-muted/40">·</span></template>{{ relTime(entry.mtime) }}
+              <p class="mt-0.5 text-[13px] font-medium text-foreground-muted tabular-nums truncate">
+                <template v-if="entry.type === 'file'">{{ kindLabel(entry.name, fileKind(entry.name)) }}<span class="mx-1.5 text-foreground-muted/40">·</span>{{ humanSize(entry.size) }}<span class="mx-1.5 text-foreground-muted/40">·</span></template>{{ relTime(entry.mtime) }}
               </p>
             </div>
 
+            <!-- Touch: one "more" button opening an action sheet -->
+            <button
+              class="row-more btn-icon shrink-0 text-foreground-muted"
+              :aria-label="`Actions for ${entry.name}`"
+              @click.stop="actionTarget = entry"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" />
+              </svg>
+            </button>
+
+            <!-- Pointer devices: icons revealed on row hover -->
             <div class="row-actions flex items-center shrink-0" @click.stop>
               <button
                 v-if="entry.type === 'file'"
@@ -211,6 +208,22 @@
       </div>
     </Transition>
 
+    <!-- Touch action sheet -->
+    <Sheet :open="!!actionTarget" :title="actionTarget?.name ?? ''" :subtitle="actionSubtitle" @update:open="(v: boolean) => { if (!v) actionTarget = null }">
+      <div class="-mx-2 flex flex-col">
+        <button
+          v-for="act in sheetActions"
+          :key="act.label"
+          class="h-12 px-3 rounded-2xl flex items-center gap-3.5 text-left text-[17px] transition-colors active:bg-black/[0.05]"
+          :class="act.danger ? 'text-danger' : 'text-foreground'"
+          @click="runSheetAction(act.run)"
+        >
+          <span class="w-6 flex justify-center" v-html="act.icon" />
+          {{ act.label }}
+        </button>
+      </div>
+    </Sheet>
+
     <!-- New folder / rename -->
     <Sheet v-model:open="nameSheetOpen" :title="nameSheetMode === 'mkdir' ? 'New Folder' : 'Rename'" :subtitle="nameSheetMode === 'rename' ? renameTarget?.name : undefined">
       <form @submit.prevent="submitNameSheet">
@@ -235,7 +248,7 @@
       </form>
     </Sheet>
 
-    <FilePlayerModal v-model:open="playerOpen" :path="playerPath" />
+    <FilePreviewModal v-model:open="previewOpen" v-model:index="previewIndex" :files="fileEntries" />
 
     <SyncToast
       :visible="toastVisible"
@@ -252,8 +265,6 @@
 <script setup lang="ts">
 import type { OstoreEntry } from '~/types/api'
 import { OstoreError } from '~/composables/useOstore'
-
-const VIDEO_EXTS = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.ts']
 
 /** Payload of the backend's `files.changed` SSE event (ostore bridge). */
 interface FilesChange {
@@ -297,13 +308,6 @@ const stats = computed(() => {
   ]
 })
 
-function humanSize(bytes: number): string {
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
-  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${bytes} B`
-}
-
 function relTime(mtime: number): string {
   if (!Number.isFinite(mtime)) return ''
   const sec = Math.max(0, Date.now() / 1000 - mtime)
@@ -314,19 +318,9 @@ function relTime(mtime: number): string {
   return new Date(mtime * 1000).toLocaleDateString()
 }
 
-function isVideo(entry: OstoreEntry): boolean {
-  if (entry.type !== 'file') return false
-  const lower = entry.name.toLowerCase()
-  return VIDEO_EXTS.some(ext => lower.endsWith(ext))
-}
-
-function isOpenable(entry: OstoreEntry): boolean {
-  return entry.type === 'dir' || isVideo(entry)
-}
-
 function openEntry(entry: OstoreEntry) {
   if (entry.type === 'dir') navigateTo(entry.path)
-  else if (isVideo(entry)) playFile(entry)
+  else openPreview(entry)
 }
 
 // Listing. `quiet` reloads (resync after a missed event window) keep the
@@ -597,15 +591,60 @@ async function submitNameSheet() {
   }
 }
 
-// Row actions.
-const playerOpen = ref(false)
-const playerPath = ref('')
-
-function playFile(entry: OstoreEntry) {
-  track('files_play', { meta: { path: entry.path } })
-  playerPath.value = entry.path
-  playerOpen.value = true
+// Touch action sheet (pointer devices use the hover icons instead).
+const actionTarget = ref<OstoreEntry | null>(null)
+const ICONS = {
+  open: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  download: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  rename: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
+  delete: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
 }
+const actionSubtitle = computed(() => {
+  const e = actionTarget.value
+  if (!e) return undefined
+  return e.type === 'dir' ? 'Folder' : `${kindLabel(e.name, fileKind(e.name))} · ${humanSize(e.size)}`
+})
+const sheetActions = computed(() => {
+  const e = actionTarget.value
+  if (!e) return []
+  const acts: { label: string; icon: string; danger?: boolean; run: () => void }[] = [
+    { label: 'Open', icon: ICONS.open, run: () => openEntry(e) },
+  ]
+  if (e.type === 'file') acts.push({ label: 'Download', icon: ICONS.download, run: () => downloadFile(e) })
+  acts.push(
+    { label: 'Rename', icon: ICONS.rename, run: () => openNameSheet('rename', e) },
+    { label: 'Delete', icon: ICONS.delete, danger: true, run: () => deleteEntry(e) },
+  )
+  return acts
+})
+function runSheetAction(run: () => void) {
+  actionTarget.value = null
+  // Let the sheet start closing before another sheet/dialog opens.
+  setTimeout(run, 120)
+}
+
+// Preview: every file kind, stepping through this folder's files.
+const previewOpen = ref(false)
+const previewIndex = ref(0)
+const fileEntries = computed(() => entries.value.filter(e => e.type === 'file'))
+
+function openPreview(entry: OstoreEntry) {
+  const i = fileEntries.value.findIndex(e => e.path === entry.path)
+  if (i < 0) return
+  track('files_play', { meta: { path: entry.path, kind: fileKind(entry.name) } })
+  previewIndex.value = i
+  previewOpen.value = true
+}
+
+// Keep the previewed file stable when live events reshuffle the folder.
+watch(fileEntries, (list, old) => {
+  if (!previewOpen.value) return
+  const current = old?.[previewIndex.value]?.path
+  const i = current ? list.findIndex(e => e.path === current) : -1
+  if (i >= 0) previewIndex.value = i
+  else if (!list.length) previewOpen.value = false
+  else previewIndex.value = Math.min(previewIndex.value, list.length - 1)
+})
 
 async function downloadFile(entry: OstoreEntry) {
   try {
@@ -658,8 +697,16 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* Row actions: on intent for pointer devices, always visible on touch. */
+/* Row actions: hover icons on pointer devices, one "more" button on touch. */
+@media (hover: none) {
+  .row-actions {
+    display: none;
+  }
+}
 @media (hover: hover) {
+  .row-more {
+    display: none;
+  }
   .row-actions {
     opacity: 0;
     transition: opacity 0.2s var(--ease-out);
