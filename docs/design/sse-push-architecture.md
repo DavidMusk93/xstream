@@ -66,6 +66,9 @@ Before SSE, the frontend ran four independent short-polling loops:
 | `torrent.status` | `TorrentEngine` | `{hash, state}` | video status polling |
 | `torrent.progress` | `TorrentEngine` | `{hash, state, progress, check_progress, download_rate, upload_rate, peers, ready, head_ready, video_size, local_size, verified_pieces, piece_segments}` | 5s video status polling |
 | `cache.update` | `TorrentEngine` / `cache.py` | `{action, hash}` | 30s cache polling |
+| `files.changed` | `ostore_bridge.py` (relays ostore SSE) | `{kind: created\|updated\|deleted\|moved\|mkdir, path, type, size?, from?, mtime}` | `/files` page's own token-in-URL EventSource + full refetch |
+| `files.resync` | `ostore_bridge.py` | `{}` — ostore cursor gap / bridge started without a cursor | — |
+| `sse.reconnected` | `useEventSource` (local, synthetic) | `{}` — stream came back after a drop | — |
 
 ### `torrent.progress`: throttled snapshot push
 

@@ -11,68 +11,108 @@
       </template>
     </AppHeader>
 
-    <main class="pt-[calc(env(safe-area-inset-top)+88px)] pb-32">
+    <main class="pt-[calc(env(safe-area-inset-top)+104px)] sm:pt-[calc(env(safe-area-inset-top)+120px)] pb-32">
       <div class="max-w-5xl mx-auto px-4 sm:px-6">
-        <!-- Magnet input -->
-        <form @submit.prevent="play">
-          <div class="surface p-4 sm:p-5">
-            <textarea
-              v-model="magnet"
-              rows="3"
-              spellcheck="false"
-              placeholder="magnet:?xt=urn:btih:…"
-              class="field w-full font-mono text-[13px] leading-relaxed resize-none"
-            />
-            <div class="mt-3 flex items-center justify-between gap-3">
-              <p v-if="errorMsg" class="text-[14px] text-danger leading-snug">{{ errorMsg }}</p>
-              <span v-else />
-              <button type="submit" class="btn btn-primary shrink-0" :disabled="submitting || !magnet.trim()">
-                <span v-if="submitting" class="spinner w-4 h-4" />
-                <span v-else>Play</span>
-              </button>
-            </div>
+        <!-- Large title -->
+        <div class="relative mb-8 sm:mb-10 px-1">
+          <div class="pointer-events-none absolute -top-40 -left-24 w-[640px] max-w-[120vw] h-[420px] rounded-full bg-[radial-gradient(closest-side,rgba(255,55,95,0.10),transparent)]" aria-hidden="true" />
+          <p class="eyebrow rise relative">
+            <span class="text-accent">00</span>
+            <span>Any magnet</span>
+            <span class="h-px w-10 bg-black/10" />
+          </p>
+          <h1 class="rise relative mt-3 text-[40px] sm:text-[56px] font-bold text-foreground leading-[1.02]" style="--rise-delay: 0.08s">
+            Stream
+          </h1>
+          <p class="rise relative mt-3 text-[15px] sm:text-[17px] text-foreground-muted max-w-[34rem]" style="--rise-delay: 0.12s">
+            Paste a magnet link — playback starts while it downloads, only the part you watch.
+          </p>
+        </div>
+
+        <!-- Magnet field (same pill as Search) -->
+        <form class="rise relative" style="--rise-delay: 0.16s" @submit.prevent="play">
+          <span class="absolute left-5 top-1/2 -translate-y-1/2 text-foreground-muted pointer-events-none">
+            <MagnetIcon :size="17" />
+          </span>
+          <input
+            v-model="magnet"
+            type="text"
+            name="magnet"
+            aria-label="Magnet link"
+            enterkeyhint="go"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            placeholder="magnet:?xt=urn:btih:…"
+            class="w-full h-14 pl-[52px] pr-[108px] rounded-full bg-white shadow-card text-[16px] font-mono text-foreground placeholder:font-sans placeholder:text-foreground-muted/70 outline-none border border-transparent focus:border-accent/40 focus:shadow-[0_0_0_4px_rgba(255,55,95,0.10)] transition-[border-color,box-shadow] duration-200"
+            @input="errorMsg = ''"
+          />
+          <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            <button
+              v-if="magnet"
+              type="button"
+              class="w-7 h-7 rounded-full bg-black/[0.08] text-foreground-muted flex items-center justify-center hover:bg-black/[0.12] transition active:scale-[0.9]"
+              aria-label="Clear"
+              @click="magnet = ''; errorMsg = ''"
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+            <button type="submit" class="btn btn-primary h-10 px-4" :disabled="submitting || !magnet.trim()" aria-label="Play">
+              <span v-if="submitting" class="spinner w-4 h-4" />
+              <template v-else>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12.5-7.5z" /></svg>
+                <span>Play</span>
+              </template>
+            </button>
           </div>
         </form>
+        <p v-if="errorMsg" class="mt-3 px-5 text-[14px] text-danger">{{ errorMsg }}</p>
 
         <!-- Recent plays -->
-        <section v-if="recents.length || recentsLoaded" class="mt-10">
-          <div class="px-1 flex items-baseline justify-between">
-            <h2 class="text-[22px] font-bold text-foreground">Recent</h2>
-            <span v-if="recents.length" class="text-[14px] text-foreground-muted tabular-nums">{{ recents.length }}</span>
+        <section v-if="recentsLoaded" class="mt-16 sm:mt-20">
+          <div class="mb-4 sm:mb-5 px-1">
+            <p class="eyebrow">
+              <span class="text-accent">01</span>
+              <span class="tabular-nums">{{ recents.length }} played</span>
+              <span class="h-px w-10 bg-black/10" />
+            </p>
+            <h2 class="mt-2 text-[28px] sm:text-[36px] font-bold text-foreground leading-[1.1]">Recent</h2>
           </div>
 
-          <div v-if="recents.length" class="mt-4 surface divide-y divide-black/[0.05] overflow-hidden">
-            <div
+          <ul v-if="recents.length" class="surface overflow-hidden">
+            <li
               v-for="item in recents"
               :key="item.hash"
-              class="flex items-center gap-3 pl-4 pr-1.5 py-3 min-w-0 cursor-pointer transition hover:bg-black/[0.03]"
+              class="group/row flex items-center gap-3.5 pl-4 sm:pl-5 pr-2 py-3 min-w-0 border-b border-black/[0.05] last:border-0 cursor-pointer transition-colors duration-200 hover:bg-black/[0.025]"
               @click="reopen(item)"
             >
-              <span class="shrink-0 w-9 h-9 rounded-full bg-accent/10 text-accent flex items-center justify-center">
-                <MagnetIcon :size="15" />
+              <span class="shrink-0 w-10 h-10 rounded-[12px] bg-foreground text-white flex items-center justify-center">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12.5-7.5z" /></svg>
               </span>
               <div class="flex-1 min-w-0">
-                <p class="text-[15px] font-medium text-foreground truncate">
+                <p class="text-[15px] sm:text-[17px] text-foreground truncate leading-snug">
                   {{ item.name || shortHash(item.hash) }}
                 </p>
-                <p class="mt-0.5 text-[12px] text-foreground-muted tabular-nums">
-                  {{ humanSize(item.size_on_disk) }}<span class="mx-1.5 text-foreground-muted/40">·</span>{{ relTime(item.mtime) }}
+                <p class="mt-0.5 text-[13px] font-medium text-foreground-muted tabular-nums">
+                  {{ humanSize(item.size_on_disk) }} cached<span class="mx-1.5 text-foreground-muted/40">·</span>{{ relTime(item.mtime) }}
                 </p>
               </div>
               <button
-                class="btn-icon shrink-0 text-foreground-muted"
-                data-tip="Delete"
-                aria-label="Delete"
+                class="row-actions btn-icon shrink-0 text-foreground-muted hover:text-danger hover:bg-danger/10"
+                title="Delete"
+                :aria-label="`Delete ${item.name || item.hash}`"
                 @click.stop="removeRecent(item)"
               >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="3 6 5 6 21 6" />
                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                 </svg>
               </button>
-            </div>
-          </div>
-          <p v-else class="mt-4 px-1 text-[15px] text-foreground-muted">Nothing played yet — paste a magnet above.</p>
+            </li>
+          </ul>
+          <p v-else class="px-1 text-[15px] text-foreground-muted">Nothing played yet — paste a magnet above.</p>
         </section>
       </div>
     </main>
@@ -174,3 +214,16 @@ async function removeRecent(item: RecentPlay) {
 
 onMounted(refreshRecents)
 </script>
+
+<style scoped>
+@media (hover: hover) {
+  .row-actions {
+    opacity: 0;
+    transition: opacity 0.2s var(--ease-out), background-color 0.2s, color 0.2s;
+  }
+  .group\/row:hover .row-actions,
+  .row-actions:focus-visible {
+    opacity: 1;
+  }
+}
+</style>

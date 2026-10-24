@@ -245,6 +245,38 @@ Follow button) and `Titles` cards in the StarCard language. Magnet
 candidates render as an inset grouped list (resolution, size, seeds, hash,
 copy). The card's best-magnet copy is the same icon-only `.action`.
 
+### Files (`/files`, ostore drive)
+
+Same anatomy as Home: the eyebrow is the breadcrumb (`00  Files / 2026 /
+clips ——`, segments clickable, current one in `foreground`), the large
+title is the current folder (`All Files` at the root), then a stats row
+(Folders / Files / Size of this folder). The folder lives in `?path=` so
+browser Back goes up a level. Bar actions: New Folder icon + the dark
+`Upload` pill (icon-only on phones).
+
+Listing is one `.surface` of rows: a 40px `rounded-[12px]` tile (folder =
+accent tint, video = dark tile with a play glyph, other = `fill`), name
+15/17px, `size · 3h ago` meta 13px. Folder rows navigate and video rows
+play on click — no separate Play button. Download / Rename / Delete are
+`.btn-icon`s that appear on row hover on pointer devices and are always
+visible on touch (Delete hovers to `danger`). Empty state mirrors Home's
+(title, one line, `Upload` primary + `New Folder` secondary). Dropping
+files anywhere on the page shows a centered `.popover` card ("Drop to
+upload into …"); a dragenter/dragleave depth counter keeps it steady.
+
+Rows are patched in place from `files.changed` SSE events — no refetch, no
+spinner, no skeleton after the first load (see
+[ostore-integration.md](ostore-integration.md)).
+
+### Play (`/play`, any magnet)
+
+Eyebrow `00 Any magnet`, large title `Stream`, one muted line, then the
+Search-style 56px pill field (magnet glyph, mono input, inline clear,
+accent `Play`). `Recent` is a StarCard-style section header (`01 · N
+played ——` + 28/36px title) over a `.surface` row list using the Files
+row anatomy (dark play tile, `N MB cached · 2h ago`, hover-revealed
+Delete).
+
 ### Login
 
 Logo, wordmark, a rotating greeting, passcode field (SVG eye toggle), accent

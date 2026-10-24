@@ -1,4 +1,4 @@
-import type { FilesConfigResponse, OstoreListResponse } from '~/types/api'
+import type { FilesConfigResponse, OstoreEntry, OstoreListResponse } from '~/types/api'
 
 /**
  * useOstore — client for the ostore network-drive service.
@@ -8,6 +8,9 @@ import type { FilesConfigResponse, OstoreListResponse } from '~/types/api'
  * for <video> and EventSource, which cannot set headers. Config comes from
  * the xstream backend's /api/files/config (503 when unconfigured); the fetch
  * promise is cached for the session but reset on failure so a retry works.
+ *
+ * Live updates do not come from ostore directly: the backend bridges its
+ * event stream onto /api/events as `files.changed` / `files.resync`.
  */
 
 export class OstoreError extends Error {
@@ -68,7 +71,17 @@ export function useOstore() {
 
   async function list(path: string): Promise<OstoreListResponse> {
     const { base_url } = await init()
-    return request<OstoreListResponse>('GET', `${base_url}/api/list?path=${encodeURIComponent(path)}`)
+    const res = await request<{ path: string; entries: (Omit<OstoreEntry, 'mtime'> & { mtime: string | number })[] }>(
+      'GET', `${base_url}/api/list?path=${encodeURIComponent(path)}`,
+    )
+    // ostore sends RFC 3339 timestamps; the UI works in epoch seconds.
+    return {
+      path: res.path,
+      entries: res.entries.map(e => ({
+        ...e,
+        mtime: typeof e.mtime === 'number' ? e.mtime : Date.parse(e.mtime) / 1000,
+      })),
+    }
   }
 
   function upload(dir: string, files: File[], onProgress: (loaded: number, total: number) => void): Promise<{ uploaded: { path: string; size: number }[] }> {
@@ -124,17 +137,11 @@ export function useOstore() {
     await request<unknown>('DELETE', `${base_url}/api/files/${encodePath(path)}${suffix}`)
   }
 
-  // Media tags and EventSource cannot set Authorization — the token rides as
-  // a query param instead.
+  // Media tags cannot set Authorization — the token rides as a query param.
   async function fileUrl(path: string): Promise<string> {
     const { base_url, token } = await init()
     return `${base_url}/api/files/${encodePath(path)}?token=${encodeURIComponent(token)}`
   }
 
-  async function eventsUrl(): Promise<string> {
-    const { base_url, token } = await init()
-    return `${base_url}/api/events?token=${encodeURIComponent(token)}`
-  }
-
-  return { init, list, upload, mkdir, move, remove, fileUrl, eventsUrl }
+  return { init, list, upload, mkdir, move, remove, fileUrl }
 }

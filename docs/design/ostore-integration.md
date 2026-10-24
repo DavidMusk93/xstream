@@ -23,12 +23,17 @@ ostore 绑定目录: /root/xstream/data/videos (OSTORE_ROOT)
 浏览器 --(cookie xstream_auth)--> GET /api/files/config (xstream backend)
                                   -> {base_url: "/ostore", token}
 浏览器 --(Bearer / ?token=)-----> /ostore/api/* (直连, 不经过 FastAPI)
+
+事件不直连（2026-10-24 起）:
+ostore /api/events --(httpx, ?since=<last id>)--> OstoreBridge (backend)
+    --> EventBus --> /api/events (cookie) --> useEventSource --> /files
 ```
 
 选择"浏览器直连 ostore"而非"FastAPI 代理"的原因：视频 Range 流与 multipart
 上传经过 Python 代理是纯粹的带宽与延迟损耗；ostore 自身已做鉴权与 CORS。
-`<video src>` 与 `EventSource` 无法设置请求头，故 ostore 同时接受
-`?token=` query 参数（个人站点，接受 access log 记录 query 的代价）。
+`<video src>` 无法设置请求头，故 ostore 同时接受 `?token=` query 参数
+（个人站点，接受 access log 记录 query 的代价）。事件流不再走 `?token=`：
+见 §3「实时更新」。
 
 ## 2. 功能 1：任意 magnet 播放（play-direct）
 
@@ -71,11 +76,23 @@ ostore 绑定目录: /root/xstream/data/videos (OSTORE_ROOT)
 
 - 单二进制，env 配置：`OSTORE_ROOT / OSTORE_TOKEN / OSTORE_HOST / OSTORE_PORT`。
 - 路径安全：拒绝绝对路径、`..`、NUL；join 后规范化并校验仍在 root 内。
-- 上传原子性：先写 `*.ostore-tmp-*` 再 rename。
+- 上传原子性：先写唯一的 `<name>.ostore-tmp-<pid>-<seq>`（1 MiB 缓冲写），
+  fsync 后 rename；启动时清扫崩溃残留的 tmp 文件。
+- multipart 上传**关闭** axum 默认 2 MB body 上限（之前浏览器上传 >2 MB
+  的视频一律 400 BAD_MULTIPART）。
+- 下载带弱 ETag（size+mtime），`If-None-Match` → 304。
+- `GET /api/metrics`：Prometheus 文本（按路由的请求数/延迟直方图、上传/下载
+  字节、进行中上传、事件计数、SSE 订阅数/reset 数、webhook 结果、根目录磁盘
+  空间），同样需要 bearer。
 - `GET /api/files/{*path}` 支持 `Range`（206/416）——浏览器拖动进度条依赖。
-- 事件：`tokio::sync::broadcast` 总线；`GET /api/events` SSE
-  （连接时 replay 内存 ring buffer 最近 100 条）；webhook 注册持久化到
-  `<root>/.ostore/webhooks.json`，后台任务投递，失败 1s/5s/15s 退避重试 3 次。
+- 事件：`tokio::sync::broadcast` 总线 + 1024 条 ring；每条事件带单调
+  `id`（以启动时刻微秒为种子，跨重启仍递增）与 `type`（file/dir）。
+  `GET /api/events` 游标语义：`?since=<id>` / `Last-Event-ID` 精确续传；
+  无游标时 replay 最近 `?replay=N`（默认 100，0=只看实时）；游标落出 ring
+  或来自上一进程 / 订阅者滞后 → 发一条 `stream.reset`，客户端须重新 list。
+  SIGTERM 时 SSE 流主动结束（否则 graceful shutdown 永远等不完）。
+  webhook 注册持久化到 `<root>/.ostore/webhooks.json`，并发投递（信号量 32），
+  失败 1s/5s/15s 退避重试 3 次。
 - 备份语义：`GET /api/list?recursive=1&checksums=1`（sha256）+ 指定路径
   `PUT` + `DELETE` 即可实现任意机器 → ostore 的镜像备份；agent 自发现入口
   `GET /api/help` 返回机器可读端点清单。
@@ -86,14 +103,30 @@ object.moved / object.mkdir`。
 ### 前端 `/files` 页
 
 - `composables/useOstore.ts`：先取 `/api/files/config`，封装
-  list/upload(XHR 进度)/mkdir/move/remove/fileUrl(?token=)/eventsUrl。
-- 面包屑导航；目录在前文件在后；视频扩展名显示播放入口。
+  list/upload(XHR 进度)/mkdir/move/remove/fileUrl(?token=)；list 把 ostore
+  的 RFC 3339 `mtime` 归一成 epoch 秒（之前直接当数字用，日期全是
+  Invalid Date）。
+- 当前目录在 URL `?path=`（浏览器后退 = 上一级目录）；eyebrow 即面包屑；
+  目录在前文件在后；视频行整行点击播放。
 - 上传用 **XMLHttpRequest**（fetch 无法上报上传进度），进度驱动
   `SyncToast`（fraction + progressText）。
 - 播放走新的轻量 `FilePlayerModal`（原生 `<video controls>`，Range 由
   ostore 支持），**不复用** torrent 专用的 `VideoModal`。
-- 目录自动刷新：页面持有到 `/ostore/api/events?token=` 的 EventSource，
-  object.* 事件后节流 1s 刷新当前目录。
+- **实时更新（2026-10-24 重做）**：旧实现页面自开
+  `/ostore/api/events?token=` EventSource，每个 object.* 事件节流 1s 整页
+  重新 list；而 ostore 每次（重）连都 replay 最近 100 条 → 每次重连都触发
+  刷新、spinner 闪烁，拖拽时 dragleave 穿过子元素又让高亮闪烁 —— 即"频繁
+  抖动"。现在：
+  - 后端 `backend/services/ostore_bridge.py` 在 lifespan 中常驻消费 ostore
+    SSE（首连 `replay=0` + 发 `files.resync`；之后 `since=<last id>` 续传），
+    转发为总线事件 `files.changed {kind,path,type,size?,from?,mtime}`；
+    `stream.reset` → `files.resync`。
+  - `/files` 只用全局 `useEventSource`（cookie 鉴权，token 不再进 access
+    log），按事件**就地增删行**（keyed by path，保持 dirs-first + 名称序），
+    不重新请求；当前目录或其祖先被删/移动时跳到父目录/新位置。
+  - `files.resync` / `sync.resync_required` / `sse.reconnected`（
+    `useEventSource` 在断线重连后本地派发）→ 静默 reload（不出 skeleton）。
+  - 拖拽覆盖层用 dragenter/dragleave 深度计数，不再随子元素闪烁。
 - Workbox：`/^\/ostore\/.*/` 必须 `NetworkOnly`（SSE 与视频字节范围绝不能
   进 SW 缓存——与 `/api/events` NetworkOnly 同一教训，见
   docs/design/sse-push-architecture.md）。
@@ -111,6 +144,7 @@ systemctl enable --now ostore
 systemctl reload caddy
 
 # xstream backend: /etc/xstream.env 增加 OSTORE_TOKEN / OSTORE_PUBLIC_BASE=/ostore
+# (可选 OSTORE_INTERNAL_URL，默认 http://127.0.0.1:8781 —— 事件桥用)
 systemctl restart xstream-backend xstream-frontend
 ```
 

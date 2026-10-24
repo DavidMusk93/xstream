@@ -140,10 +140,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         log.warning(f"Startup GC failed: {e}")
 
+    # Relay ostore object events onto the SSE bus (/files live updates)
+    from backend.services import ostore_bridge
+    bridge = ostore_bridge.from_env()
+    if bridge is not None:
+        bridge.start()
+
     yield
 
     # Shutdown
     log.info("Backend shutting down...")
+    if bridge is not None:
+        await bridge.stop()
     from backend.routers.magnets import shutdown_checker
     shutdown_checker()
     engine.shutdown()

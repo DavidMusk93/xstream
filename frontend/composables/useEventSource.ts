@@ -6,6 +6,9 @@
  *   star.ready
  *   torrent.status (future)
  *   cache.update (future)
+ *   files.changed / files.resync (ostore drive, via backend bridge)
+ *   sse.reconnected — synthetic, dispatched locally when the stream comes
+ *     back after a drop; listeners resync state they may have missed
  *
  * Auto-reconnects on disconnect with exponential backoff.
  */
@@ -23,6 +26,7 @@ let manuallyClosed = false
 // reconnect attempt would POST to the very backend that is down. Report the
 // first failure as an error, subsequent retries as local-only warnings.
 let errorReported = false
+let everConnected = false
 const MAX_RECONNECT_DELAY = 30000
 
 function getListeners(event: string): Set<EventHandler> {
@@ -53,6 +57,12 @@ function connect() {
     logInfo('sse', 'connected')
     reconnectDelay = 1000
     errorReported = false
+    if (everConnected) {
+      getListeners('sse.reconnected').forEach((fn) => {
+        try { fn({}) } catch { /* ignore handler errors */ }
+      })
+    }
+    everConnected = true
   }
 
   es.onmessage = (e) => {
