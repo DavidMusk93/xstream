@@ -61,6 +61,7 @@ Before SSE, the frontend ran four independent short-polling loops:
 | `sync.completed` | `sync.py` | `{log_lines, total_new, failed, elapsed}` | 5s sync-status polling |
 | `sync.error` | `sync.py` | `{error, elapsed}` | 5s sync-status polling |
 | `sync.resync_required` | `EventBus` | `{}` | Slow-client safety net (see §4) |
+| `star.added` | `stars.py` | `{code, name, handle}` | — (shelf row before bg sync) |
 | `star.ready` | `stars.py` | `{code, name, titles_count}` | 3s add-star polling |
 | `torrent.head_ready` | `TorrentEngine` | `{hash}` | video status polling |
 | `torrent.status` | `TorrentEngine` | `{hash, state}` | video status polling |

@@ -95,7 +95,7 @@
           </div>
           <p class="text-[19px] font-semibold text-foreground">Couldn't load your library</p>
           <p class="mt-1 text-[15px] text-foreground-muted">The server may be restarting.</p>
-          <button class="btn btn-secondary mt-6" @click="refreshNuxtData('stars')">Try Again</button>
+          <button class="btn btn-secondary mt-6" @click="refreshLibrary()">Try Again</button>
         </div>
 
         <!-- Empty state -->
@@ -132,7 +132,7 @@
       </div>
     </main>
 
-    <AddStarSheet v-model:open="addOpen" :stars="displayStars" @jump="scrollToStar" />
+    <AddStarSheet v-model:open="addOpen" :stars="displayStars" @jump="scrollToStar" @added="onStarAdded" />
     <XSocialOverlay
       v-model:open="socialOpen"
       v-model:filter="socialFilter"
@@ -163,7 +163,7 @@ interface HealthResponse {
 
 const config = useRuntimeConfig()
 const { data: health } = useFetch<HealthResponse>('/api/health', { baseURL: config.public.apiBase, server: false })
-const { stars, pending, error } = useStars()
+const { stars, pending, error, refreshLibrary, patchStarAdded } = useStars()
 // Body creators (accounts the owner follows on X, injected by the bot) are a
 // separate group from the library stars — see docs/design/x-inject.md.
 const { creators, refresh: refreshCreators } = useCreators()
@@ -223,7 +223,41 @@ function scrollToStar(code: string) {
   const el = document.getElementById(`star-${code.toLowerCase()}`)
   if (el) {
     el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    return true
   }
+  return false
+}
+
+/** Virtual shelf renders StarCard only after intersection — follow must not wait for scroll. */
+function revealStar(code: string, scroll = false) {
+  visibleCodes.value.add(code)
+  if (!scroll) return
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      if (!scrollToStar(code)) {
+        const stop = watch(
+          () => displayStars.value.some(s => s.code === code),
+          (ok) => {
+            if (!ok) return
+            nextTick(() => {
+              scrollToStar(code)
+              stop()
+            })
+          },
+          { immediate: true },
+        )
+      }
+    })
+  })
+}
+
+const scrollAfterRefreshCode = ref<string | null>(null)
+
+function onStarAdded(payload: { code: string; name: string; handle?: string }) {
+  patchStarAdded(payload)
+  scrollAfterRefreshCode.value = payload.code
+  revealStar(payload.code, true)
+  refreshLibrary().catch(() => {})
 }
 
 function onStarDeleted(code: string) {
@@ -353,16 +387,6 @@ async function startSync() {
   }
 }
 
-async function clearStarsServiceWorkerCache() {
-  if (typeof window !== 'undefined' && 'caches' in window) {
-    try {
-      await caches.delete('stars-cache')
-    } catch {
-      // ignore
-    }
-  }
-}
-
 function handleSyncCompleted(data: any) {
   syncRunning.value = false
   syncProgressText.value = ''
@@ -384,8 +408,7 @@ function handleSyncCompleted(data: any) {
   } else {
     finishToast('All caught up', `Checked in ${elapsed}s — no new releases`, 'success')
   }
-  clearStarsServiceWorkerCache()
-  refreshNuxtData('stars')
+  refreshLibrary().catch(() => {})
 }
 
 function handleSyncError(data: any) {
@@ -395,8 +418,35 @@ function handleSyncError(data: any) {
   finishToast('Sync failed', data.error || '', 'error')
 }
 
-function handleStarReady() {
-  refreshNuxtData('stars')
+async function handleStarAddedEvent(data: { code?: string; name?: string; handle?: string }) {
+  if (data?.code && data?.name) {
+    patchStarAdded({
+      code: data.code,
+      name: data.name,
+      handle: data.handle,
+    })
+    revealStar(data.code, scrollAfterRefreshCode.value === data.code)
+  }
+  try {
+    await refreshLibrary()
+  } catch {
+    // optimistic row already on screen
+  }
+}
+
+async function handleStarReady(data?: { code?: string }) {
+  try {
+    await refreshLibrary()
+  } catch {
+    return
+  }
+  const code = data?.code ?? scrollAfterRefreshCode.value
+  if (code) {
+    revealStar(code, scrollAfterRefreshCode.value === code)
+    if (scrollAfterRefreshCode.value === code) {
+      scrollAfterRefreshCode.value = null
+    }
+  }
 }
 
 // SSE subscriptions
@@ -415,15 +465,16 @@ onMounted(() => {
   unsubs.push(onServerEvent('sync.progress', handleSyncProgress))
   unsubs.push(onServerEvent('sync.completed', handleSyncCompleted))
   unsubs.push(onServerEvent('sync.error', handleSyncError))
+  unsubs.push(onServerEvent('star.added', handleStarAddedEvent))
   unsubs.push(onServerEvent('star.ready', handleStarReady))
   // Injected X posts (this tab, another device, or an agent via the API).
-  unsubs.push(onServerEvent('star.social', handleStarReady))
+  unsubs.push(onServerEvent('star.social', () => { refreshLibrary().catch(() => {}) }))
   // Body creators live outside /api/stars — refresh their own feed.
   unsubs.push(onServerEvent('creator.social', () => refreshCreators()))
   // Server coalesced our event queue (slow client) — refetch state once.
   unsubs.push(onServerEvent('sync.resync_required', () => {
     fetchSyncStatus(true)
-    refreshNuxtData('stars')
+    refreshLibrary().catch(() => {})
     refreshCreators()
   }))
 

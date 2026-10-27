@@ -7,6 +7,7 @@ Single SSE stream replaces all frontend polling:
 - torrent.status — torrent state changes
 - torrent.progress — throttled (2s) in-memory progress push, replaces status polling
 - cache.update — cache items / metrics changes
+- star.added — actor row in config/DB (shelf can show before titles sync)
 - star.ready — newly-added star titles ready
 """
 

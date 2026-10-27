@@ -63,18 +63,11 @@ export default defineNuxtConfig({
           handler: 'NetworkOnly',
         },
         {
-          // Stars list must be fresh after every sync/add/delete. Keep cache
-          // lifetime extremely short so a refresh always sees the latest data.
+          // Library JSON must never come from the SW cache — add/sync/delete
+          // already invalidate server-side; a stale stars-cache forced full
+          // page reloads after following someone new.
           urlPattern: /^\/api\/stars/,
-          handler: 'NetworkFirst',
-          options: {
-            cacheName: 'stars-cache',
-            // Fall back to cache after 3s instead of waiting for the network
-            // to settle (a hung backend otherwise means skeletons until the
-            // 30s proxy timeout, despite a fresh cache entry).
-            networkTimeoutSeconds: 3,
-            expiration: { maxEntries: 5, maxAgeSeconds: 1 },
-          },
+          handler: 'NetworkOnly',
         },
         {
           // Covers (full + thumb) are immutable per code and keyed by code in

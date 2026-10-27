@@ -372,6 +372,12 @@ async def add_star(request: AddStarRequest) -> AddStarResponse:
     invalidate_stars_cache()
     log.info(f"star added: {name} ({code}) from {url}")
 
+    await publish_event("star.added", {
+        "code": code,
+        "name": name,
+        "handle": handle,
+    })
+
     # Background async sync for this actor's titles (hybrid: ijav page + sukebei RSS)
     async def _bg_sync() -> None:
         try:

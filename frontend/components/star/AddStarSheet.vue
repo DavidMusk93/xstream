@@ -66,7 +66,10 @@ interface RecentStar {
 
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ stars: Star[] }>()
-const emit = defineEmits<{ (e: 'jump', code: string): void }>()
+const emit = defineEmits<{
+  (e: 'jump', code: string): void
+  (e: 'added', payload: { code: string; name: string; handle?: string }): void
+}>()
 
 const config = useRuntimeConfig()
 const { track } = useTrack()
@@ -144,7 +147,7 @@ async function addStar() {
     ]
     saveRecent()
 
-    await refreshNuxtData('stars')
+    emit('added', { code: addedCode, name: addedName, handle: res.handle as string | undefined })
   } catch (e: any) {
     const msg = e?.data?.detail || e?.message || 'Failed to add'
     error.value = msg

@@ -167,7 +167,7 @@ async function submit(raw?: string) {
     if (!raw) content.value = ''
     track('x_inject', { star_code: target.value || undefined, meta: { updated: ok.length, failed: failed.length, none: raw === 'none' } })
     addLog({ kind: 'action', title: 'Injected X posts', detail: success.value, state: 'success' })
-    refreshNuxtData('stars')
+    useStars().refreshLibrary().catch(() => {})
   } catch (e: any) {
     const detail = e?.data?.detail || e?.message || 'Inject failed'
     error.value = detail === 'no target star' ? 'Pick a star, or paste batch JSON with a "star" per entry.' : detail

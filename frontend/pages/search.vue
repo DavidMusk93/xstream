@@ -401,7 +401,9 @@ async function follow(item: SearchResultItem | null, star: SearchResultStar) {
     showToast(`Following ${res.name}`, `${res.titles_found} titles found, syncing in background`, 'success')
     track('add_star', { code: res.code, meta: { name: res.name, source: 'search', ...(item ? { via: item.code } : {}) } })
     addLog({ kind: 'action', title: `Followed ${res.name}`, detail: item ? `via search ${item.code}` : 'via search actress match', state: 'success' })
-    refreshNuxtData('stars')
+    const { patchStarAdded, refreshLibrary } = useStars()
+    patchStarAdded({ name: res.name, code: res.code, handle: res.handle })
+    refreshLibrary().catch(() => {})
   } catch (e: any) {
     if (e?.status === 409 || e?.response?.status === 409) {
       // Already followed — treat as success state
