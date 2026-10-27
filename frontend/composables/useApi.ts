@@ -83,6 +83,19 @@ export function useApi() {
     return res._data as { running: boolean; elapsed?: number; last_error?: string | null }
   }
 
+  async function getXAgentBrief(staleHours = 72) {
+    const res = await $fetch.raw(`/api/social/x/agent-brief?stale_hours=${staleHours}`, {
+      baseURL: config.public.apiBase,
+      headers: _headers(),
+    })
+    syncTraceIdFromResponse(res)
+    return res._data as {
+      prompt_markdown: string
+      work_queue: { stars_needing_check: number; creators_stale: string[] }
+      endpoints: Record<string, string>
+    }
+  }
+
   async function injectX(star: string | null, content: string) {
     const res = await $fetch.raw('/api/social/x', {
       baseURL: config.public.apiBase,
@@ -159,6 +172,7 @@ export function useApi() {
   }
 
   return {
+    getXAgentBrief,
     injectX,
     injectCreators,
     unfollowCreator,

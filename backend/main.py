@@ -239,7 +239,10 @@ if os.path.exists(IMAGES_DIR):
 @app.get("/api/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "x_inject_agent_brief": "/api/social/x/agent-brief",
+    }
 
 
 # In-memory LRU cache: avoid repeatedly reading the same cover from disk.

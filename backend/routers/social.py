@@ -16,7 +16,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 
@@ -81,6 +81,31 @@ def _post_dict(p: XPost) -> dict[str, Any]:
         "id": p.id, "text": p.text, "url": p.url, "posted_at": p.posted_at,
         "media": p.media, "stats": p.stats, "pinned": p.pinned, "author": p.author, "en": p.en,
     }
+
+
+@router.get("/x/agent-brief")
+async def x_agent_brief(
+    request: Request,
+    stale_hours: int = Query(default=72, ge=0, le=24 * 365),
+) -> dict[str, Any]:
+    """Self-bootstrap for external agents: work queue + schemas + copy-paste prompt.
+
+    Authenticated agents call this once per run instead of reading repo docs.
+    The web Inject sheet's "Copy agent brief" uses the same payload.
+    """
+    from backend.services.x_agent_brief import build_x_agent_brief
+
+    star_rows = await db_read(db.list_x_status)
+    creators = await db_read(db.load_creators)
+    origin = str(request.base_url).rstrip("/")
+    return build_x_agent_brief(
+        origin=origin,
+        star_rows=star_rows,
+        creators=creators,
+        stale_hours=stale_hours,
+        inject_help=INJECT_HELP,
+        creator_help=CREATOR_HELP,
+    )
 
 
 @router.get("/x/pending")

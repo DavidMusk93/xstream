@@ -93,6 +93,17 @@ overlay.
   `useCreators()` is fetched on demand (only the overlay reads it) and
   refreshed by `creator.social`, so creators never bloat `/api/stars`.
 
+## Agent self-bootstrap (no repo docs)
+
+External bots should start from one authenticated read:
+
+- `GET /api/social/x/agent-brief?stale_hours=72` → work queue (stars + creators),
+  JSON schemas, endpoint URLs, and `prompt_markdown` (same text as the Inject
+  sheet **Copy brief** button).
+- `GET /api/health` → `x_inject_agent_brief` path pointer (no secrets).
+
+Agents log in with `POST /api/auth`, then call the brief on every run.
+
 ## API
 
 - `POST /api/social/x` `{"star": "<code|name>|null", "content": <str|object>}`

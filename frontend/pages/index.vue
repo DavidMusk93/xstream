@@ -141,7 +141,12 @@
       @inject="openInject"
       @creators-changed="refreshCreators"
     />
-    <XInjectSheet v-model:open="injectOpen" v-model:target="injectTarget" :stars="displayStars" />
+    <XInjectSheet
+      v-model:open="injectOpen"
+      v-model:target="injectTarget"
+      :stars="displayStars"
+      @injected="onXInjected"
+    />
     <VideoModal v-model:open="modalOpen" :hash="activeHash" :code="activeCode" :star-code="activeStarCode" />
 
     <SyncToast
@@ -212,6 +217,12 @@ function openInject(code: string) {
 function openSocial(code: string) {
   socialFilter.value = code
   socialOpen.value = true
+}
+
+function onXInjected(payload: { mode: 'stars' | 'creators' }) {
+  if (payload.mode === 'creators') {
+    refreshCreators()
+  }
 }
 
 const modalOpen = ref(false)

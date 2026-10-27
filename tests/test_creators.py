@@ -134,3 +134,16 @@ def test_creators_are_listed_separately(client):
     assert body["count"] == 1
     assert body["creators"][0]["handle"] == "a_body"
     assert body["inject"]["endpoint"] == "POST /api/social/x/creators"
+
+
+def test_agent_brief_self_bootstrap(client):
+    r = client.get("/api/social/x/agent-brief?stale_hours=72")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["version"] == 1
+    assert "prompt_markdown" in body
+    assert "POST" in body["endpoints"]["creators_inject"]
+    assert "work_queue" in body
+    assert "schemas" in body
+    assert "Library stars" in body["prompt_markdown"]
+    assert "Body creators" in body["prompt_markdown"]
