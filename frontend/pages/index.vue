@@ -133,7 +133,14 @@
     </main>
 
     <AddStarSheet v-model:open="addOpen" :stars="displayStars" @jump="scrollToStar" />
-    <XSocialOverlay v-model:open="socialOpen" v-model:filter="socialFilter" :stars="displayStars" @inject="openInject" />
+    <XSocialOverlay
+      v-model:open="socialOpen"
+      v-model:filter="socialFilter"
+      :stars="displayStars"
+      :creators="creators"
+      @inject="openInject"
+      @creators-changed="refreshCreators"
+    />
     <XInjectSheet v-model:open="injectOpen" v-model:target="injectTarget" :stars="displayStars" />
     <VideoModal v-model:open="modalOpen" :hash="activeHash" :code="activeCode" :star-code="activeStarCode" />
 
@@ -157,6 +164,9 @@ interface HealthResponse {
 const config = useRuntimeConfig()
 const { data: health } = useFetch<HealthResponse>('/api/health', { baseURL: config.public.apiBase, server: false })
 const { stars, pending, error } = useStars()
+// Body creators (accounts the owner follows on X, injected by the bot) are a
+// separate group from the library stars — see docs/design/x-inject.md.
+const { creators, refresh: refreshCreators } = useCreators()
 
 const deletedCodes = ref<Set<string>>(new Set())
 // VR / multi-star works are filtered at collection time (scrapers/v2/
@@ -408,10 +418,13 @@ onMounted(() => {
   unsubs.push(onServerEvent('star.ready', handleStarReady))
   // Injected X posts (this tab, another device, or an agent via the API).
   unsubs.push(onServerEvent('star.social', handleStarReady))
+  // Body creators live outside /api/stars — refresh their own feed.
+  unsubs.push(onServerEvent('creator.social', () => refreshCreators()))
   // Server coalesced our event queue (slow client) — refetch state once.
   unsubs.push(onServerEvent('sync.resync_required', () => {
     fetchSyncStatus(true)
     refreshNuxtData('stars')
+    refreshCreators()
   }))
 
   onUnmounted(() => {

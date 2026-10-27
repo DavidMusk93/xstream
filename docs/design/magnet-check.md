@@ -45,6 +45,7 @@ alive，不消耗网络校验。
 | `magnet_status` | `NULL` 未校验 / `'ok'` / `'dead'` |
 | `magnet_checked_at` | 上次校验时间 |
 | `magnet_checked_hash` | 上次校验时的主 hash，用于检测 sync 换主 |
+| `dead_since` | 首次判定 dead 的时间（重复校验不重置），驱动 TTL 回收 |
 
 ## 触发方式
 
@@ -58,15 +59,21 @@ scope 语义（`crud.load_titles_for_magnet_check`）：
 
 - `unchecked`：从未校验，或 sync 换了主 hash（`magnet_hash IS DISTINCT FROM magnet_checked_hash`）
 - `dead`：重试已标记 dead 的（不受退避影响，用于手动强制重试）
-- `changed`：unchecked OR 距上次校验超过 `DEAD_RECHECK_INTERVAL`（3 天）的 dead（sync 后默认）。
-  退避原因：sync 每 6h 触发一次，无退避时同一批永久死链每轮重探（~30 个里仅 2–6 个复活，每轮 150–570s）；
-  主 hash 变化仍由 unchecked 分支立即重查
+- `changed`：unchecked OR 距上次校验超过 `DEAD_RECHECK_INTERVAL`（3 天）的 dead OR
+  距上次校验超过 `OK_RECHECK_INTERVAL`（30 天）的 ok（sync 后默认 + 后端启动时也会
+  触发一次）。退避原因：sync 每 6h 触发一次，无退避时同一批永久 dead 每轮重探
+  （~30 个里仅 2–6 个复活，每轮 150–570s）；主 hash 变化仍由 unchecked 分支立即重查。
+  **ok 也要周期性复检**：2026-09 全量 sweep 后大量行永久停在 `magnet_status='ok'`，
+  swarm 后来死掉仍会在 shelf 上可点，直到 metadata 超时 —— 30 天 ok 退避 + 过期 ok
+  不走磁盘 `.torrent` 短路（必须重新拉 metadata）才能收敛。
 - `all`：所有有 magnet 的 title（历史全量，约 2265 个，最坏 1-2 小时）
 
 ## 已知限制
 
 - sync 的 ON CONFLICT 会用抓取侧新鲜数据覆盖 `magnet`/`all_magnets`，可能
-  复活死链 —— 由 sync 后的 `changed` 校验兜底纠正。
+  复活死链 —— 由 sync 后的 `changed` 校验兜底纠正。注意它同时会覆盖
+  `magnet_status`（sync 不写该列，所以状态保留；但 `magnet_checked_hash`
+  对不上就会进入下一轮 unchecked 复检）。
 - `all_magnets` 内逐候选的死标记不落库（每次 sync 全量覆盖，落库也会丢）；
   只依赖换链后的主 magnet。
 
@@ -80,19 +87,36 @@ scope 语义（`crud.load_titles_for_magnet_check`）：
 
 ## 前端
 
-`/api/stars` 透出 `magnet_status`；`dead` 的 title 在 TitleCard/StarCard
-置灰 + 「链接失效」角标，禁止播放。
+`/api/stars` **不返回**不可播放的作品：`magnet_status='dead'`（所有候选都没活）
+或根本没有 magnet 的行直接不出现在 payload 里，因此 shelf / rail / 计数里
+都看不到它们。唯一例外是 `user_liked=1`：liked 的作品仍然显示（置灰 +
+「Unavailable」角标）以便取消 like，且永远不会被 TTL 回收。
 
-## 清理（purge）
+## 清理（purge + TTL）
 
-`POST /api/magnets/purge-dead`（或 `scripts/check_magnets.py --purge`）删除
-不可播放的 title：`magnet_status='dead'` 或根本没有 magnet 的行。
-`user_liked=1` 的永删不掉（单独报告）。**删除前先把 (star_id, code) 以
-`reason='dead_magnet'` 封入 `title_blacklist`**，否则下一轮同步会把这些
-code 当新作品重新下载封面、重新入库；黑名单 7 天重试窗口仍然有效——
-如果 swarm 复活，作品会在重试时自然回归。删除同时清理封面目录
-（`images/titles/{code}`）并对孤儿 cache 跑 `gc_orphaned_torrents`。
-与进行中的校验互斥（409）。
+自动（每次校验结束后）：`_run_check_bg` 收尾调用 `_purge_unplayable(ttl_days=7)`
+——首次判定 dead 已满 7 天（`dead_since`）或从未有 magnet 已满 7 天
+（`created_at`）的行被删除，并写黑名单。7 天里 `changed` 校验仍会每 3 天
+复检 dead 行，swarm 复活就立刻回到 UI；所以 UI 隐藏是立即的，行回收是延后的。
+
+```
+titles.magnet_status -> 'dead'  (dead_since = now())
+   |
+   +--> /api/stars 立即隐藏（liked 除外）
+   |
+   +--> 每 3 天 changed 复检 -> 活则 ok（dead_since NULL）/ 仍死则不动时钟
+   |
+   +--> dead_since + 7 天 -> 自动 purge: 写 title_blacklist(dead_magnet) + 删行 + 删封面 + GC
+```
+
+`POST /api/magnets/purge-dead`（或 `scripts/check_magnets.py --purge`）是手动
+开关，等价于 `ttl_days=None`（立即清掉所有不可播放的行）。
+`user_liked=1` 的永删不掉（单独报告）。删除前先把 (star_id, code) 以
+`reason='dead_magnet'` 封入 `title_blacklist`，否则下一轮同步会把这些 code
+当新作品重新下载封面、重新入库；黑名单对 `dead_magnet` 的重试窗口是 30 天
+（其它 reason 仍是 7 天）—— swarm 真回来时作品仍会自然回归。
+删除同时清理封面目录（`images/titles/{code}`）并对孤儿 cache 跑
+`gc_orphaned_torrents`。与进行中的校验互斥（409）。
 
 sink 侧预防：`scrapers/v2/sinks.py:write_batch` 跳过无 magnet 的 item
 （`skipped_no_magnet` 计数），源站将来补上 magnet 时该 code 会作为新作品

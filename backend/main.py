@@ -93,6 +93,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     engine = _get_engine()
     app.state.engine = engine
+    # Let the magnet checker's post-check TTL sweep GC orphaned torrents.
+    from backend.routers.magnets import set_engine as _set_check_engine
+    _set_check_engine(engine)
     log.info(f"TorrentEngine initialized, cache dir: {CACHE_DIR}")
 
     # Initialize the PostgreSQL connection pool and schema (idempotent)
@@ -132,6 +135,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Start the 6h scheduled title sync (records runs in sync_runs table)
     from backend.routers.sync import start_sync_scheduler
     start_sync_scheduler()
+
+    async def _startup_magnet_check() -> None:
+        try:
+            from backend.routers.magnets import trigger_check
+            await trigger_check("changed")
+        except Exception as e:
+            log.warning(f"Startup magnet check failed to start: {e}")
+
+    asyncio.create_task(_startup_magnet_check())
 
     # Clean up orphan torrents on startup (caused by historical bugs or interrupted deletion flows)
     try:

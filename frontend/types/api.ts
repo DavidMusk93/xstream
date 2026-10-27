@@ -81,6 +81,27 @@ export interface XProfile {
   posts: XPost[]
 }
 
+/**
+ * Body creator: an X account the owner follows that is NOT a library star.
+ * Injected by the external bot through POST /api/social/x/creators; keeps the
+ * newest 10 posts. Shown as its own group in the X overlay.
+ */
+export interface CreatorProfile {
+  handle: string
+  name: string
+  avatar: string
+  checked_at: string | null
+  posts: XPost[]
+}
+
+export interface CreatorInjectResult {
+  handle: string | null
+  ok: boolean
+  posts?: number
+  received?: number
+  error?: string
+}
+
 export interface XInjectResult {
   star: string | null
   name?: string

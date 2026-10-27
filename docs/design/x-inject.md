@@ -59,6 +59,40 @@ Normalization rules:
   the account and drops its posts; not-found clears both; name/avatar keep
   the stored value when the inject omits them.
 
+## Body creators (separate from stars)
+
+The owner also follows accounts on X that make nothing in the library — a
+body creator has no code, no titles and never enters `stars`. They are
+injected by the same external bot and shown in their own group inside the
+overlay.
+
+```
+ bot reads x.com (owner's follows)
+        |
+        |  JSON {"creators":[{handle,name,avatar,posts[]}]} | HTML | text
+        v
+ POST /api/social/x/creators ---> x_inject.parse_payload(..., creator=True)
+        |                              keeps newest 10 posts (stars: 5)
+        v
+ db_write(save_creator_profile)  body_creators + creator_posts, merge by id
+        |
+        +--> invalidate_stars_cache()  (the overlay's payload source)
+        +--> SSE "creator.social"      -> clients refresh useCreators()
+```
+
+- Tables (`database.md`): `body_creators` (handle unique case-insensitively,
+  name, avatar, `checked_at`) and `creator_posts` (FK `ON DELETE CASCADE`).
+  `handle` is the identity — there is no code or name to resolve, and the
+  same handle re-injected merges its posts.
+- `save_creator_profile`: an inject that omits stored posts keeps them; a
+  `{url, en}`-only entry is a translation patch. `{"handle": h, "found":
+  false}` only stamps `checked_at` — a transient agent failure must never
+  empty a feed. A payload with no handle creates nothing (422).
+- UI: the overlay scope row `All / Stars / Creators`; creator cards carry a
+  `Creator` chip that doubles as **unfollow** (confirms, then DELETE).
+  `useCreators()` is fetched on demand (only the overlay reads it) and
+  refreshed by `creator.social`, so creators never bloat `/api/stars`.
+
 ## API
 
 - `POST /api/social/x` `{"star": "<code|name>|null", "content": <str|object>}`
@@ -67,20 +101,29 @@ Normalization rules:
   422 = unparseable, 404 = no star matched, 413 = > 2MB.
 - `GET /api/social/x/pending?stale_hours=72` → stars never checked or stale,
   plus an `inject` block describing the format (self-documenting for agents).
+- `GET /api/social/x/creators` → every body creator with its newest posts and
+  the same self-documenting `inject` block.
+- `POST /api/social/x/creators` `{"content": <str|object>}` → inject one
+  creator's timeline or a batch (`{"creators": [...]}`).
+  `{"updated", "results": [{handle, ok, posts, received, error}]}`.
+  422 = unparseable / no handle, 413 = > 2MB.
+- `DELETE /api/social/x/creators/{handle}` → unfollow (drops the account and
+  its posts); 404 when unknown.
 
 ## UI
 
 - The header X icon opens `XSocialOverlay`: a floating page (bottom sheet
   on mobile, centered panel on desktop) merging every bound account's
-  newest posts into one time-sorted feed, with star filter chips. Posts
-  are transient content and never occupy the waterfall. The per-star X
-  icon (next to unfollow) opens the same overlay pre-filtered to that
-  star; the overlay's Inject button opens `XInjectSheet` (Auto = batch),
-  native star `<select>`, status line, monospace textarea
-  (`name="content"`, ⌘/Ctrl+Enter submits), `Not on X` and `Inject`.
-  "Copy brief" copies a ready prompt for an agent listing the selected or
-  pending stars (stale, or with posts lacking `en`) and the JSON reply
-  shape, including the `en` style rule.
+  newest posts into one time-sorted feed. With body creators present the
+  overlay opens on a scope row — `All / Stars / Creators` — and the star
+  filter chips live under the Stars scope (the per-star X icon next to
+  unfollow opens the overlay pre-filtered to that star). Posts are
+  transient content and never occupy the waterfall; the overlay's Inject
+  button opens `XInjectSheet` (Auto = batch), native star `<select>`,
+  status line, monospace textarea (`name="content"`, ⌘/Ctrl+Enter
+  submits), `Not on X` and `Inject`. "Copy brief" copies a ready prompt
+  for an agent listing the selected or pending stars (stale, or with posts
+  lacking `en`) and the JSON reply shape, including the `en` style rule.
 - `XSocialOverlay` cards: author line (avatar, name, @handle, relative
   time, Pinned/Repost chip, link-out), `en` text (original on hover via
   `title`), media as a natural-ratio grid, likes/views footer; text

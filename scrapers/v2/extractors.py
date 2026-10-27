@@ -21,6 +21,13 @@ from scrapers.v2.schemas import VideoItem, MagnetCandidate, StarLink
 log = get_logger("extractors")
 
 IJAV_BASE_URL = "https://ijavtorrent.com"
+# ijavtorrent's search param is ?searchTerm= since the 2026-09 redesign (the
+# old ?s= silently returns the homepage). A code query is fuzzy full-text, so
+# callers filter to the exact code.
+IJAV_SEARCH_URL = IJAV_BASE_URL + "/?searchTerm={q}"
+# Actress page used as the attribution oracle: a card's /actress/ links say
+# who actually performed in the work (see scrapers/v2/verify.py).
+IJAV_CODE_SEARCH_URL = IJAV_SEARCH_URL
 
 
 class Extractor(Protocol):

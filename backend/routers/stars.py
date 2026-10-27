@@ -61,6 +61,12 @@ def invalidate_stars_cache() -> None:
 
 # ── Response builder ────────────────────────────────────────────────
 
+def _x_media_proxy(url: str) -> str:
+    from backend.services import x_media
+
+    return x_media.proxy_url(url)
+
+
 def _rewrite_x_media_urls(x_profiles: dict[str, Any]) -> None:
     """Point X avatars/media at the local cache proxy (services/x_media.py).
 
@@ -68,13 +74,11 @@ def _rewrite_x_media_urls(x_profiles: dict[str, Any]) -> None:
     clients load images from this machine (Caddy-static after the first
     fetch) instead of hotlinking pbs.twimg.com.
     """
-    from backend.services import x_media
-
     for prof in x_profiles.values():
         if prof.get("avatar"):
-            prof["avatar"] = x_media.proxy_url(prof["avatar"])
+            prof["avatar"] = _x_media_proxy(prof["avatar"])
         for post in prof.get("posts", []):
-            post["media"] = [x_media.proxy_url(u) for u in post.get("media") or []]
+            post["media"] = [_x_media_proxy(u) for u in post.get("media") or []]
 
 def _scan_cover_files(codes: set[str]) -> dict[str, tuple[bool, bool, bool]]:
     """Map each title code -> (has_full, has_thumb, has_mid) from images/titles/.
@@ -106,6 +110,14 @@ def _build_stars_response() -> list[dict[str, Any]]:
     try:
         # Only fields the frontend actually renders — the catalog is ~2k
         # titles and this JSON ships on every page load.
+        #
+        # Unplayable works never leave the backend: a title whose magnet was
+        # checked dead (no live candidate) or that has no magnet at all is
+        # invisible here, so the shelf never shows a work nobody can play.
+        # Such rows are retired by the magnet TTL purge after
+        # DEAD_PURGE_TTL_DAYS (docs/design/magnet-check.md). Liked titles are
+        # the exception: they stay visible (and greyed) so the owner can
+        # unlike them, and they are never purged.
         title_rows = conn.execute("""
         SELECT
             s.code,
@@ -123,6 +135,10 @@ def _build_stars_response() -> list[dict[str, Any]]:
             FILTER (WHERE r.code IS NOT NULL), '[]'::jsonb) AS titles
         FROM stars s
         LEFT JOIN titles r ON r.star_id = s.id
+            AND (
+                COALESCE(r.user_liked, 0) = 1
+                OR (COALESCE(r.magnet_status, '') <> 'dead' AND COALESCE(r.magnet, '') <> '')
+            )
         GROUP BY s.id, s.code, s.name
         ORDER BY s.name
         """).fetchall()

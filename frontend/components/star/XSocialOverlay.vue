@@ -25,7 +25,8 @@
                 X posts
               </h2>
               <p class="mt-0.5 text-[13px] text-foreground-muted tabular-nums">
-                {{ entries.length }} post{{ entries.length === 1 ? '' : 's' }} · {{ withPosts.length }} star{{ withPosts.length === 1 ? '' : 's' }}
+                {{ entries.length }} post{{ entries.length === 1 ? '' : 's' }}
+                · {{ sourceCount }} account{{ sourceCount === 1 ? '' : 's' }}
               </p>
             </div>
             <div class="flex items-center gap-2 shrink-0">
@@ -40,8 +41,18 @@
             </div>
           </div>
 
-          <!-- Star filter chips -->
-          <div v-if="withPosts.length > 1" class="shrink-0 mt-3 px-5 sm:px-6 flex gap-2 overflow-x-auto scrollbar-hide">
+          <!-- Scope: stars vs body creators, then the per-star chips -->
+          <div v-if="kinds.length > 1" class="shrink-0 mt-3 px-5 sm:px-6 flex gap-1.5">
+            <button
+              v-for="k in kinds"
+              :key="k.id"
+              class="chip shrink-0 transition-colors"
+              :class="kind === k.id ? 'bg-foreground text-white' : 'bg-black/[0.05] text-foreground hover:bg-black/[0.08]'"
+              @click="kind = k.id"
+            >{{ k.label }}<span class="ml-1 opacity-60 tabular-nums">{{ k.count }}</span></button>
+          </div>
+
+          <div v-if="kind === 'stars' && withPosts.length > 1" class="shrink-0 mt-2 px-5 sm:px-6 flex gap-2 overflow-x-auto scrollbar-hide">
             <button
               class="chip shrink-0 transition-colors"
               :class="filter === '' ? 'bg-foreground text-white' : 'bg-black/[0.05] text-foreground hover:bg-black/[0.08]'"
@@ -61,38 +72,45 @@
             <div v-if="entries.length" class="space-y-4">
               <article
                 v-for="e in entries"
-                :key="`${e.star.code}:${e.post.id}`"
+                :key="`${e.key}:${e.post.id}`"
                 class="rounded-[18px] border border-black/[0.06] bg-white p-4"
               >
                 <!-- Author line -->
                 <div class="flex items-center gap-2.5 min-w-0">
                   <a
-                    v-if="e.star.x?.handle"
-                    :href="`https://x.com/${e.star.x.handle}`"
+                    v-if="e.handle"
+                    :href="`https://x.com/${e.handle}`"
                     target="_blank"
                     rel="noopener noreferrer"
                     class="flex items-center gap-2.5 min-w-0 group/xa"
                   >
                     <span class="w-8 h-8 shrink-0 rounded-full overflow-hidden bg-foreground text-white flex items-center justify-center">
                       <img
-                        v-if="e.star.x.avatar && !failed[`av:${e.star.code}`]"
-                        :src="e.star.x.avatar"
+                        v-if="e.avatar && !failed[`av:${e.key}`]"
+                        :src="e.avatar"
                         alt=""
                         width="32"
                         height="32"
                         class="w-full h-auto block"
                         loading="lazy"
                         decoding="async"
-                        @error="onImgError(`av:${e.star.code}`, $event)"
+                        @error="onImgError(`av:${e.key}`, $event)"
                       />
                       <XGlyph v-else class="w-3.5 h-3.5" />
                     </span>
                     <span class="min-w-0">
-                      <span class="block text-[14px] font-semibold text-foreground truncate leading-tight group-hover/xa:underline underline-offset-2">{{ e.star.name }}</span>
-                      <span class="block text-[12px] text-foreground-muted truncate leading-tight">@{{ e.star.x.handle }}</span>
+                      <span class="block text-[14px] font-semibold text-foreground truncate leading-tight group-hover/xa:underline underline-offset-2">{{ e.name }}</span>
+                      <span class="block text-[12px] text-foreground-muted truncate leading-tight">@{{ e.handle }}</span>
                     </span>
                   </a>
-                  <span v-else class="text-[14px] font-semibold text-foreground truncate">{{ e.star.name }}</span>
+                  <span v-else class="text-[14px] font-semibold text-foreground truncate">{{ e.name }}</span>
+                  <button
+                    v-if="e.kind === 'creator'"
+                    class="chip bg-black/[0.05] text-foreground shrink-0 hover:bg-danger/10 hover:text-danger transition-colors"
+                    :title="`Unfollow @${e.handle}`"
+                    :disabled="removing === e.handle"
+                    @click="unfollow(e.handle)"
+                  >Creator</button>
                   <span v-if="badge(e)" class="chip bg-black/[0.05] text-foreground shrink-0">{{ badge(e) }}</span>
                   <time
                     v-if="e.post.posted_at"
@@ -161,12 +179,14 @@
             <!-- Empty state -->
             <div v-else class="py-20 text-center">
               <p class="text-[17px] font-semibold text-foreground">
-                {{ filterStar ? `No X posts for ${filterStar.name} yet` : 'No X posts yet' }}
+                {{ emptyTitle }}
               </p>
               <p class="mt-1.5 text-[14px] text-foreground-muted">
-                Inject what you (or an agent) see on x.com.
+                {{ kind === 'creators'
+                  ? 'The bot injects creators you follow on X.'
+                  : 'Inject what you (or an agent) see on x.com.' }}
               </p>
-              <button class="btn btn-primary mt-6" @click="emit('inject', filter)">
+              <button v-if="kind !== 'creators'" class="btn btn-primary mt-6" @click="emit('inject', filter)">
                 Inject from X
               </button>
             </div>
@@ -178,25 +198,73 @@
 </template>
 
 <script setup lang="ts">
-import type { Star, XPost } from '~/types/api'
+import type { CreatorProfile, Star, XPost } from '~/types/api'
 
 const open = defineModel<boolean>('open', { default: false })
 const filter = defineModel<string>('filter', { default: '' })
-const props = defineProps<{ stars: Star[] }>()
-const emit = defineEmits<{ (e: 'inject', code: string): void }>()
+const props = defineProps<{ stars: Star[]; creators?: CreatorProfile[] }>()
+const emit = defineEmits<{
+  (e: 'inject', code: string): void
+  (e: 'creators-changed'): void
+}>()
 
 const HEART = 'M12 21.2l-1.4-1.3C5.4 15.4 2 12.3 2 8.5 2 5.4 4.4 3 7.5 3c1.7 0 3.4.8 4.5 2.1C13.1 3.8 14.8 3 16.5 3 19.6 3 22 5.4 22 8.5c0 3.8-3.4 6.9-8.6 11.4L12 21.2z'
 
-interface Entry { post: XPost; star: Star }
+/** One feed item: a star's post or a body creator's post. */
+interface Entry {
+  post: XPost
+  kind: 'star' | 'creator'
+  /** Unique per author (star code or creator handle) — keys images/badges. */
+  key: string
+  name: string
+  handle: string
+  avatar: string
+}
+
+type Kind = 'all' | 'stars' | 'creators'
+
+const kind = ref<Kind>('all')
 
 const withPosts = computed(() => props.stars.filter(s => s.x?.posts?.length))
+const creatorList = computed(() => props.creators ?? [])
+const creatorsWithPosts = computed(() => creatorList.value.filter(c => c.posts?.length))
 const filterStar = computed(() => props.stars.find(s => s.code === filter.value) || null)
+
+const kinds = computed<{ id: Kind; label: string; count: number }[]>(() => {
+  const out: { id: Kind; label: string; count: number }[] = []
+  const hasCreators = creatorList.value.length > 0
+  if (hasCreators) {
+    out.push({ id: 'all', label: 'All', count: withPosts.value.length + creatorsWithPosts.value.length })
+  }
+  out.push({ id: 'stars', label: 'Stars', count: withPosts.value.length })
+  if (hasCreators) {
+    out.push({ id: 'creators', label: 'Creators', count: creatorsWithPosts.value.length })
+  }
+  return out
+})
 
 const entries = computed<Entry[]>(() => {
   const out: Entry[] = []
-  for (const s of props.stars) {
-    if (filter.value && s.code !== filter.value) continue
-    for (const p of s.x?.posts ?? []) out.push({ post: p, star: s })
+  if (kind.value !== 'creators') {
+    for (const s of props.stars) {
+      if (filter.value && s.code !== filter.value) continue
+      for (const p of s.x?.posts ?? []) {
+        out.push({
+          post: p, kind: 'star', key: s.code,
+          name: s.name, handle: s.x?.handle ?? '', avatar: s.x?.avatar ?? '',
+        })
+      }
+    }
+  }
+  if (kind.value !== 'stars') {
+    for (const c of creatorList.value) {
+      for (const p of c.posts ?? []) {
+        out.push({
+          post: p, kind: 'creator', key: `c:${c.handle}`,
+          name: c.name || c.handle, handle: c.handle, avatar: c.avatar,
+        })
+      }
+    }
   }
   out.sort((a, b) => {
     const ta = a.post.posted_at ? Date.parse(a.post.posted_at) : 0
@@ -205,6 +273,41 @@ const entries = computed<Entry[]>(() => {
   })
   return out
 })
+
+const sourceCount = computed(() => new Set(entries.value.map(e => e.key)).size)
+
+const emptyTitle = computed(() => {
+  if (kind.value === 'creators') return 'No creator posts yet'
+  if (filterStar.value) return `No X posts for ${filterStar.value.name} yet`
+  return 'No X posts yet'
+})
+
+// A star filter only makes sense in star mode; entering with a star selected
+// (the per-star X button) pre-selects that scope.
+watch(open, (isOpen) => {
+  if (!isOpen) return
+  if (filter.value) kind.value = 'stars'
+  else if (!kinds.value.some(k => k.id === kind.value)) kind.value = 'all'
+})
+
+// Unfollow a body creator: the chip on its cards is the only control, so it
+// confirms first (it drops the account and every stored post).
+const removing = ref('')
+const { unfollowCreator } = useApi()
+
+async function unfollow(handle: string) {
+  if (!handle || removing.value) return
+  if (!confirm(`Unfollow @${handle} on X?\nIts injected posts are deleted.`)) return
+  removing.value = handle
+  try {
+    await unfollowCreator(handle)
+    emit('creators-changed')
+  } catch (e: any) {
+    alert(e?.data?.detail || e?.message || 'Unfollow failed')
+  } finally {
+    removing.value = ''
+  }
+}
 
 const loaded = reactive<Record<string, boolean>>({})
 const failed = reactive<Record<string, boolean>>({})
@@ -249,8 +352,7 @@ function body(p: XPost): string {
 
 function badge(e: Entry): string {
   if (e.post.pinned) return 'Pinned'
-  const h = e.star.x?.handle
-  if (e.post.author && h && e.post.author.toLowerCase() !== h.toLowerCase()) return 'Repost'
+  if (e.post.author && e.handle && e.post.author.toLowerCase() !== e.handle.toLowerCase()) return 'Repost'
   return ''
 }
 

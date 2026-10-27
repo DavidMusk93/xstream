@@ -1,4 +1,10 @@
-import type { FilesConfigResponse, PlayDirectResponse, RecentPlay, XInjectResult } from '~/types/api'
+import type {
+  CreatorInjectResult,
+  FilesConfigResponse,
+  PlayDirectResponse,
+  RecentPlay,
+  XInjectResult,
+} from '~/types/api'
 import { getTraceId, syncTraceIdFromResponse } from './useLogger'
 
 function _headers() {
@@ -88,6 +94,31 @@ export function useApi() {
     return res._data as { updated: number; results: XInjectResult[] }
   }
 
+  /**
+   * Body creators (accounts the owner follows, not library stars). Injected by
+   * the external bot with the same payload shapes as stars; 10 posts each.
+   */
+  async function injectCreators(content: string | Record<string, unknown>) {
+    const res = await $fetch.raw('/api/social/x/creators', {
+      baseURL: config.public.apiBase,
+      method: 'POST',
+      headers: _headers(),
+      body: { content },
+    })
+    syncTraceIdFromResponse(res)
+    return res._data as { updated: number; results: CreatorInjectResult[] }
+  }
+
+  async function unfollowCreator(handle: string) {
+    const res = await $fetch.raw(`/api/social/x/creators/${handle}`, {
+      baseURL: config.public.apiBase,
+      method: 'DELETE',
+      headers: _headers(),
+    })
+    syncTraceIdFromResponse(res)
+    return res._data as { handle: string; deleted: boolean }
+  }
+
   async function playDirect(magnet: string) {
     const res = await $fetch.raw('/api/play/direct', {
       baseURL: config.public.apiBase,
@@ -129,6 +160,8 @@ export function useApi() {
 
   return {
     injectX,
+    injectCreators,
+    unfollowCreator,
     addTorrent,
     getCacheMetrics,
     getCacheItems,

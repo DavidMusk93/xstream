@@ -62,6 +62,7 @@ from scrapers.v2.sinks import TitleSyncSink
 from scrapers.v2.schemas import VideoItem, StarConfig
 from scrapers.v2.cover_utils import download_covers_batch
 from scrapers.v2.filters import drop_hidden
+from scrapers.v2.verify import reject_misattributed
 
 log = get_logger("sync-titles")
 
@@ -395,6 +396,37 @@ def _drop_blacklisted(
     return kept
 
 
+async def _drop_misattributed(
+    fetcher: HttpxFetcher,
+    star: StarConfig,
+    items: list[VideoItem],
+    existing_codes: set | None = None,
+    star_id: int | None = None,
+) -> list[VideoItem]:
+    """Drop works another actress performed in (see scrapers/v2/verify.py).
+
+    Only NEW works are verified: an existing row is judged by the same code
+    once, so a sync never refetches ijavtorrent for the whole catalog. A
+    work without positive evidence (no ijavtorrent card, fetch failure) is
+    kept — a wrong drop permanently loses a legit title.
+    """
+    if not items:
+        return items
+    if existing_codes is not None and star_id is not None:
+        candidates = [it for it in items if (star_id, it.code) not in existing_codes]
+    else:
+        candidates = items
+    if not candidates:
+        return items
+    kept, rejected = await reject_misattributed(fetcher, star, candidates)
+    if rejected:
+        codes = ", ".join(f"{c}({r})" for c, r in rejected[:10])
+        more = f" +{len(rejected) - 10} more" if len(rejected) > 10 else ""
+        log.info(f"{star.name}: dropped {len(rejected)} misattributed titles: {codes}{more}")
+    dropped = {code for code, _ in rejected}
+    return [it for it in items if it.code not in dropped]
+
+
 async def fetch_star(
     fetcher: HttpxFetcher,
     star: StarConfig,
@@ -567,6 +599,9 @@ async def run(
                 items = _drop_hidden(
                     await fetch_star_page(fetcher, star, ijav_sem), star, roster_names
                 )
+                # The actress page is authoritative, but keep the guard: a
+                # card that names only other actresses never belongs here.
+                items = await _drop_misattributed(fetcher, star, items)
                 count = len(items)
             except Exception as e:
                 ok, err = False, f"{type(e).__name__}: {e}"[:200]
@@ -745,6 +780,15 @@ async def _rss_enrich_all(
             if not merged:
                 await _emit("rss", star=star.name, done=i, total=len(stars), enriched=0, new=0)
                 continue
+            # RSS matching is a full-text name search: a short name pulls in
+            # other actresses (Ichika Nagano under "Ichika"). Only link-less
+            # new codes cost a lookup; ijavtorrent cards carry her page link.
+            merged = await _drop_misattributed(
+                fetcher, star, merged, existing_codes, star_id
+            )
+            if not merged:
+                await _emit("rss", star=star.name, done=i, total=len(stars), enriched=0, new=0)
+                continue
             new_items, backfill_items, cover_fix_items, sync_items = _split_sync_items(
                 star_id, star.name, merged, existing_codes, missing_codes, cover_missing
             )
@@ -837,6 +881,7 @@ async def sync_star(
         return {"name": star.name, "count": 0, "titles": []}
 
     new_items = [it for it in items if (star_id, it.code) not in existing_codes]
+    new_items = await _drop_misattributed(fetcher, star, new_items)
 
     if len(new_items) > MAX_NEW_TITLES:
         new_items = new_items[:MAX_NEW_TITLES]

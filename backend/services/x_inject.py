@@ -7,6 +7,8 @@ payload into normalized profiles. Accepted inputs, auto-detected:
   1. JSON — one star ``{"handle", "posts": [...]}``, a bare post list, or a
      batch ``{"stars": [{"star": "<code|name>", ...}]}``. ``"handle": null``
      (or ``"found": false``) marks the star as checked with no account.
+     Body creators (accounts the owner follows that are not library stars)
+     use the same shapes under ``{"creators": [...]}`` and keep 10 posts.
   2. x.com HTML — outerHTML of the profile page / timeline; ``article``
      tweets are read via X's ``data-testid`` hooks.
   3. Plain text — post blocks separated by ``---`` lines; a status URL, an
@@ -31,6 +33,9 @@ from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 MAX_POSTS = 5
+# Body creators are browsed as a feed, not as a per-star badge strip: keep
+# more of their timeline (see docs/design/x-inject.md).
+MAX_CREATOR_POSTS = 10
 MAX_TEXT = 1200
 MAX_MEDIA = 4
 MAX_NAME = 80
@@ -96,6 +101,9 @@ class XProfile:
     avatar: str | None = None
     posts: list[XPost] = field(default_factory=list)
     not_found: bool = False
+    # A body creator (an account the owner follows that is not a library
+    # star) instead of a star's own account: keeps MAX_CREATOR_POSTS.
+    creator: bool = False
 
 
 # ── Normalizers ─────────────────────────────────────────────────────
@@ -280,8 +288,13 @@ def _make_post(
 
 def _finalize(profile: XProfile) -> XProfile:
     if profile.not_found:
-        profile.handle = profile.name = profile.avatar = None
+        profile.name = profile.avatar = None
         profile.posts = []
+        # A creator's identity IS its handle, so "not found" (account gone or
+        # renamed) still names which creator is stale — the router needs it to
+        # stamp checked_at. For a star the handle is the answer, so it clears.
+        if not profile.creator:
+            profile.handle = None
         return profile
     if not profile.handle:
         # Infer from the posts' own status URLs — the most common author.
@@ -296,7 +309,7 @@ def _finalize(profile: XProfile) -> XProfile:
         seen.add(p.id)
         unique.append(p)
     unique.sort(key=lambda p: (p.posted_at or datetime.min, post_order(p.id)), reverse=True)
-    profile.posts = unique[:MAX_POSTS]
+    profile.posts = unique[: (MAX_CREATOR_POSTS if profile.creator else MAX_POSTS)]
     if profile.name:
         profile.name = clean_text(profile.name)[:MAX_NAME] or None
     if not profile.handle and not profile.posts:
@@ -343,18 +356,22 @@ def _json_post(item: Any) -> XPost | None:
     )
 
 
-def _json_profile(obj: dict[str, Any], default_star: str | None) -> XProfile:
+def _json_profile(
+    obj: dict[str, Any], default_star: str | None, creator: bool = False
+) -> XProfile:
     star = obj.get("star") or obj.get("code") or default_star
-    profile = XProfile(star=str(star) if star else None)
+    profile = XProfile(star=str(star) if star else None, creator=creator)
     handle_present = any(k in obj for k in _HANDLE_KEYS)
     raw_handle = _first(obj, _HANDLE_KEYS)
-    if obj.get("found") is False or obj.get("not_found") is True or (handle_present and raw_handle is None):
-        profile.not_found = True
-        return _finalize(profile)
+    # Record the handle first: "not found" still names WHICH account was
+    # checked (creators are identified by it; see _finalize).
     if raw_handle is not None:
         profile.handle = clean_handle(raw_handle)
         if not profile.handle:
             raise InjectError(f"invalid X handle: {str(raw_handle)[:40]!r}")
+    if obj.get("found") is False or obj.get("not_found") is True or (handle_present and raw_handle is None):
+        profile.not_found = True
+        return _finalize(profile)
     profile.name = _first(obj, _NAME_KEYS) if isinstance(_first(obj, _NAME_KEYS), str) else None
     profile.avatar = clean_avatar(_first(obj, _AVATAR_KEYS))
     posts = obj.get("posts") or obj.get("tweets") or []
@@ -364,15 +381,23 @@ def _json_profile(obj: dict[str, Any], default_star: str | None) -> XProfile:
     return _finalize(profile)
 
 
-def _parse_json(data: Any, default_star: str | None) -> list[XProfile]:
+def _parse_json(data: Any, default_star: str | None, creator: bool = False) -> list[XProfile]:
     if isinstance(data, dict) and isinstance(data.get("stars"), list):
-        return [_json_profile(item, None) for item in data["stars"] if isinstance(item, dict)]
+        return [
+            _json_profile(item, None, creator)
+            for item in data["stars"] if isinstance(item, dict)
+        ]
+    if isinstance(data, dict) and isinstance(data.get("creators"), list):
+        return [
+            _json_profile(item, None, True)
+            for item in data["creators"] if isinstance(item, dict)
+        ]
     if isinstance(data, dict):
-        return [_json_profile(data, default_star)]
+        return [_json_profile(data, default_star, creator)]
     if isinstance(data, list):
         if data and all(isinstance(i, dict) and "star" in i for i in data):
-            return [_json_profile(item, None) for item in data]
-        return [_json_profile({"posts": data}, default_star)]
+            return [_json_profile(item, None, creator) for item in data]
+        return [_json_profile({"posts": data}, default_star, creator)]
     raise InjectError("JSON must be an object or a list")
 
 
@@ -392,11 +417,11 @@ def _aria_count(node) -> int | None:
     return parse_count(label or "")
 
 
-def _parse_html(html: str, default_star: str | None) -> list[XProfile]:
+def _parse_html(html: str, default_star: str | None, creator: bool = False) -> list[XProfile]:
     from selectolax.parser import HTMLParser
 
     tree = HTMLParser(html)
-    profile = XProfile(star=default_star)
+    profile = XProfile(star=default_star, creator=creator)
 
     user_name = tree.css_first('[data-testid="UserName"]')
     if user_name is not None:
@@ -511,8 +536,8 @@ def _text_block(lines: list[str]) -> XPost | None:
     )
 
 
-def _parse_text(text: str, default_star: str | None) -> list[XProfile]:
-    profile = XProfile(star=default_star)
+def _parse_text(text: str, default_star: str | None, creator: bool = False) -> list[XProfile]:
+    profile = XProfile(star=default_star, creator=creator)
     if _NONE_RE.match(text.strip()):
         profile.not_found = True
         return [_finalize(profile)]
@@ -564,14 +589,26 @@ def _parse_text(text: str, default_star: str | None) -> list[XProfile]:
 
 # ── Entry point ─────────────────────────────────────────────────────
 
-def parse_payload(payload: str | dict[str, Any] | list[Any], default_star: str | None = None) -> list[XProfile]:
-    """Parse an inject payload into profiles (one per star).
+def parse_payload(
+    payload: str | dict[str, Any] | list[Any],
+    default_star: str | None = None,
+    creator: bool = False,
+) -> list[XProfile]:
+    """Parse an inject payload into profiles (one per star or creator).
 
     ``default_star`` targets single-star payloads (the card the sheet was
-    opened from); batch JSON names each star itself.
+    opened from); batch JSON names each star itself. ``creator`` marks every
+    profile as a body creator (POST /api/social/x/creators), which keeps
+    MAX_CREATOR_POSTS instead of MAX_POSTS.
     """
+    return _parse_payload(payload, default_star, creator)
+
+
+def _parse_payload(
+    payload: str | dict[str, Any] | list[Any], default_star: str | None, creator: bool
+) -> list[XProfile]:
     if isinstance(payload, (dict, list)):
-        return _parse_json(payload, default_star)
+        return _parse_json(payload, default_star, creator)
     if not isinstance(payload, str) or not payload.strip():
         raise InjectError("empty payload")
     s = payload.strip()
@@ -580,7 +617,7 @@ def parse_payload(payload: str | dict[str, Any] | list[Any], default_star: str |
             data = json.loads(s)
         except json.JSONDecodeError as exc:
             raise InjectError(f"invalid JSON: {exc.msg} (line {exc.lineno})") from None
-        return _parse_json(data, default_star)
+        return _parse_json(data, default_star, creator)
     if s.startswith("<") or "<article" in s or 'data-testid="' in s:
-        return _parse_html(s, default_star)
-    return _parse_text(s, default_star)
+        return _parse_html(s, default_star, creator)
+    return _parse_text(s, default_star, creator)

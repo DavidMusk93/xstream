@@ -135,6 +135,14 @@ def test_load_titles_for_magnet_check_scopes(temp_db):
     assert db.load_titles_for_magnet_check("changed", conn=conn) == []
     assert len(db.load_titles_for_magnet_check("all", conn=conn)) == 1
 
+    # Ok but last checked beyond OK_RECHECK_INTERVAL -> back in changed
+    conn.execute(
+        f"UPDATE titles SET magnet_checked_at = now() - interval '{db.OK_RECHECK_INTERVAL}'"
+        " - interval '1 day' WHERE id = %s",
+        (title_id,),
+    )
+    assert len(db.load_titles_for_magnet_check("changed", conn=conn)) == 1
+
     # Hash changed (sync promoted a new primary) -> back in unchecked / changed
     conn.execute("UPDATE titles SET magnet_hash = %s WHERE id = %s", (live_hash, title_id))
     assert len(db.load_titles_for_magnet_check("unchecked", conn=conn)) == 1

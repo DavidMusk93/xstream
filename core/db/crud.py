@@ -330,20 +330,36 @@ def load_title_codes_missing_cover(conn=None) -> set[tuple[int, str]]:
 
 
 @trace_db
-def load_blacklisted_codes(retry_days: int = 7, conn=None) -> set[tuple[int, str]]:
+def load_blacklisted_codes(
+    retry_days: int = 7, dead_retry_days: int = 30, conn=None
+) -> set[tuple[int, str]]:
     """Load (star_id, code) pairs currently on the title blacklist.
 
     Entries older than ``retry_days`` are not returned: they get one retry
     pass in the next sync (the source may have fixed the cover/magnet), and
     if they are still rejected the sink re-records them and ``last_seen``
     refreshes, blacklisting them for another window.
+
+    Two reasons outlive that window:
+
+    - ``dead_magnet`` (purged after a full liveness TTL): a swarm gone for a
+      week is rarely back the next one — retry after ``dead_retry_days``.
+    - ``other_star`` (the work belongs to a different actress): the
+      attribution never changes, so the entry is permanent. Re-adding the
+      row would only make the next sync download its cover and drop it again.
     """
     managed, should_close = _managed_conn(conn)
     try:
         rows = managed.execute(
-            "SELECT star_id, code FROM title_blacklist"
-            " WHERE last_seen > now() - make_interval(days => %s)",
-            (retry_days,),
+            """
+            SELECT star_id, code FROM title_blacklist
+            WHERE reason = 'other_star'
+               OR (reason = 'dead_magnet'
+                   AND last_seen > now() - make_interval(days => %s))
+               OR (reason NOT IN ('dead_magnet', 'other_star')
+                   AND last_seen > now() - make_interval(days => %s))
+            """,
+            (dead_retry_days, retry_days),
         ).fetchall()
         return set(rows)
     finally:
@@ -468,6 +484,7 @@ def delete_star_by_code(code: str, conn=None) -> bool:
 # ── X binding (injected posts) ──────────────────────────────────────
 
 X_MAX_POSTS = 5
+CREATOR_MAX_POSTS = 10
 
 
 @trace_db
@@ -673,6 +690,202 @@ def list_x_status(conn=None) -> list[tuple]:
             managed.close()
 
 
+# ── Body creators (accounts the owner follows, not library stars) ───
+
+def _merge_creator_posts(stored: list[dict], incoming: list[dict]) -> list[dict]:
+    """Merge injected posts into the stored ones by post id, newest 10 kept.
+
+    A stored post survives an inject that omits it (an agent may only send
+    the newest page), and an ``{url, en}``-only entry is a translation
+    patch for a stored post (see docs/design/x-inject.md).
+    """
+    merged = {p["id"]: p for p in stored if p.get("id")}
+    for p in incoming:
+        old = merged.get(p["id"])
+        if not p.get("text") and not p.get("media"):
+            if old and p.get("en"):
+                merged[p["id"]] = {**old, "en": p["en"]}
+            continue
+        if old and not p.get("en") and old.get("en") and old.get("text") == p.get("text"):
+            p = {**p, "en": old["en"]}
+        merged[p["id"]] = p
+    by_content: dict[str, dict] = {}
+    for p in sorted(merged.values(), key=lambda p: p.get("posted_at") is None):
+        by_content.setdefault(p.get("text") or p["id"], p)
+    return sorted(
+        by_content.values(),
+        key=lambda p: (
+            p.get("posted_at") is not None,
+            p.get("posted_at") or 0,
+            int(p["id"]) if str(p.get("id") or "").isdigit() else 0,
+        ),
+        reverse=True,
+    )[:CREATOR_MAX_POSTS]
+
+
+@trace_db
+def save_creator_profile(
+    handle: str | None,
+    name: str | None,
+    avatar: str | None,
+    posts: list[dict],
+    not_found: bool = False,
+    conn=None,
+) -> dict:
+    """Upsert one body creator by handle and merge its posts.
+
+    ``handle`` is the identity (there is no star row). ``not_found`` with a
+    handle only stamps ``checked_at`` — the creator and its posts stay, so a
+    transient agent failure never empties the feed; a payload without any
+    handle cannot create a row.
+    """
+    managed, should_close = _managed_conn(conn)
+    try:
+        clean = (handle or "").strip().lstrip("@")
+        if not clean:
+            raise LookupError("creator handle required")
+        with managed.transaction():
+            row = managed.execute(
+                "SELECT id, name, avatar FROM body_creators"
+                " WHERE lower(handle) = lower(%s) FOR UPDATE",
+                (clean,),
+            ).fetchone()
+            if row is None:
+                if not_found:
+                    # A creator that was never injected has nothing to stamp:
+                    # creators only exist because the owner follows them.
+                    return {"handle": clean, "posts": []}
+                creator_id = managed.execute(
+                    "INSERT INTO body_creators (handle, name, avatar, checked_at)"
+                    " VALUES (%s, %s, %s, timezone('UTC', now())) RETURNING id",
+                    (clean, name, avatar),
+                ).fetchone()[0]
+                stored_posts: list[dict] = []
+            else:
+                creator_id, old_name, old_avatar = row
+                stored_posts = [
+                    {
+                        "id": pid or content, "text": content, "url": url,
+                        "posted_at": posted_at, "media": media or [],
+                        "stats": (meta or {}).get("stats") or {},
+                        "pinned": bool((meta or {}).get("pinned")),
+                        "author": (meta or {}).get("author"),
+                        "en": (meta or {}).get("en"),
+                    }
+                    for pid, content, url, posted_at, media, meta in managed.execute(
+                        "SELECT post_id, content, post_url, posted_at, media, meta"
+                        " FROM creator_posts WHERE creator_id = %s",
+                        (creator_id,),
+                    ).fetchall()
+                ]
+                if not not_found:
+                    managed.execute(
+                        "UPDATE body_creators SET name = %s, avatar = %s,"
+                        " checked_at = timezone('UTC', now()), updated_at = now()"
+                        " WHERE id = %s",
+                        (name or old_name, avatar or old_avatar, creator_id),
+                    )
+            if not_found:
+                managed.execute(
+                    "UPDATE body_creators SET checked_at = timezone('UTC', now()),"
+                    " updated_at = now() WHERE id = %s",
+                    (creator_id,),
+                )
+                stored_posts.sort(
+                    key=lambda p: (
+                        p["posted_at"] is not None, p["posted_at"] or 0,
+                        int(p["id"]) if str(p["id"]).isdigit() else 0,
+                    ),
+                    reverse=True,
+                )
+                return {"handle": clean, "posts": stored_posts[:CREATOR_MAX_POSTS]}
+
+            kept = _merge_creator_posts(stored_posts, posts)
+            managed.execute("DELETE FROM creator_posts WHERE creator_id = %s", (creator_id,))
+            if kept:
+                managed.cursor().executemany(
+                    """
+                    INSERT INTO creator_posts
+                        (creator_id, post_id, content, post_url, posted_at, media, meta)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        (
+                            creator_id, p["id"], p.get("text") or "", p.get("url"),
+                            p.get("posted_at"), Jsonb(p.get("media") or []),
+                            Jsonb({
+                                "stats": p.get("stats") or {}, "pinned": bool(p.get("pinned")),
+                                "author": p.get("author"), "en": p.get("en"),
+                            }),
+                        )
+                        for p in kept
+                    ],
+                )
+            return {"handle": clean, "posts": kept}
+    finally:
+        if should_close:
+            managed.close()
+
+
+@trace_db
+def load_creators(conn=None) -> list[dict]:
+    """Body creators with their posts, newest first — the /api/stars feed."""
+    managed, should_close = _managed_conn(conn)
+    try:
+        rows = managed.execute(
+            """
+            SELECT c.id, c.handle, c.name, c.avatar, c.checked_at,
+                   p.post_id, p.content, p.post_url, p.posted_at, p.media, p.meta
+            FROM body_creators c
+            LEFT JOIN creator_posts p ON p.creator_id = c.id
+            ORDER BY lower(c.handle), p.posted_at DESC NULLS LAST,
+                     length(p.post_id) DESC, p.post_id DESC
+            """
+        ).fetchall()
+    finally:
+        if should_close:
+            managed.close()
+    out: dict[int, dict] = {}
+    for cid, handle, name, avatar, checked_at, post_id, content, url, posted_at, media, meta in rows:
+        creator = out.setdefault(cid, {
+            "handle": handle,
+            "name": name or "",
+            "avatar": avatar or "",
+            "checked_at": _iso_utc(checked_at),
+            "posts": [],
+        })
+        if content is None:
+            continue
+        meta = meta or {}
+        creator["posts"].append({
+            "id": post_id or "",
+            "text": content,
+            "url": url or "",
+            "posted_at": _iso_utc(posted_at),
+            "media": media or [],
+            "stats": meta.get("stats") or {},
+            "pinned": bool(meta.get("pinned")),
+            "author": meta.get("author") or "",
+            "en": meta.get("en") or "",
+        })
+    return list(out.values())
+
+
+@trace_db
+def delete_creator(handle: str, conn=None) -> bool:
+    """Remove a body creator and its posts; False when the handle is unknown."""
+    managed, should_close = _managed_conn(conn)
+    try:
+        row = managed.execute(
+            "DELETE FROM body_creators WHERE lower(handle) = lower(%s) RETURNING id",
+            (handle.lstrip("@"),),
+        ).fetchone()
+        return row is not None
+    finally:
+        if should_close:
+            managed.close()
+
+
 # ── Sync run history ────────────────────────────────────────────────
 
 @trace_db
@@ -776,6 +989,10 @@ def insert_user_events(events: list[dict], conn=None) -> int:
 # Post-sync checks run every 6h; without a backoff the same permanently dead
 # magnets were re-probed each run (2-6 revivals out of ~30, 150-570s/run).
 DEAD_RECHECK_INTERVAL = "3 days"
+# Swarms die after an initial ok; re-probe primaries on this cadence so the UI
+# does not keep serving magnets that passed a one-time September sweep.
+OK_RECHECK_DAYS = 30
+OK_RECHECK_INTERVAL = f"{OK_RECHECK_DAYS} days"
 
 @trace_db
 def load_titles_for_magnet_check(scope: str = "changed", conn=None) -> list[dict]:
@@ -786,6 +1003,7 @@ def load_titles_for_magnet_check(scope: str = "changed", conn=None) -> list[dict
       - dead:      currently marked dead (retry)
       - all:       every title with a magnet (full historical sweep)
       - changed:   unchecked OR dead not rechecked for DEAD_RECHECK_INTERVAL
+                   OR ok but not rechecked for OK_RECHECK_INTERVAL
                    (post-sync default; a new primary hash is caught by unchecked)
     """
     where = "magnet IS NOT NULL AND magnet != ''"
@@ -798,7 +1016,9 @@ def load_titles_for_magnet_check(scope: str = "changed", conn=None) -> list[dict
         where += (
             f" AND (magnet_checked_at IS NULL OR {hash_changed}"
             f" OR (magnet_status = 'dead'"
-            f" AND magnet_checked_at < now() - interval '{DEAD_RECHECK_INTERVAL}'))"
+            f" AND magnet_checked_at < now() - interval '{DEAD_RECHECK_INTERVAL}')"
+            f" OR (magnet_status = 'ok'"
+            f" AND magnet_checked_at < now() - interval '{OK_RECHECK_INTERVAL}'))"
         )
     elif scope != "all":
         raise ValueError(f"unknown magnet check scope: {scope}")
@@ -806,10 +1026,22 @@ def load_titles_for_magnet_check(scope: str = "changed", conn=None) -> list[dict
     managed, should_close = _managed_conn(conn)
     try:
         rows = managed.execute(
-            f"SELECT id, code, magnet, magnet_hash, all_magnets FROM titles WHERE {where}"
+            f"""
+            SELECT id, code, magnet, magnet_hash, all_magnets,
+                   magnet_status, magnet_checked_at
+            FROM titles WHERE {where}
+            """
         ).fetchall()
         return [
-            {"id": r[0], "code": r[1], "magnet": r[2], "magnet_hash": r[3], "all_magnets": r[4]}
+            {
+                "id": r[0],
+                "code": r[1],
+                "magnet": r[2],
+                "magnet_hash": r[3],
+                "all_magnets": r[4],
+                "magnet_status": r[5],
+                "magnet_checked_at": r[6],
+            }
             for r in rows
         ]
     finally:
@@ -819,13 +1051,13 @@ def load_titles_for_magnet_check(scope: str = "changed", conn=None) -> list[dict
 
 @trace_db
 def update_magnet_check_ok(title_id: int, checked_hash: str, conn=None) -> None:
-    """Mark a title's primary magnet alive."""
+    """Mark a title's primary magnet alive (clears any pending TTL purge)."""
     managed, should_close = _managed_conn(conn)
     try:
         managed.execute(
             """
             UPDATE titles SET magnet_status = 'ok', magnet_checked_at = now(),
-                magnet_checked_hash = %s, updated_at = now()
+                magnet_checked_hash = %s, dead_since = NULL, updated_at = now()
             WHERE id = %s
             """,
             (checked_hash, title_id),
@@ -837,13 +1069,20 @@ def update_magnet_check_ok(title_id: int, checked_hash: str, conn=None) -> None:
 
 @trace_db
 def update_magnet_check_dead(title_id: int, checked_hash: str | None, conn=None) -> None:
-    """Mark a title's primary magnet dead (no live candidate found)."""
+    """Mark a title's primary magnet dead (no live candidate found).
+
+    ``dead_since`` keeps the FIRST time the title was found dead: it drives
+    the TTL purge (a dead title is retired only after DEAD_PURGE_TTL_DAYS,
+    giving the swarm time to come back), so a repeated check must not
+    restart the clock.
+    """
     managed, should_close = _managed_conn(conn)
     try:
         managed.execute(
             """
             UPDATE titles SET magnet_status = 'dead', magnet_checked_at = now(),
-                magnet_checked_hash = %s, updated_at = now()
+                magnet_checked_hash = %s, dead_since = COALESCE(dead_since, now()),
+                updated_at = now()
             WHERE id = %s
             """,
             (checked_hash, title_id),
@@ -862,7 +1101,7 @@ def swap_primary_magnet(title_id: int, new_magnet: str, new_hash: str, conn=None
             """
             UPDATE titles SET magnet = %s, magnet_hash = %s,
                 magnet_status = 'ok', magnet_checked_at = now(),
-                magnet_checked_hash = %s, updated_at = now()
+                magnet_checked_hash = %s, dead_since = NULL, updated_at = now()
             WHERE id = %s
             """,
             (new_magnet, new_hash, new_hash, title_id),
@@ -872,16 +1111,39 @@ def swap_primary_magnet(title_id: int, new_magnet: str, new_hash: str, conn=None
             managed.close()
 
 
+# A dead title stays on the TTL clock this long before it is retired: one
+# full re-check window (3 days) plus slack, so a temporarily starved swarm
+# can still come back. See docs/design/magnet-check.md.
+DEAD_PURGE_TTL_DAYS = 7
+
+
 @trace_db
-def list_unplayable_titles(conn=None) -> list[dict]:
-    """Titles that can never play: dead-checked magnets or no magnet at all."""
+def list_unplayable_titles(
+    ttl_days: int | None = None, conn=None
+) -> list[dict]:
+    """Titles that can never play: dead-checked magnets or no magnet at all.
+
+    ``ttl_days`` restricts the result to rows that have been unplayable for
+    at least that long (dead since ``dead_since``; no-magnet rows since
+    ``created_at``). Without it every unplayable row is returned.
+    """
+    where = "(magnet_status = 'dead' OR magnet IS NULL OR magnet = '')"
+    params: tuple = ()
+    if ttl_days is not None:
+        where += (
+            " AND (CASE WHEN magnet_status = 'dead'"
+            " THEN COALESCE(dead_since, magnet_checked_at, created_at)"
+            " ELSE created_at END) < now() - make_interval(days => %s)"
+        )
+        params = (ttl_days,)
     managed, should_close = _managed_conn(conn)
     try:
         rows = managed.execute(
-            """
+            f"""
             SELECT id, star_id, code, COALESCE(user_liked, 0) FROM titles
-            WHERE magnet_status = 'dead' OR magnet IS NULL OR magnet = ''
-            """
+            WHERE {where}
+            """,
+            params,
         ).fetchall()
         return [{"id": r[0], "star_id": r[1], "code": r[2], "user_liked": r[3]} for r in rows]
     finally:

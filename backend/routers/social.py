@@ -1,11 +1,13 @@
-"""backend/routers/social.py — Injected X (Twitter) profiles for stars
+"""backend/routers/social.py — Injected X (Twitter) profiles
 
 xstream never calls the X API (paid, unstable). An agent browsing x.com —
 or the owner — injects what it sees; see docs/design/x-inject.md.
 
-  GET  /api/social/x/pending          which stars still need a check (agent to-do list)
-  POST /api/social/x                  inject HTML / text / JSON for one star or a batch
-  GET  /api/social/x/media/{filename} injected X images, served from the local cache
+  GET    /api/social/x/pending          which stars still need a check (agent to-do list)
+  POST   /api/social/x                  inject HTML / text / JSON for one star or a batch
+  POST   /api/social/x/creators         inject body creators (accounts the owner follows)
+  DELETE /api/social/x/creators/{handle}  unfollow a body creator
+  GET    /api/social/x/media/{filename} injected X images, served from the local cache
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 
@@ -32,6 +34,23 @@ router = APIRouter(prefix="/api/social", tags=["social"], dependencies=[Depends(
 MAX_PAYLOAD_CHARS = 2_000_000
 MAX_BATCH = 100
 
+CREATOR_HELP = {
+    "endpoint": "POST /api/social/x/creators",
+    "body": {"content": "<x.com HTML | text | JSON>"},
+    "json_batch": {"creators": [{
+        "handle": "<username>", "name": "display name",
+        "avatar": "https://pbs.twimg.com/profile_images/...",
+        "posts": [{"url": "https://x.com/<user>/status/<id>", "text": "...",
+                   "posted_at": "ISO-8601", "media": ["https://pbs.twimg.com/media/..."],
+                   "likes": 0, "reposts": 0, "replies": 0, "views": 0,
+                   "en": "concise, cute, flirty English translation"}],
+    }]},
+    "json_single": {"handle": "<username>", "name": "...", "posts": []},
+    "text": "@handle line, then posts separated by '---' lines",
+    "keep": "newest 10 posts per creator; posts merge by id across injects",
+    "scope": "creators are NOT library stars — no code/titles, keyed by X handle",
+}
+
 INJECT_HELP = {
     "endpoint": "POST /api/social/x",
     "body": {"star": "<code|name, optional for batch>", "content": "<x.com HTML | text | JSON>"},
@@ -47,6 +66,8 @@ INJECT_HELP = {
     "text": "@handle line, then posts separated by '---' lines (status URL + text); 'none' = no account",
     "keep": "newest 5 posts per star; posts merge by id across injects",
     "translate": "send {url, en} only to add a translation to a stored post",
+    "creators": "body creators (accounts the owner follows, not library stars)"
+                " use POST /api/social/x/creators with {'creators': [...]}, 10 posts each",
 }
 
 
@@ -167,3 +188,89 @@ async def inject_x(request: InjectRequest) -> dict[str, Any]:
     if not updated and results:
         raise HTTPException(status_code=404, detail=results[0]["error"])
     return {"updated": len(updated), "results": results}
+
+
+# ── Body creators ────────────────────────────────────────────────────
+
+class CreatorInjectRequest(BaseModel):
+    content: str | dict[str, Any] | list[Any]
+
+
+@router.get("/x/creators")
+async def list_creators() -> dict[str, Any]:
+    """Every injected body creator with its newest posts (agent to-do list)."""
+    creators = await db_read(db.load_creators)
+    for c in creators:
+        if c.get("avatar"):
+            c["avatar"] = x_media.proxy_url(c["avatar"])
+        for post in c.get("posts", []):
+            post["media"] = [x_media.proxy_url(u) for u in post.get("media") or []]
+    return {"count": len(creators), "creators": creators, "inject": CREATOR_HELP}
+
+
+@router.post("/x/creators")
+async def inject_creators(request: CreatorInjectRequest) -> dict[str, Any]:
+    """Inject one creator's X timeline (or a batch of creators).
+
+    Creators are accounts the owner follows on X that are not library stars:
+    they live in body_creators / creator_posts, never in stars, and keep the
+    newest 10 posts each. The external bot drives this endpoint.
+    """
+    content = request.content
+    if isinstance(content, str) and len(content) > MAX_PAYLOAD_CHARS:
+        raise HTTPException(status_code=413, detail="payload too large (max 2MB)")
+    try:
+        profiles = await asyncio.to_thread(parse_payload, content, None, True)
+    except InjectError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    if len(profiles) > MAX_BATCH:
+        raise HTTPException(status_code=413, detail=f"batch too large (max {MAX_BATCH})")
+
+    results: list[dict[str, Any]] = []
+    warm_urls: list[str | None] = []
+    for prof in profiles:
+        handle = prof.handle
+        if not handle:
+            results.append({"handle": None, "ok": False, "error": "no X handle"})
+            continue
+        try:
+            stored = await db_write(
+                db.save_creator_profile,
+                handle, prof.name, prof.avatar,
+                [_post_dict(p) for p in prof.posts], prof.not_found,
+            )
+        except LookupError as exc:
+            results.append({"handle": handle, "ok": False, "error": str(exc)})
+            continue
+        results.append({
+            "handle": stored["handle"], "ok": True,
+            "posts": len(stored["posts"]), "received": len(prof.posts),
+        })
+        warm_urls.append(prof.avatar)
+        for p in stored["posts"]:
+            warm_urls.extend(p.get("media") or [])
+
+    updated = [r for r in results if r["ok"]]
+    if warm_urls:
+        asyncio.create_task(x_media.warm(warm_urls))
+    if updated:
+        invalidate_stars_cache()
+        await publish_event("creator.social", {"handles": [r["handle"] for r in updated]})
+        log.info(f"creator inject: {len(updated)} creator(s)")
+    if not updated and results:
+        raise HTTPException(status_code=422, detail=results[0]["error"])
+    return {"updated": len(updated), "results": results}
+
+
+@router.delete("/x/creators/{handle}")
+async def unfollow_creator(
+    handle: str = Path(..., pattern=r"^[A-Za-z0-9_]{1,15}$"),
+) -> dict[str, Any]:
+    """Unfollow a body creator: drop the account and all its stored posts."""
+    deleted = await db_write(db.delete_creator, handle)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="creator not found")
+    invalidate_stars_cache()
+    await publish_event("creator.social", {"handles": [handle], "removed": True})
+    log.info(f"creator removed: {handle}")
+    return {"handle": handle, "deleted": True}

@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -36,6 +37,10 @@ SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 CACHE_DIR = os.path.join(SCRIPT_DIR, "cache", "torrent")
 CHECK_WORK_DIR = os.path.join(SCRIPT_DIR, "cache", "magnet-check")
 IMAGES_DIR = os.path.join(SCRIPT_DIR, "images", "titles")
+# Unplayable titles are hidden by /api/stars immediately; the row (cover,
+# candidates) is retired this long after it was first found unplayable.
+TTL_DAYS = db.DEAD_PURGE_TTL_DAYS
+OK_RECHECK_DAYS = db.OK_RECHECK_DAYS
 
 _checker: MagnetChecker | None = None
 _check_lock = asyncio.Lock()
@@ -61,6 +66,15 @@ def get_checker() -> MagnetChecker:
     return _checker
 
 
+_engine: Any = None
+
+
+def set_engine(engine: Any) -> None:
+    """Register the streaming engine (lifespan) for the post-check TTL sweep."""
+    global _engine
+    _engine = engine
+
+
 def shutdown_checker() -> None:
     global _checker
     if _checker is not None:
@@ -70,6 +84,18 @@ def shutdown_checker() -> None:
 
 class CheckRequest(BaseModel):
     scope: str = Field(default="changed", pattern="^(all|dead|unchecked|changed)$")
+
+
+def _ok_check_is_stale(item: dict[str, Any]) -> bool:
+    """True when a prior ok verdict is old enough that the swarm may have died."""
+    if item.get("magnet_status") != "ok":
+        return False
+    checked = item.get("magnet_checked_at")
+    if checked is None:
+        return False
+    if checked.tzinfo is None:
+        checked = checked.replace(tzinfo=timezone.utc)
+    return checked < datetime.now(timezone.utc) - timedelta(days=OK_RECHECK_DAYS)
 
 
 def _candidates(item: dict[str, Any], skip_hash: str | None) -> list[dict[str, Any]]:
@@ -160,6 +186,7 @@ async def _run_check_bg(scope: str) -> None:
     global _check_state, _last_progress_push
     started_at = _check_state["started_at"]
     pending: list[asyncio.Future] = []
+    summary: dict[str, Any] = {}
     try:
         titles = await db_read(db.load_titles_for_magnet_check, scope)
         # Disk-is-truth shortcut: a cached .torrent proves the swarm works.
@@ -167,7 +194,13 @@ async def _run_check_bg(scope: str) -> None:
         cached_ok = 0
         for t in titles:
             h = t.get("magnet_hash") or extract_hash(t["magnet"])
-            if h and has_cached_torrent(CACHE_DIR, h):
+            # Cached .torrent skips network only for fresh ok rows; stale ok must
+            # re-probe metadata because the swarm may have died since Sept sweep.
+            if (
+                h
+                and has_cached_torrent(CACHE_DIR, h)
+                and not _ok_check_is_stale(t)
+            ):
                 pending.append(asyncio.ensure_future(
                     _persist_outcome(t, {"alive": True, "status": "ok", "hash": h})
                 ))
@@ -204,6 +237,19 @@ async def _run_check_bg(scope: str) -> None:
     finally:
         async with _check_lock:
             _check_state["running"] = False
+
+    # TTL sweep: unplayable titles have been hidden from /api/stars since the
+    # moment they went dead; only now, TTL_DAYS after that, is the row retired
+    # (blacklisted + deleted) so a temporarily starved swarm could still come
+    # back through the regular re-check. Runs outside the check lock: the
+    # state is already "not running", and _purge_unplayable never takes it.
+    if summary:
+        try:
+            purged = await _purge_unplayable(_engine, ttl_days=TTL_DAYS)
+            if purged["deleted"]:
+                await publish_event("magnets.purged", {**purged, "ttl_days": TTL_DAYS})
+        except Exception:
+            log.exception("TTL purge failed after magnet check")
 
 
 async def trigger_check(scope: str = "changed") -> dict[str, Any]:
@@ -249,35 +295,34 @@ async def get_check_status() -> dict[str, Any]:
         return {**_check_state, "elapsed": elapsed}
 
 
-@router.post("/purge-dead")
-async def purge_dead(request: Request) -> dict[str, Any]:
-    """Delete unplayable titles (dead-checked magnets or no magnet at all).
+async def _purge_unplayable(
+    engine: Any = None,
+    ttl_days: int | None = None,
+    reason: str = "dead_magnet",
+) -> dict[str, Any]:
+    """Delete unplayable titles and seal them in title_blacklist.
 
-    Liked titles (user_liked=1) are never deleted. Deleted codes are sealed
-    in title_blacklist (reason=dead_magnet) so the next sync does not
-    re-download and re-add them; the 7-day retry window still lets a title
-    back if its swarm comes back to life. Cached torrents of deleted rows
-    become orphans and are garbage-collected right away; cover image
-    directories are removed as well.
+    Shared by the manual purge (``ttl_days=None``: everything unplayable) and
+    the automatic TTL sweep that runs after a check (``ttl_days=TTL_DAYS``:
+    only rows unplayable for at least that long). Liked titles are never
+    deleted. Blacklisting stops the next sync from re-downloading the cover
+    and re-adding the row; the blacklist retry window still lets a title
+    back when its swarm returns.
     """
     from backend.routers.stars import invalidate_stars_cache
 
-    async with _check_lock:
-        if _check_state["running"]:
-            return JSONResponse(
-                status_code=409,
-                content={"detail": "magnet check is running; purge after it finishes"},
-            )
-
-    unplayable = await db_read(db.list_unplayable_titles)
+    unplayable = await db_read(db.list_unplayable_titles, ttl_days)
     liked = [t for t in unplayable if t["user_liked"]]
     deletable = [t for t in unplayable if not t["user_liked"]]
+    if not deletable:
+        return {"deleted": 0, "blacklisted": 0, "liked_kept": len(liked),
+                "liked_codes": [], "covers_removed": 0, "orphans_removed": 0}
 
     blacklisted = await db_write(
         db.blacklist_titles,
-        [(t["star_id"], t["code"], "dead_magnet") for t in deletable],
+        [(t["star_id"], t["code"], reason) for t in deletable],
     )
-    deleted = await db_write(db.delete_titles_by_ids, [t["id"] for t in deletable])
+    await db_write(db.delete_titles_by_ids, [t["id"] for t in deletable])
 
     def _remove_covers() -> int:
         import shutil
@@ -292,7 +337,6 @@ async def purge_dead(request: Request) -> dict[str, Any]:
     covers_removed = await asyncio.to_thread(_remove_covers)
 
     orphans_removed = 0
-    engine = getattr(request.app.state, "engine", None)
     if engine is not None:
         try:
             orphans_removed = await asyncio.to_thread(engine.gc_orphaned_torrents)
@@ -301,13 +345,38 @@ async def purge_dead(request: Request) -> dict[str, Any]:
 
     invalidate_stars_cache()
     summary = {
-        "deleted": deleted,
+        "deleted": len(deletable),
         "blacklisted": blacklisted,
         "liked_kept": len(liked),
         "liked_codes": [t["code"] for t in liked],
         "covers_removed": covers_removed,
         "orphans_removed": orphans_removed,
     }
-    log.info(f"purged unplayable titles: {summary}")
-    await publish_event("magnets.purged", summary)
+    log.info(f"purged unplayable titles (ttl={ttl_days}d): {summary}")
+    await publish_event("magnets.purged", {**summary, "ttl_days": ttl_days})
     return summary
+
+
+@router.post("/purge-dead")
+async def purge_dead(request: Request) -> dict[str, Any]:
+    """Delete unplayable titles (dead-checked magnets or no magnet at all).
+
+    Liked titles (user_liked=1) are never deleted. Deleted codes are sealed
+    in title_blacklist (reason=dead_magnet) so the next sync does not
+    re-download and re-add them; the 7-day retry window still lets a title
+    back if its swarm comes back to life. Cached torrents of deleted rows
+    become orphans and are garbage-collected right away; cover image
+    directories are removed as well.
+
+    Unplayable titles are already hidden from /api/stars, so this is the
+    manual "reclaim the rows now" switch; the automatic equivalent is the
+    TTL sweep that runs after every magnet check (TTL_DAYS).
+    """
+    async with _check_lock:
+        if _check_state["running"]:
+            return JSONResponse(
+                status_code=409,
+                content={"detail": "magnet check is running; purge after it finishes"},
+            )
+
+    return await _purge_unplayable(getattr(request.app.state, "engine", None))
