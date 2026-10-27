@@ -131,10 +131,10 @@ Agents log in with `POST /api/auth`, then call the brief on every run.
   unfollow opens the overlay pre-filtered to that star). Posts are
   transient content and never occupy the waterfall; the overlay's Inject
   button opens `XInjectSheet` (Auto = batch), native star `<select>`,
-  status line, monospace textarea (`name="content"`, ⌘/Ctrl+Enter
-  submits), `Not on X` and `Inject`. "Copy brief" copies a ready prompt
-  for an agent listing the selected or pending stars (stale, or with posts
-  lacking `en`) and the JSON reply shape, including the `en` style rule.
+  **Library stars / Body creators** tabs, star `<select>` in stars mode,
+  monospace textarea (⌘/Ctrl+Enter), `Not on X` (stars only), `Inject`.
+  **Copy brief** loads `GET /api/social/x/agent-brief` (queue + agent
+  runbook). Collapsed "Agent self-bootstrap" details are for bots only.
 - `XSocialOverlay` cards: author line (avatar, name, @handle, relative
   time, Pinned/Repost chip, link-out), `en` text (original on hover via
   `title`), media as a natural-ratio grid, likes/views footer; text
