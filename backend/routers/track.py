@@ -7,6 +7,7 @@ analysis (play / like / view patterns per star and title).
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -37,4 +38,9 @@ async def track_events(request: TrackRequest) -> dict[str, int]:
     inserted = await db_write(
         db.insert_user_events, [e.model_dump() for e in request.events]
     )
+    for e in request.events:
+        if e.event == "play_timeout" and e.code:
+            from backend.routers.magnets import schedule_title_magnet_recheck
+
+            asyncio.create_task(schedule_title_magnet_recheck(e.code))
     return {"inserted": inserted}

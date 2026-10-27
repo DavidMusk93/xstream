@@ -995,6 +995,38 @@ OK_RECHECK_DAYS = 30
 OK_RECHECK_INTERVAL = f"{OK_RECHECK_DAYS} days"
 
 @trace_db
+def load_title_for_magnet_check(code: str, conn=None) -> dict | None:
+    """One title row for a targeted recheck (play_timeout feedback loop)."""
+    managed, should_close = _managed_conn(conn)
+    try:
+        row = managed.execute(
+            """
+            SELECT id, code, magnet, magnet_hash, all_magnets,
+                   magnet_status, magnet_checked_at
+            FROM titles
+            WHERE lower(code) = lower(%s)
+              AND magnet IS NOT NULL AND magnet != ''
+            LIMIT 1
+            """,
+            (code.strip(),),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "code": row[1],
+            "magnet": row[2],
+            "magnet_hash": row[3],
+            "all_magnets": row[4],
+            "magnet_status": row[5],
+            "magnet_checked_at": row[6],
+        }
+    finally:
+        if should_close:
+            managed.close()
+
+
+@trace_db
 def load_titles_for_magnet_check(scope: str = "changed", conn=None) -> list[dict]:
     """Load titles whose primary magnet needs a liveness check.
 

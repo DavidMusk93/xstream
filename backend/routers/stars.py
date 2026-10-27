@@ -55,8 +55,10 @@ _build_lock = asyncio.Lock()
 
 
 def invalidate_stars_cache() -> None:
+    global _cover_file_index_ts
     _stars_cache["body"] = None
     _stars_cache["gen"] += 1
+    _cover_file_index_ts = 0.0
 
 
 # ── Response builder ────────────────────────────────────────────────
@@ -80,27 +82,47 @@ def _rewrite_x_media_urls(x_profiles: dict[str, Any]) -> None:
         for post in prof.get("posts", []):
             post["media"] = [_x_media_proxy(u) for u in post.get("media") or []]
 
+_cover_file_index: dict[str, tuple[bool, bool, bool]] = {}
+_cover_file_index_ts: float = 0.0
+COVER_FILE_INDEX_TTL = 120.0
+
+
 def _scan_cover_files(codes: set[str]) -> dict[str, tuple[bool, bool, bool]]:
     """Map each title code -> (has_full, has_thumb, has_mid) from images/titles/.
 
     Lets /api/stars emit direct static cover URLs (served by Caddy with
     long-lived cache headers) instead of forcing every client through the
-    /api/cover 307 redirect hop. Only the given codes' directories are
-    listed — images/titles/ also holds dirs of titles no longer in the DB.
+    /api/cover 307 redirect hop. One scandir pass is cached briefly so
+    repeated /api/stars rebuilds (ETag miss) do not list ~2k dirs each time.
     """
+    global _cover_file_index, _cover_file_index_ts
     titles_dir = os.path.join(IMAGES_DIR, "titles")
-    found: dict[str, tuple[bool, bool, bool]] = {}
-    for code_dir in {c.lower() for c in codes}:
+    now = time.time()
+    if not _cover_file_index or now - _cover_file_index_ts >= COVER_FILE_INDEX_TTL:
+        index: dict[str, tuple[bool, bool, bool]] = {}
         try:
-            files = set(os.listdir(os.path.join(titles_dir, code_dir)))
+            with os.scandir(titles_dir) as it:
+                for entry in it:
+                    if not entry.is_dir():
+                        continue
+                    code_dir = entry.name
+                    try:
+                        files = {f.name for f in os.scandir(entry.path)}
+                    except OSError:
+                        continue
+                    index[code_dir.upper()] = (
+                        f"{code_dir}.jpg" in files,
+                        f"{code_dir}_thumb.jpg" in files,
+                        f"{code_dir}_mid.jpg" in files,
+                    )
         except OSError:
-            continue
-        found[code_dir.upper()] = (
-            f"{code_dir}.jpg" in files,
-            f"{code_dir}_thumb.jpg" in files,
-            f"{code_dir}_mid.jpg" in files,
-        )
-    return found
+            index = {}
+        _cover_file_index = index
+        _cover_file_index_ts = now
+    return {
+        c.upper(): _cover_file_index.get(c.upper(), (False, False, False))
+        for c in codes
+    }
 
 def _build_stars_response() -> list[dict[str, Any]]:
     config = _load_config()

@@ -29,7 +29,13 @@ POST /api/magnets/check ──→ MagnetChecker (backend/services/magnet_checker
                          SSE: magnets.check_started /
                               magnets.check_progress /
                               magnets.check_completed / magnets.check_error
+                                 │
+                    play_timeout (/api/track) ──→ schedule_title_magnet_recheck
+                                 (one title, swap/dead invalidates /api/stars only)
 ```
+
+批量校验时 **只有 swap / dead 才 `invalidate_stars_cache()`**；纯 `ok` 刷新不改变
+`/api/stars` 可见字段，避免一轮 changed 校验把 ~2.8MB home JSON 重建上千次。
 
 判定标准：**metadata 到达 = alive**。peers>0 但 metadata 迟迟不到给一次宽限
 （活 swarm 但 metadata 慢；注意同主机其他 libtorrent session 的共享 DHT 可能

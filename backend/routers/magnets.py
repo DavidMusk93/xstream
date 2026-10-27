@@ -147,7 +147,9 @@ async def _persist_outcome(item: dict[str, Any], outcome: dict[str, Any]) -> Non
     try:
         if outcome["status"] == "ok":
             await db_write(db.update_magnet_check_ok, item["id"], outcome.get("hash"))
-            invalidate_stars_cache()
+            # ok-only refresh does not change /api/stars (same magnet, still playable).
+            # Bulk magnet checks used to invalidate ~2k times and rebuild the 2.8MB
+            # payload each time — access logs showed /api/stars avg ~618ms p95 ~2s.
         elif outcome["status"] == "swapped":
             await db_write(db.swap_primary_magnet, item["id"], outcome["magnet"], outcome["hash"])
             invalidate_stars_cache()
@@ -250,6 +252,31 @@ async def _run_check_bg(scope: str) -> None:
                 await publish_event("magnets.purged", {**purged, "ttl_days": TTL_DAYS})
         except Exception:
             log.exception("TTL purge failed after magnet check")
+
+
+_recheck_codes: set[str] = set()
+
+
+async def schedule_title_magnet_recheck(code: str) -> None:
+    """Re-check one title after a play_timeout (metrics-driven dead-magnet loop)."""
+    key = (code or "").strip().upper()
+    if not key or key in _recheck_codes:
+        return
+    _recheck_codes.add(key)
+
+    async def _run() -> None:
+        try:
+            item = await db_read(db.load_title_for_magnet_check, key)
+            if not item:
+                return
+            outcome = await asyncio.to_thread(_process_title, item)
+            await _persist_outcome(item, outcome)
+        except Exception:
+            log.exception(f"play-triggered magnet recheck failed for {key}")
+        finally:
+            _recheck_codes.discard(key)
+
+    asyncio.create_task(_run())
 
 
 async def trigger_check(scope: str = "changed") -> dict[str, Any]:
