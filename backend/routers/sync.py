@@ -8,13 +8,15 @@ sync_runs; phase B (sukebei RSS enrichment) runs as a background task that
 is referenced and exception-logged here but never awaited.
 
 Sync is both manual (POST /api/stars/sync) and scheduled: a background
-asyncio task re-runs it every SYNC_INTERVAL_HOURS. Every run is recorded
+asyncio task re-runs it every SYNC_INTERVAL_HOURS (default 4, env
+XSTREAM_SYNC_INTERVAL_HOURS). Every run is recorded
 in the sync_runs table so the UI can show last-update time and history.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import Any
 
@@ -30,7 +32,7 @@ from core.events import publish_event
 router = APIRouter(prefix="/api/stars", tags=["sync"], dependencies=[Depends(require_auth)])
 log = get_logger("sync")
 
-SYNC_INTERVAL_HOURS = 6
+SYNC_INTERVAL_HOURS = int(os.environ.get("XSTREAM_SYNC_INTERVAL_HOURS", "4"))
 SYNC_INTERVAL_SEC = SYNC_INTERVAL_HOURS * 3600
 
 _sync_lock = asyncio.Lock()
@@ -45,6 +47,22 @@ _sync_task: asyncio.Task[Any] | None = None
 _scheduler_task: asyncio.Task[Any] | None = None
 _rss_task: asyncio.Task[Any] | None = None  # phase-B RSS enrichment (never awaited)
 _next_scheduled_at: float | None = None
+
+
+def _star_updates_for_notify(results: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Stars with new titles only — structured for tg-lint / Telegram."""
+    out: list[dict[str, Any]] = []
+    for row in results or []:
+        if int(row.get("count") or 0) <= 0:
+            continue
+        out.append({
+            "code": row.get("code") or "",
+            "name": row.get("name") or "",
+            "count": row.get("count") or 0,
+            "updated": row.get("updated") or 0,
+            "new_titles": row.get("new_titles") or [],
+        })
+    return out
 
 
 def _on_rss_task_done(task: asyncio.Task[Any]) -> None:
@@ -104,6 +122,8 @@ async def _run_sync_bg(trigger: str) -> None:
             "trigger": trigger,
             "log_lines": log_lines[-10:],
             "total_new": total_new,
+            "total_updated": outcome.get("total_updated", 0),
+            "star_updates": _star_updates_for_notify(outcome.get("results")),
             "failed": [f["name"] for f in failed],
             "elapsed": round(time.time() - started_at, 1) if started_at else 0,
         })

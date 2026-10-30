@@ -16,9 +16,12 @@ from pydantic import BaseModel, Field
 from backend.routers.auth import require_auth
 from core import db, get_logger
 from core.db.write_queue import db_write
+from core.events import publish_event
 
 router = APIRouter(prefix="/api/track", tags=["track"], dependencies=[Depends(require_auth)])
 log = get_logger("track")
+
+_METRICS_NOTIFY = frozenset({"play_timeout", "play_error"})
 
 
 class TrackEvent(BaseModel):
@@ -43,4 +46,14 @@ async def track_events(request: TrackRequest) -> dict[str, int]:
             from backend.routers.magnets import schedule_title_magnet_recheck
 
             asyncio.create_task(schedule_title_magnet_recheck(e.code))
+        if e.event in _METRICS_NOTIFY:
+            meta = e.meta or {}
+            detail = meta.get("message") or meta.get("reason") or meta.get("error") or ""
+            asyncio.create_task(publish_event("metrics.alert", {
+                "kind": e.event,
+                "code": e.code,
+                "star_code": e.star_code,
+                "detail": str(detail)[:500] if detail else e.event,
+                "meta": {k: v for k, v in meta.items() if k in ("source", "elapsed_ms", "hash")},
+            }))
     return {"inserted": inserted}

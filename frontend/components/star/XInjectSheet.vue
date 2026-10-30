@@ -19,7 +19,7 @@
         :aria-selected="mode === 'creators'"
         @click="mode = 'creators'"
       >
-        Body creators
+        Pornographic creators
       </button>
     </div>
 
@@ -36,7 +36,7 @@
 
       <p class="px-1 text-[13px] text-foreground-muted tabular-nums min-h-[1.25rem]">
         <template v-if="mode === 'creators'">
-          Creators you follow on X (not library stars) · newest <strong class="text-foreground font-medium">10</strong> posts each
+          Pornographic creators you follow on X (not library stars) · batch JSON · newest <strong class="text-foreground font-medium">10</strong> posts each
         </template>
         <template v-else-if="selected">
           <template v-if="selected.x?.handle">
@@ -113,7 +113,7 @@
         </p>
         <ul class="mt-2 space-y-1.5 text-[13px] text-foreground-muted leading-snug">
           <li><span class="text-foreground font-medium">Stars</span> → <code class="font-mono">POST /api/social/x</code> · keep 5</li>
-          <li><span class="text-foreground font-medium">Creators</span> → <code class="font-mono">POST /api/social/x/creators</code> · keep 10</li>
+          <li><span class="text-foreground font-medium">Pornographic creators</span> → <code class="font-mono">POST /api/social/x/creators</code> · batch · keep 10 · list on ostore <code class="font-mono">meta/x-pornographic-creators.txt</code></li>
           <li>HTML, text (<code class="font-mono">@handle</code> + <code class="font-mono">---</code>), or JSON batch — auto-detected.</li>
         </ul>
       </details>

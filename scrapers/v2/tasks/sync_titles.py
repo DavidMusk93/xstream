@@ -68,6 +68,18 @@ log = get_logger("sync-titles")
 
 MAX_NEW_TITLES = 20  # Max new titles processed per sync (prevent stars with too many works from overwhelming sync)
 
+
+def _title_brief(item: VideoItem) -> dict[str, str]:
+    """Compact title row for sync.completed notify payloads (Telegram / tg-lint)."""
+    best = item.magnets[0] if item.magnets else None
+    return {
+        "code": item.code,
+        "title": (item.title or "")[:160],
+        "date": item.release_date or "",
+        "resolution": (best.resolution if best else "") or "",
+        "size": (best.size if best else "") or "",
+    }
+
 MAX_FETCH_ATTEMPTS = 3  # Retries per star before declaring the fetch failed
 FETCH_RETRY_DELAYS = (1.0, 2.0)  # Backoff between attempts (seconds); tests patch to zeros
 RATE_LIMIT_RETRY_DELAY = 10.0  # Backoff after an HTTP 429 from sukebei
@@ -660,7 +672,13 @@ async def run(
             total_new += batch_result["new"]
             total_updated += batch_result["updated"]
             log.info(f"done: {star.name}: {batch_result['new']} new, {batch_result['updated']} backfill")
-            clean.append({"name": star.name, "titles": sync_items, "count": batch_result["new"]})
+            clean.append({
+                "code": star.code,
+                "name": star.name,
+                "count": batch_result["new"],
+                "updated": batch_result["updated"],
+                "new_titles": [_title_brief(it) for it in new_items],
+            })
             await _emit("write", star=star.name, done=len(clean), total=len(stars),
                         new=batch_result["new"])
 

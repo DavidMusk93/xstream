@@ -59,12 +59,12 @@ Normalization rules:
   the account and drops its posts; not-found clears both; name/avatar keep
   the stored value when the inject omits them.
 
-## Body creators (separate from stars)
+## Pornographic creators (separate from stars)
 
-The owner also follows accounts on X that make nothing in the library — a
-body creator has no code, no titles and never enters `stars`. They are
-injected by the same external bot and shown in their own group inside the
-overlay.
+The owner also follows X accounts for adult content that are not library
+stars — a pornographic creator has no code, no titles and never enters
+`stars`. They are injected by the same external bot and shown aggregated
+by account inside the overlay (posts time-sorted within each creator).
 
 ```
  bot reads x.com (owner's follows)
@@ -88,8 +88,10 @@ overlay.
   `{url, en}`-only entry is a translation patch. `{"handle": h, "found":
   false}` only stamps `checked_at` — a transient agent failure must never
   empty a feed. A payload with no handle creates nothing (422).
-- UI: the overlay scope row `All / Stars / Creators`; creator cards carry a
-  `Creator` chip that doubles as **unfollow** (confirms, then DELETE).
+- UI: the overlay scope row `All / Stars / Porn creators`; the **Porn
+  creators** scope groups posts by account (newest activity first); each
+  group has **Unfollow** (DELETE). In **All**, creator posts still merge
+  into the global timeline.
   `useCreators()` is fetched on demand (only the overlay reads it) and
   refreshed by `creator.social`, so creators never bloat `/api/stars`.
 
@@ -112,10 +114,12 @@ Agents log in with `POST /api/auth`, then call the brief on every run.
   422 = unparseable, 404 = no star matched, 413 = > 2MB.
 - `GET /api/social/x/pending?stale_hours=72` → stars never checked or stale,
   plus an `inject` block describing the format (self-documenting for agents).
-- `GET /api/social/x/creators` → every body creator with its newest posts and
-  the same self-documenting `inject` block.
+- `GET /api/social/x/creators` → every pornographic creator with its newest
+  posts and the same self-documenting `inject` block (batch preferred).
 - `POST /api/social/x/creators` `{"content": <str|object>}` → inject one
   creator's timeline or a batch (`{"creators": [...]}`).
+- Agents should maintain `meta/x-pornographic-creators.txt` on ostore (one
+  handle per line) synced from the owner's X Following list.
   `{"updated", "results": [{handle, ok, posts, received, error}]}`.
   422 = unparseable / no handle, 413 = > 2MB.
 - `DELETE /api/social/x/creators/{handle}` → unfollow (drops the account and
@@ -125,13 +129,13 @@ Agents log in with `POST /api/auth`, then call the brief on every run.
 
 - The header X icon opens `XSocialOverlay`: a floating page (bottom sheet
   on mobile, centered panel on desktop) merging every bound account's
-  newest posts into one time-sorted feed. With body creators present the
-  overlay opens on a scope row — `All / Stars / Creators` — and the star
+  newest posts into one time-sorted feed. With pornographic creators present
+  the overlay opens on a scope row — `All / Stars / Porn creators` — and the star
   filter chips live under the Stars scope (the per-star X icon next to
   unfollow opens the overlay pre-filtered to that star). Posts are
   transient content and never occupy the waterfall; the overlay's Inject
   button opens `XInjectSheet` (Auto = batch), native star `<select>`,
-  **Library stars / Body creators** tabs, star `<select>` in stars mode,
+  **Library stars / Pornographic creators** tabs, star `<select>` in stars mode,
   monospace textarea (⌘/Ctrl+Enter), `Not on X` (stars only), `Inject`.
   **Copy brief** loads `GET /api/social/x/agent-brief` (queue + agent
   runbook). Collapsed "Agent self-bootstrap" details are for bots only.

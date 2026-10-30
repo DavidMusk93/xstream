@@ -5,8 +5,8 @@ or the owner — injects what it sees; see docs/design/x-inject.md.
 
   GET    /api/social/x/pending          which stars still need a check (agent to-do list)
   POST   /api/social/x                  inject HTML / text / JSON for one star or a batch
-  POST   /api/social/x/creators         inject body creators (accounts the owner follows)
-  DELETE /api/social/x/creators/{handle}  unfollow a body creator
+  POST   /api/social/x/creators         inject pornographic creators (owner's X follows)
+  DELETE /api/social/x/creators/{handle}  unfollow a pornographic creator
   GET    /api/social/x/media/{filename} injected X images, served from the local cache
 """
 
@@ -48,7 +48,15 @@ CREATOR_HELP = {
     "json_single": {"handle": "<username>", "name": "...", "posts": []},
     "text": "@handle line, then posts separated by '---' lines",
     "keep": "newest 10 posts per creator; posts merge by id across injects",
-    "scope": "creators are NOT library stars — no code/titles, keyed by X handle",
+    "scope": (
+        "pornographic creators: X accounts the owner follows for adult content — "
+        "NOT library stars (no code/titles), keyed by handle"
+    ),
+    "batch": "prefer one POST with {\"creators\": [...]} — many creators per run",
+    "follow_list": {
+        "ostore_path": "meta/x-pornographic-creators.txt",
+        "format": "one handle per line (@ optional); agents refresh from owner's X Following",
+    },
 }
 
 INJECT_HELP = {
@@ -66,8 +74,10 @@ INJECT_HELP = {
     "text": "@handle line, then posts separated by '---' lines (status URL + text); 'none' = no account",
     "keep": "newest 5 posts per star; posts merge by id across injects",
     "translate": "send {url, en} only to add a translation to a stored post",
-    "creators": "body creators (accounts the owner follows, not library stars)"
-                " use POST /api/social/x/creators with {'creators': [...]}, 10 posts each",
+    "creators": (
+        "pornographic creators (owner's adult-content X follows, not library stars): "
+        "POST /api/social/x/creators with {\"creators\": [...]}, 10 posts each, batch preferred"
+    ),
 }
 
 

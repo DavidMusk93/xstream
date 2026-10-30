@@ -82,7 +82,7 @@ export interface XProfile {
 }
 
 /**
- * Body creator: an X account the owner follows that is NOT a library star.
+ * Pornographic creator: an adult-content X account the owner follows (not a library star).
  * Injected by the external bot through POST /api/social/x/creators; keeps the
  * newest 10 posts. Shown as its own group in the X overlay.
  */

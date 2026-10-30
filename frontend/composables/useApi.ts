@@ -108,7 +108,7 @@ export function useApi() {
   }
 
   /**
-   * Body creators (accounts the owner follows, not library stars). Injected by
+   * Pornographic creators (owner's adult X follows, not library stars). Injected by
    * the external bot with the same payload shapes as stars; 10 posts each.
    */
   async function injectCreators(content: string | Record<string, unknown>) {

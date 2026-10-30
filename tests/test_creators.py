@@ -1,4 +1,4 @@
-"""tests/test_creators.py — Body creators (accounts the owner follows on X)
+"""tests/test_creators.py — Pornographic creators (owner's adult X follows)
 
 Creators are X accounts the owner follows that are NOT library stars: they
 have no code, no titles and never touch the `stars` table. The external bot
@@ -146,4 +146,5 @@ def test_agent_brief_self_bootstrap(client):
     assert "work_queue" in body
     assert "schemas" in body
     assert "Library stars" in body["prompt_markdown"]
-    assert "Body creators" in body["prompt_markdown"]
+    assert "Pornographic creators" in body["prompt_markdown"]
+    assert "x-pornographic-creators.txt" in body["work_queue"]["creators_follow_list"]["ostore_path"]

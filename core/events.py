@@ -85,3 +85,9 @@ def get_bus() -> EventBus:
 
 async def publish_event(event: str, data: dict[str, Any]) -> None:
     await _bus.publish(event, data)
+    try:
+        from backend.services.notify import schedule_dispatch
+
+        schedule_dispatch(event, data)
+    except Exception:
+        log.exception(f"notify hook failed for {event}")

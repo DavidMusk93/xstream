@@ -17,7 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import time
 import uuid
 
-from backend.routers import stream_router, check_router, torrents_router, cache_router, auth_router, log_router, sync_router, track_router, stars, search, social, test_router, events_router, magnets_router, play, files_vault
+from backend.routers import stream_router, check_router, torrents_router, cache_router, auth_router, log_router, sync_router, track_router, stars, search, social, test_router, events_router, magnets_router, play, files_vault, notify as notify_router
 from backend.services.torrent_engine import TorrentEngine
 from core import get_logger, set_trace_id
 from core.db.connection import _conn as _db_conn
@@ -132,7 +132,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     asyncio.create_task(_resume_liked_after_preload())
 
-    # Start the 6h scheduled title sync (records runs in sync_runs table)
+    # Start the scheduled title sync (default 4h; records runs in sync_runs table)
     from backend.routers.sync import start_sync_scheduler
     start_sync_scheduler()
 
@@ -228,6 +228,7 @@ app.include_router(magnets_router)
 app.include_router(play.router)
 app.include_router(play.files_router)
 app.include_router(files_vault.router)
+app.include_router(notify_router.router)
 
 # Static files
 if os.path.exists(IMAGES_DIR):

@@ -25,7 +25,7 @@
                 X posts
               </h2>
               <p class="mt-0.5 text-[13px] text-foreground-muted tabular-nums">
-                {{ entries.length }} post{{ entries.length === 1 ? '' : 's' }}
+                {{ feedPostCount }} post{{ feedPostCount === 1 ? '' : 's' }}
                 · {{ sourceCount }} account{{ sourceCount === 1 ? '' : 's' }}
               </p>
             </div>
@@ -69,7 +69,110 @@
 
           <!-- Feed -->
           <div class="flex-1 min-h-0 mt-4 overflow-y-auto overscroll-contain px-4 sm:px-6 pb-6">
-            <div v-if="entries.length" class="space-y-4">
+            <!-- Pornographic creators: one block per account, posts time-sorted inside -->
+            <div v-if="kind === 'creators' && creatorGroups.length" class="space-y-6">
+              <section v-for="g in creatorGroups" :key="g.handle">
+                <div class="flex items-center gap-2.5 min-w-0 px-0.5">
+                  <a
+                    :href="`https://x.com/${g.handle}`"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="flex items-center gap-2.5 min-w-0 group/xa flex-1"
+                  >
+                    <span class="w-9 h-9 shrink-0 rounded-full overflow-hidden bg-foreground text-white flex items-center justify-center">
+                      <img
+                        v-if="g.avatar && !failed[`av:c:${g.handle}`]"
+                        :src="g.avatar"
+                        alt=""
+                        width="36"
+                        height="36"
+                        class="w-full h-auto block"
+                        loading="lazy"
+                        decoding="async"
+                        @error="onImgError(`av:c:${g.handle}`, $event)"
+                      />
+                      <XGlyph v-else class="w-4 h-4" />
+                    </span>
+                    <span class="min-w-0">
+                      <span class="block text-[15px] font-semibold text-foreground truncate leading-tight group-hover/xa:underline underline-offset-2">{{ g.name }}</span>
+                      <span class="block text-[12px] text-foreground-muted truncate leading-tight">@{{ g.handle }} · {{ g.entries.length }} post{{ g.entries.length === 1 ? '' : 's' }}</span>
+                    </span>
+                  </a>
+                  <button
+                    class="chip bg-black/[0.05] text-foreground shrink-0 hover:bg-danger/10 hover:text-danger transition-colors"
+                    :title="`Unfollow @${g.handle}`"
+                    :disabled="removing === g.handle"
+                    @click="unfollow(g.handle)"
+                  >Unfollow</button>
+                </div>
+                <div class="mt-3 space-y-3">
+                  <article
+                    v-for="e in g.entries"
+                    :key="`${e.key}:${e.post.id}`"
+                    class="rounded-[18px] border border-black/[0.06] bg-white p-4"
+                  >
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span v-if="badge(e)" class="chip bg-black/[0.05] text-foreground shrink-0">{{ badge(e) }}</span>
+                      <time
+                        v-if="e.post.posted_at"
+                        :datetime="e.post.posted_at"
+                        :title="fullTime(e.post.posted_at)"
+                        class="font-mono text-[11px] tracking-[0.03em] text-foreground-muted tabular-nums"
+                      >{{ relTime(e.post.posted_at) }}</time>
+                      <a
+                        v-if="e.post.url"
+                        :href="e.post.url"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="ml-auto shrink-0 w-7 h-7 -mr-1 rounded-full flex items-center justify-center text-foreground/30 hover:text-foreground hover:bg-black/[0.05] transition-colors"
+                        aria-label="Open post on X"
+                      >
+                        <XGlyph class="w-3 h-3" />
+                      </a>
+                    </div>
+                    <p
+                      v-if="body(e.post)"
+                      class="mt-2 text-[15px] leading-[1.5] text-foreground whitespace-pre-line break-words [overflow-wrap:anywhere]"
+                      :title="e.post.en && e.post.text ? e.post.text : undefined"
+                    >
+                      <template v-for="(tok, k) in tokenize(body(e.post))" :key="k">
+                        <span v-if="tok.entity" class="text-info">{{ tok.text }}</span>
+                        <template v-else>{{ tok.text }}</template>
+                      </template>
+                    </p>
+                    <div
+                      v-if="shownMedia(e.post).length"
+                      class="mt-3 grid gap-2"
+                      :class="shownMedia(e.post).length > 1 ? 'grid-cols-2' : 'grid-cols-1'"
+                    >
+                      <div
+                        v-for="(src, i) in shownMedia(e.post)"
+                        :key="i"
+                        class="rounded-[14px] overflow-hidden bg-fill"
+                      >
+                        <img
+                          :src="src"
+                          alt=""
+                          class="block w-full h-auto transition-opacity duration-500 [transition-timing-function:var(--ease-out)]"
+                          :class="loaded[`${e.post.id}:${i}`] ? 'opacity-100' : 'opacity-0'"
+                          loading="lazy"
+                          decoding="async"
+                          @load="onImgLoad(`${e.post.id}:${i}`, $event)"
+                          @error="onImgError(`${e.post.id}:${i}`, $event)"
+                        />
+                      </div>
+                    </div>
+                    <div v-if="e.post.stats?.likes != null || e.post.stats?.views != null" class="mt-3 flex items-center gap-3 text-[12px] font-medium text-foreground-muted tabular-nums">
+                      <span v-if="e.post.stats.likes != null" class="inline-flex items-center gap-1" :title="`${e.post.stats.likes.toLocaleString()} likes`">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" class="text-accent/80"><path :d="HEART" /></svg>{{ compact(e.post.stats.likes) }}
+                      </span>
+                      <span v-if="e.post.stats.views != null" :title="`${e.post.stats.views.toLocaleString()} views`">{{ compact(e.post.stats.views) }} views</span>
+                    </div>
+                  </article>
+                </div>
+              </section>
+            </div>
+            <div v-else-if="entries.length" class="space-y-4">
               <article
                 v-for="e in entries"
                 :key="`${e.key}:${e.post.id}`"
@@ -177,13 +280,13 @@
             </div>
 
             <!-- Empty state -->
-            <div v-else class="py-20 text-center">
+            <div v-else-if="!(kind === 'creators' && creatorGroups.length)" class="py-20 text-center">
               <p class="text-[17px] font-semibold text-foreground">
                 {{ emptyTitle }}
               </p>
               <p class="mt-1.5 text-[14px] text-foreground-muted">
                 {{ kind === 'creators'
-                  ? 'The bot injects creators you follow on X.'
+                  ? 'The bot injects pornographic creators you follow on X (batch JSON).'
                   : 'Inject what you (or an agent) see on x.com.' }}
               </p>
               <button v-if="kind !== 'creators'" class="btn btn-primary mt-6" @click="emit('inject', filter)">
@@ -238,7 +341,7 @@ const kinds = computed<{ id: Kind; label: string; count: number }[]>(() => {
   }
   out.push({ id: 'stars', label: 'Stars', count: withPosts.value.length })
   if (hasCreators) {
-    out.push({ id: 'creators', label: 'Creators', count: creatorsWithPosts.value.length })
+    out.push({ id: 'creators', label: 'Porn creators', count: creatorsWithPosts.value.length })
   }
   return out
 })
@@ -256,7 +359,8 @@ const entries = computed<Entry[]>(() => {
       }
     }
   }
-  if (kind.value !== 'stars') {
+  // Creators scope uses creatorGroups; All merges creator posts into the timeline.
+  if (kind.value !== 'stars' && kind.value !== 'creators') {
     for (const c of creatorList.value) {
       for (const p of c.posts ?? []) {
         out.push({
@@ -274,7 +378,55 @@ const entries = computed<Entry[]>(() => {
   return out
 })
 
-const sourceCount = computed(() => new Set(entries.value.map(e => e.key)).size)
+interface CreatorGroup {
+  handle: string
+  name: string
+  avatar: string
+  entries: Entry[]
+}
+
+function postTimeMs(p: XPost): number {
+  const t = p.posted_at ? Date.parse(p.posted_at) : 0
+  return Number.isNaN(t) ? 0 : t
+}
+
+const creatorGroups = computed<CreatorGroup[]>(() => {
+  const groups = creatorList.value.map((c) => {
+    const entries: Entry[] = (c.posts ?? [])
+      .map(p => ({
+        post: p,
+        kind: 'creator' as const,
+        key: `c:${c.handle}`,
+        name: c.name || c.handle,
+        handle: c.handle,
+        avatar: c.avatar,
+      }))
+      .sort((a, b) => postTimeMs(b.post) - postTimeMs(a.post))
+    return {
+      handle: c.handle,
+      name: c.name || c.handle,
+      avatar: c.avatar,
+      entries,
+      latest: entries.length ? postTimeMs(entries[0].post) : 0,
+    }
+  })
+  return groups
+    .filter(g => g.entries.length)
+    .sort((a, b) => b.latest - a.latest)
+    .map(({ handle, name, avatar, entries }) => ({ handle, name, avatar, entries }))
+})
+
+const feedPostCount = computed(() => {
+  if (kind.value === 'creators') {
+    return creatorGroups.value.reduce((n, g) => n + g.entries.length, 0)
+  }
+  return entries.value.length
+})
+
+const sourceCount = computed(() => {
+  if (kind.value === 'creators') return creatorGroups.value.length
+  return new Set(entries.value.map(e => e.key)).size
+})
 
 const emptyTitle = computed(() => {
   if (kind.value === 'creators') return 'No creator posts yet'

@@ -70,6 +70,7 @@ Before SSE, the frontend ran four independent short-polling loops:
 | `files.changed` | `ostore_bridge.py` (relays ostore SSE) | `{kind: created\|updated\|deleted\|moved\|mkdir, path, type, size?, from?, mtime}` | `/files` page's own token-in-URL EventSource + full refetch |
 | `files.resync` | `ostore_bridge.py` | `{}` — ostore cursor gap / bridge started without a cursor | — |
 | `sse.reconnected` | `useEventSource` (local, synthetic) | `{}` — stream came back after a drop | — |
+| `metrics.alert` | `track.py` | `{kind, code, star_code, detail, meta?}` | Telegram notify (optional); not used by UI timers |
 
 ### `torrent.progress`: throttled snapshot push
 

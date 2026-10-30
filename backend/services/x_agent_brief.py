@@ -101,9 +101,18 @@ def build_x_agent_brief(
             "creators_stale": creators_stale,
             "creators": creators_detail,
             "discover_creators_hint": (
-                "Browse the owner's X Following feed; inject any account that is "
-                "NOT a library star via POST /api/social/x/creators (10 posts each)."
+                "Maintain meta/x-pornographic-creators.txt on ostore (one handle per line). "
+                "Refresh from the owner's X Following; inject batch JSON via "
+                "POST /api/social/x/creators (10 newest posts per handle)."
             ),
+            "creators_follow_list": {
+                "ostore_path": "meta/x-pornographic-creators.txt",
+                "format": "plain text, one X handle per line (@ optional)",
+                "note": (
+                    "Owner's pornographic-creator follows — not library stars. "
+                    "Upload via ostore; other bots read/update this list."
+                ),
+            },
         },
         "schemas": {
             "stars": inject_help,
@@ -157,9 +166,9 @@ def _prompt_markdown(
         f"Stars needing a check (>{stale_hours}h or never): **{len(stars_todo)}**",
         *(star_lines or ["- (none — spot-check stale entries in work_queue)"]),
         "",
-        "## B) Body creators (owner's follows, NOT library stars) — newest **10** posts each",
-        f"`POST {origin}/api/social/x/creators` body: `{{\"content\": {{\"creators\":[…]}}}}`",
-        "Also browse **Following** for new handles not listed below.",
+        "## B) Pornographic creators (owner's adult X follows, NOT library stars) — **10** posts each",
+        f"`POST {origin}/api/social/x/creators` body: `{{\"content\": {{\"creators\":[…]}}}}` — **batch many creators in one POST**.",
+        "Follow list (ostore): `meta/x-pornographic-creators.txt` — one `@handle` per line; sync from X **Following**, then inject.",
         "",
         f"Known creators: **{len(creators_detail)}** · stale/en queue: **{len(creators_stale)}**",
         *(creator_lines or ["- (none yet — inject from Following feed)"]),
