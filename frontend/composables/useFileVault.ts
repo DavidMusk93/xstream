@@ -7,6 +7,8 @@ const unlockedKeys = new Map<string, CryptoKey>()
 export function useFileVault() {
   const config = useRuntimeConfig()
   const vaultPaths = useState<FileVaultItem[]>('fileVaultPaths', () => [])
+  /** Vault paths currently unlocked in this tab (reactive; keys stay in unlockedKeys). */
+  const unlockedPaths = useState<string[]>('fileVaultUnlockedPaths', () => [])
 
   async function refreshIndex(): Promise<void> {
     const res = await $fetch<{ items: FileVaultItem[] }>('/api/files/vault', {
@@ -40,15 +42,29 @@ export function useFileVault() {
   function isLockedPath(path: string): boolean {
     if (!isEncryptedPath(path)) return false
     const ctx = vaultContextForPath(path)!
-    return !unlockedKeys.has(ctx.path)
+    return !unlockedPaths.value.includes(ctx.path)
+  }
+
+  function isUnlockedPath(path: string): boolean {
+    return isEncryptedPath(path) && !isLockedPath(path)
   }
 
   function rememberUnlock(path: string, key: CryptoKey) {
     unlockedKeys.set(path, key)
+    if (!unlockedPaths.value.includes(path)) {
+      unlockedPaths.value = [...unlockedPaths.value, path]
+    }
   }
 
   function forgetUnlock(path: string) {
     unlockedKeys.delete(path)
+    unlockedPaths.value = unlockedPaths.value.filter(p => p !== path)
+  }
+
+  /** Drop in-memory key for this item or its encrypted-folder ancestor. */
+  function lockPath(path: string) {
+    const ctx = vaultContextForPath(path)
+    if (ctx) forgetUnlock(ctx.path)
   }
 
   function keyForPath(path: string): CryptoKey | undefined {
@@ -63,8 +79,6 @@ export function useFileVault() {
       method: 'POST',
       body: { path, kind, password },
     })
-    const key = await deriveVaultKey(password, res.kdf_salt)
-    rememberUnlock(res.path, key)
     await refreshIndex()
     return res
   }
@@ -86,8 +100,7 @@ export function useFileVault() {
       method: 'POST',
       body: { path, old_password: oldPassword, new_password: newPassword },
     })
-    const key = await deriveVaultKey(newPassword, res.kdf_salt)
-    rememberUnlock(res.path, key)
+    forgetUnlock(res.path)
     await refreshIndex()
   }
 
@@ -117,14 +130,17 @@ export function useFileVault() {
 
   return {
     vaultPaths,
+    unlockedPaths,
     refreshIndex,
     vaultRowForPath,
     vaultContextForPath,
     isEncryptedPath,
     isLockedPath,
+    isUnlockedPath,
     keyForPath,
     rememberUnlock,
     forgetUnlock,
+    lockPath,
     createVault,
     unlock,
     changePassword,

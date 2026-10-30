@@ -1,5 +1,5 @@
 import type { OstoreEntry } from '~/types/api'
-import { decryptBytes, encryptBytes, isVaultBlob } from '~/utils/fileVaultCrypto'
+import { decryptBytes, deriveVaultKey, encryptBytes, isVaultBlob } from '~/utils/fileVaultCrypto'
 
 export function useFileVaultOps() {
   const ostore = useOstore()
@@ -59,7 +59,9 @@ export function useFileVaultOps() {
       }
     }
     await vault.changePassword(path, oldPassword, newPassword)
-    const newKey = vault.keyForPath(path)!
+    const updated = vault.vaultRowForPath(path)
+    if (!updated) throw new Error('Not encrypted')
+    const newKey = await deriveVaultKey(newPassword, updated.kdf_salt)
     for (const p of plains) {
       const enc = await encryptBytes(p.data, newKey)
       const name = p.path.slice(p.path.lastIndexOf('/') + 1)

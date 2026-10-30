@@ -23,6 +23,17 @@
             <line x1="9" y1="14" x2="15" y2="14" />
           </svg>
         </button>
+        <button
+          v-if="folderUnlocked"
+          class="btn-icon text-accent"
+          title="Lock folder"
+          aria-label="Lock folder"
+          @click="lockCurrentFolder"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 9.9-.9" /><line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+        </button>
         <button class="btn btn-sm btn-dark ml-1 sm:ml-2 !px-3 sm:!px-4" :disabled="!configured" title="Upload files" aria-label="Upload files" @click="fileInputRef?.click()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="17 8 12 3 7 8" />
@@ -129,8 +140,20 @@
           </div>
         </div>
 
-        <!-- Listing -->
-        <ul v-else class="surface overflow-hidden" aria-label="Folder contents">
+        <template v-else>
+          <div
+            v-if="folderUnlocked"
+            class="rise mb-4 flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-accent/[0.06] border border-accent/15"
+          >
+            <p class="text-[14px] text-foreground">
+              <span class="font-semibold">Unlocked</span>
+              <span class="text-foreground-muted"> — contents visible until you lock.</span>
+            </p>
+            <button type="button" class="btn btn-sm btn-secondary" @click="lockCurrentFolder">Lock folder</button>
+          </div>
+
+          <!-- Listing -->
+          <ul class="surface overflow-hidden" aria-label="Folder contents">
           <li
             v-for="entry in entries"
             :key="entry.path"
@@ -141,12 +164,17 @@
               :name="entry.name"
               :path="entry.path"
               :kind="fileKind(entry.name, entry.type)"
-              :locked="vault.isEncryptedPath(entry.path)"
+              :vault-locked="vault.isLockedPath(entry.path)"
+              :vault-unlocked="vault.isUnlockedPath(entry.path)"
             />
 
             <div class="flex-1 min-w-0">
               <p class="text-[15px] sm:text-[17px] text-foreground truncate leading-snug">{{ entry.name }}</p>
               <p class="mt-0.5 text-[13px] font-medium text-foreground-muted tabular-nums truncate">
+                <template v-if="vault.isEncryptedPath(entry.path)">
+                  <span :class="vault.isLockedPath(entry.path) ? 'text-accent' : ''">{{ vault.isLockedPath(entry.path) ? 'Locked' : 'Unlocked' }}</span>
+                  <span class="mx-1.5 text-foreground-muted/40">·</span>
+                </template>
                 <template v-if="entry.type === 'file'">{{ kindLabel(entry.name, fileKind(entry.name)) }}<span class="mx-1.5 text-foreground-muted/40">·</span>{{ humanSize(entry.size) }}<span class="mx-1.5 text-foreground-muted/40">·</span></template>{{ relTime(entry.mtime) }}
               </p>
             </div>
@@ -165,7 +193,29 @@
             <!-- Pointer devices: icons revealed on row hover -->
             <div class="row-actions flex items-center shrink-0" @click.stop>
               <button
-                v-if="entry.type === 'file'"
+                v-if="vault.isLockedPath(entry.path)"
+                class="btn-icon text-accent hover:bg-accent/10"
+                title="Unlock"
+                :aria-label="`Unlock ${entry.name}`"
+                @click="openVaultSheet('unlock', entry)"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 9.9-1" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+              </button>
+              <button
+                v-else-if="vault.isUnlockedPath(entry.path)"
+                class="btn-icon text-foreground-muted hover:text-foreground"
+                title="Lock"
+                :aria-label="`Lock ${entry.name}`"
+                @click="lockEntry(entry)"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              </button>
+              <button
+                v-if="entry.type === 'file' && !vault.isLockedPath(entry.path)"
                 class="btn-icon text-foreground-muted hover:text-foreground"
                 title="Download"
                 :aria-label="`Download ${entry.name}`"
@@ -201,7 +251,8 @@
               </button>
             </div>
           </li>
-        </ul>
+          </ul>
+        </template>
       </div>
     </main>
 
@@ -292,7 +343,7 @@
 import type { OstoreEntry } from '~/types/api'
 import { OstoreError } from '~/composables/useOstore'
 import type { VaultSheetMode } from '~/components/files/VaultPasswordSheet.vue'
-import { encryptFile } from '~/utils/fileVaultCrypto'
+import { deriveVaultKey, encryptFile } from '~/utils/fileVaultCrypto'
 
 /** Payload of the backend's `files.changed` SSE event (ostore bridge). */
 interface FilesChange {
@@ -359,6 +410,28 @@ const folderLocked = computed(() => {
   const row = vault.vaultRowForPath(currentPath.value)
   return !!row && row.kind === 'dir' && vault.isLockedPath(currentPath.value)
 })
+
+const folderUnlocked = computed(() => {
+  const row = vault.vaultRowForPath(currentPath.value)
+  return !!row && row.kind === 'dir' && vault.isUnlockedPath(currentPath.value)
+})
+
+function lockEntry(entry: OstoreEntry) {
+  vault.lockPath(entry.path)
+  if (previewOpen.value) {
+    const cur = fileEntries.value[previewIndex.value]
+    if (cur && vault.isLockedPath(cur.path)) previewOpen.value = false
+  }
+  finishToast('Locked', entry.name, 'success')
+}
+
+function lockCurrentFolder() {
+  const row = vault.vaultRowForPath(currentPath.value)
+  if (!row) return
+  vault.lockPath(currentPath.value)
+  previewOpen.value = false
+  finishToast('Folder locked', '', 'success')
+}
 
 const vaultSheetOpen = ref(false)
 const vaultSheetMode = ref<VaultSheetMode>('unlock')
@@ -701,11 +774,14 @@ const sheetActions = computed(() => {
     acts.push({ label: 'Unlock', icon: ICONS.unlock, run: () => openVaultSheet('unlock', e) })
   } else if (!vault.isEncryptedPath(e.path)) {
     acts.push({ label: 'Encrypt', icon: ICONS.lock, run: () => openVaultSheet('encrypt', e) })
-  } else if (vault.vaultRowForPath(e.path)) {
-    acts.push(
-      { label: 'Change password', icon: ICONS.lock, run: () => openVaultSheet('change', e) },
-      { label: 'Remove encryption', icon: ICONS.unlock, run: () => openVaultSheet('decrypt', e) },
-    )
+  } else if (vault.isEncryptedPath(e.path)) {
+    acts.push({ label: 'Lock', icon: ICONS.lock, run: () => lockEntry(e) })
+    if (vault.vaultRowForPath(e.path)) {
+      acts.push(
+        { label: 'Change password', icon: ICONS.lock, run: () => openVaultSheet('change', e) },
+        { label: 'Remove encryption', icon: ICONS.unlock, run: () => openVaultSheet('decrypt', e) },
+      )
+    }
   }
   acts.push(
     { label: 'Rename', icon: ICONS.rename, run: () => openNameSheet('rename', e) },
@@ -808,12 +884,13 @@ async function onVaultSubmit(payload: { password: string; newPassword?: string }
       const kind = target.type
       let created = false
       try {
-        await vault.createVault(target.path, kind, payload.password)
+        const meta = await vault.createVault(target.path, kind, payload.password)
         created = true
-        const key = vault.keyForPath(target.path)!
+        const key = await deriveVaultKey(payload.password, meta.kdf_salt)
         await vaultOps.encryptExisting(target.path, kind, key)
+        vault.lockPath(target.path)
         sheet?.close()
-        finishToast('Encrypted', kind === 'dir' ? 'Folder protected' : 'File protected', 'success')
+        finishToast('Encrypted', kind === 'dir' ? 'Locked — unlock to open' : 'Locked — unlock to view', 'success')
         await load(currentPath.value, true)
       } catch (e) {
         if (created) await vault.removeVault(target.path, kind === 'dir').catch(() => {})
@@ -839,8 +916,9 @@ async function onVaultSubmit(payload: { password: string; newPassword?: string }
       const row = vault.vaultRowForPath(target.path)
       if (!row) throw new Error('No encryption metadata for this item')
       await vaultOps.changePasswordWithReencrypt(row.path, payload.password, payload.newPassword)
+      vault.lockPath(row.path)
       sheet?.close()
-      finishToast('Password updated', '', 'success')
+      finishToast('Password updated', 'Locked with new password', 'success')
     }
   } catch (e: any) {
     const msg = e?.data?.detail ?? e?.message ?? 'Operation failed'
