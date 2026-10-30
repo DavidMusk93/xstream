@@ -10,6 +10,8 @@
 - **Payload** on ostore: AES-256-GCM blobs prefixed with magic `XSTRMENC1` (12-byte
   nonce + ciphertext). Plaintext never hits the server.
 - **Unlock** is in-memory for the tab session (`CryptoKey` map keyed by vault path).
+  After **Encrypt**, the item starts locked (password is not kept unlocked). **Lock**
+  in the header, list rows, and action sheet drops the key; UI shows Locked vs Unlocked.
 
 Encrypted **folders** apply the folder password to new uploads and to a recursive
 encrypt of existing files when encryption is enabled. Opening a locked folder shows
