@@ -96,6 +96,7 @@ Root-level oddities: `package.json` is vestigial (frontend deps live in
 ```bash
 # Install (PostgreSQL 18 + role xstream + DBs xstream/xstream_test are prerequisites)
 uv sync && uv pip install libtorrent
+git submodule update --init tools/tg-lint   # Telegram HTML formatter (cargo build --release)
 cd frontend && npm install
 
 # Dev: one-click (backend :8765 --reload + Nuxt dev :3000 HMR)

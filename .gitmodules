@@ -1,0 +1,3 @@
+[submodule "tools/tg-lint"]
+	path = tools/tg-lint
+	url = https://github.com/DavidMusk93/tg-lint.git

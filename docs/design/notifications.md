@@ -36,10 +36,13 @@ and `<a href="…">` for links. See
 tg-lint follows the operator-alert layout pattern: emoji + bold headline, labeled
 rows (`<b>Label:</b> value`), blockquotes for lists and long errors.
 
-Build tg-lint:
+**Submodule**: `tools/tg-lint` is [DavidMusk93/tg-lint](https://github.com/DavidMusk93/tg-lint)
+(git submodule). After clone:
 
 ```bash
-cd /root/xstream/tools/tg-lint && cargo build --release
+git submodule update --init tools/tg-lint
+# or: git clone --recurse-submodules …
+cd tools/tg-lint && cargo build --release
 ```
 
 Optional env override: `XSTREAM_TG_LINT=/path/to/tg-lint`.
