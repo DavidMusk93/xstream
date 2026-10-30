@@ -189,6 +189,7 @@ ops changes → `docs/ops/`, lessons → `docs/skill/`.
 - **After producing durable knowledge** (root causes, design decisions, verified procedures): `memory_add` with the proper `unit_type`, and keep AGENTS.md + `docs/` in sync in the same change.
 - **nmem is a knowledge base, not a running log.** Each memory is a structured markdown document: `# title`, `> TL;DR` one-line conclusion, then context, rules/procedure, and file pointers. Draw flows, pipelines, state machines and layouts as ASCII graphs, not prose — plain printable ASCII only (`+ - | > < v ^`), no box-drawing characters, no Unicode arrows/bullets, no tab characters.
 - **Memories are immutable.** Never `memory_update` or rewrite an existing memory. Related, corrected or reformatted knowledge → `memory_add` a new memory linked with `evolves_from_id` + `evolves_relation` (`replaces` / `enriches` / `confirms`); `memory_search` first to find the chain head.
+- **Cloud Agent / CLI sessions:** `~/.cursor/mcp.json` may register `nowledge-mem` while the agent harness only exposes built-in tools (no `GetDynamicTools` namespace). Do not treat that as “nmem down”. Use **`mcporter call 'nowledge-mem.<tool>(...)'`** (reads the same MCP config; `mcporter list nowledge-mem --schema` for args). The **`nmem` CLI** defaults to `http://127.0.0.1:14242`; on hosts without a local Mem daemon, set `apiUrl` + `apiKey` in `~/.nowledge-mem/config.json` or prefer mcporter.
 
 ---
 
