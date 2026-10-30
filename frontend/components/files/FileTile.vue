@@ -15,6 +15,15 @@
       @load="onThumbLoad"
       @error="thumbFailed = true"
     />
+    <span
+      v-if="locked"
+      class="absolute bottom-0 right-0 z-10 w-[18px] h-[18px] rounded-md bg-void/90 text-accent flex items-center justify-center shadow-sm"
+      aria-hidden="true"
+    >
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 9.9-1" />
+      </svg>
+    </span>
     <template v-if="!thumbReady">
       <svg v-if="kind === 'dir'" width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
         <path d="M2 6a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z" />
@@ -43,7 +52,7 @@
 <script setup lang="ts">
 import type { FileKind } from '~/utils/fileKind'
 
-const props = defineProps<{ name: string; path: string; kind: FileKind }>()
+const props = defineProps<{ name: string; path: string; kind: FileKind; locked?: boolean }>()
 
 const ostore = useOstore()
 const thumbSrc = ref('')
@@ -73,7 +82,7 @@ watch(() => props.path, async () => {
   thumbReady.value = false
   thumbFailed.value = false
   thumbSrc.value = ''
-  if (props.kind !== 'image') return
+  if (props.locked || props.kind !== 'image') return
   // svg/avif/ico have no server thumbnail; they are small enough to load as-is.
   thumbSrc.value = hasThumb(props.name) ? await ostore.thumbUrl(props.path, 128) : await ostore.fileUrl(props.path)
 }, { immediate: true })

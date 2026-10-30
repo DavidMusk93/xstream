@@ -203,6 +203,16 @@ def init_schema(conn=None):
                 last_empty_at TIMESTAMP NOT NULL DEFAULT now()
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS file_vault (
+                path TEXT PRIMARY KEY,
+                kind TEXT NOT NULL CHECK (kind IN ('file', 'dir')),
+                password_hash TEXT NOT NULL,
+                kdf_salt TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_events_ts ON user_events(ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_titles_star ON titles(star_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_titles_code ON titles(code)")

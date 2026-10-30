@@ -17,7 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import time
 import uuid
 
-from backend.routers import stream_router, check_router, torrents_router, cache_router, auth_router, log_router, sync_router, track_router, stars, search, social, test_router, events_router, magnets_router, play
+from backend.routers import stream_router, check_router, torrents_router, cache_router, auth_router, log_router, sync_router, track_router, stars, search, social, test_router, events_router, magnets_router, play, files_vault
 from backend.services.torrent_engine import TorrentEngine
 from core import get_logger, set_trace_id
 from core.db.connection import _conn as _db_conn
@@ -227,6 +227,7 @@ app.include_router(events_router)
 app.include_router(magnets_router)
 app.include_router(play.router)
 app.include_router(play.files_router)
+app.include_router(files_vault.router)
 
 # Static files
 if os.path.exists(IMAGES_DIR):

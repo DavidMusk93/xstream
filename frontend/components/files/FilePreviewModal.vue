@@ -186,7 +186,25 @@ const index = defineModel<number>('index', { default: 0 })
 const props = defineProps<{ files: OstoreEntry[] }>()
 
 const ostore = useOstore()
+const vault = useFileVault()
 const SNIFF_MAX = 1024 * 1024
+let blobUrl: string | null = null
+
+function revokeBlobUrl() {
+  if (blobUrl) {
+    URL.revokeObjectURL(blobUrl)
+    blobUrl = null
+  }
+}
+
+function mimeFromName(name: string): string {
+  const k = fileKind(name)
+  if (k === 'video') return 'video/mp4'
+  if (k === 'audio') return 'audio/mpeg'
+  if (k === 'image') return 'image/jpeg'
+  if (k === 'pdf') return 'application/pdf'
+  return 'application/octet-stream'
+}
 
 const entry = computed<OstoreEntry | undefined>(() => props.files[index.value])
 const forceText = ref(false)
@@ -258,7 +276,32 @@ async function loadEntry() {
   textBinary.value = false
   const e = entry.value
   if (!isOpen.value || !e) return
+  revokeBlobUrl()
   try {
+    if (vault.isEncryptedPath(e.path)) {
+      if (vault.isLockedPath(e.path)) {
+        textError.value = 'Unlock to preview this file'
+        return
+      }
+      textLoading.value = true
+      const key = vault.keyForPath(e.path)!
+      const { decryptBytes } = await import('~/utils/fileVaultCrypto')
+      const raw = await ostore.downloadBytes(e.path)
+      const plain = await decryptBytes(raw, key)
+      if (textKind.value || (kind.value === 'other' && e.size <= SNIFF_MAX)) {
+        const head = plain.subarray(0, 8192)
+        textBinary.value = head.includes(0)
+        if (!textBinary.value) {
+          textBody.value = new TextDecoder('utf-8', { fatal: false }).decode(plain.subarray(0, 512 * 1024))
+          textTruncated.value = plain.length > 512 * 1024
+          if (kind.value === 'other') forceText.value = true
+        }
+      } else if (['image', 'video', 'audio', 'pdf'].includes(kind.value)) {
+        blobUrl = URL.createObjectURL(new Blob([plain], { type: mimeFromName(e.name) }))
+        src.value = blobUrl
+      }
+      return
+    }
     if (textKind.value) {
       textLoading.value = true
       const res = await ostore.readText(e.path)
@@ -303,11 +346,22 @@ function close() {
 
 async function download() {
   if (!entry.value) return
+  const e = entry.value
+  let href: string
+  if (vault.isEncryptedPath(e.path) && !vault.isLockedPath(e.path)) {
+    const { decryptBytes } = await import('~/utils/fileVaultCrypto')
+    const key = vault.keyForPath(e.path)!
+    const plain = await decryptBytes(await ostore.downloadBytes(e.path), key)
+    href = URL.createObjectURL(new Blob([plain], { type: mimeFromName(e.name) }))
+  } else {
+    href = await ostore.fileUrl(e.path)
+  }
   const a = document.createElement('a')
-  a.href = await ostore.fileUrl(entry.value.path)
-  a.download = entry.value.name
+  a.href = href
+  a.download = e.name
   a.rel = 'noopener'
   a.click()
+  if (href.startsWith('blob:')) setTimeout(() => URL.revokeObjectURL(href), 60_000)
 }
 
 // Keyboard: Esc closes, arrows step (not while a media element has focus,
@@ -343,7 +397,10 @@ function onTouchEnd(e: TouchEvent) {
 
 watch(isOpen, (open) => {
   document.documentElement.style.overflow = open ? 'hidden' : ''
-  if (!open) loadSeq++
+  if (!open) {
+    loadSeq++
+    revokeBlobUrl()
+  }
 })
 onMounted(() => window.addEventListener('keydown', onKey))
 onUnmounted(() => {

@@ -152,6 +152,28 @@ export function useOstore() {
    * First `maxBytes` of an object as text (Range request, so a huge log is
    * never downloaded whole). `binary` flags content that isn't text.
    */
+  async function listRecursive(path: string): Promise<OstoreEntry[]> {
+    const { base_url } = await init()
+    const res = await request<{ entries: (OstoreEntry & { mtime: string | number })[] }>(
+      'GET', `${base_url}/api/list?path=${encodeURIComponent(path)}&recursive=1`,
+    )
+    return res.entries
+      .filter(e => e.type === 'file')
+      .map(e => ({
+        ...e,
+        mtime: typeof e.mtime === 'number' ? e.mtime : Date.parse(e.mtime) / 1000,
+      }))
+  }
+
+  async function downloadBytes(path: string): Promise<Uint8Array> {
+    const { base_url, token } = await init()
+    const res = await fetch(`${base_url}/api/files/${encodePath(path)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) throw await parseError(res)
+    return new Uint8Array(await res.arrayBuffer())
+  }
+
   async function readText(path: string, maxBytes = 512 * 1024): Promise<{ text: string; truncated: boolean; binary: boolean }> {
     const { base_url, token } = await init()
     const res = await fetch(`${base_url}/api/files/${encodePath(path)}`, {
@@ -167,5 +189,5 @@ export function useOstore() {
     return { text, truncated: total > buf.length, binary }
   }
 
-  return { init, list, upload, mkdir, move, remove, fileUrl, thumbUrl, readText }
+  return { init, list, listRecursive, upload, mkdir, move, remove, fileUrl, thumbUrl, downloadBytes, readText }
 }

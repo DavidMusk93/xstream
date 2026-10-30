@@ -102,6 +102,8 @@ object.moved / object.mkdir`。
 
 ### 前端 `/files` 页
 
+- **可选加密（2026-10-30）**：xstream `file_vault` 表存路径 + 密码 hash；
+  浏览器 AES-GCM 加密后仍直传 ostore。见 `docs/design/file-vault.md`。
 - `composables/useOstore.ts`：先取 `/api/files/config`，封装
   list/upload(XHR 进度)/mkdir/move/remove/fileUrl(?token=)；list 把 ostore
   的 RFC 3339 `mtime` 归一成 epoch 秒（之前直接当数字用，日期全是

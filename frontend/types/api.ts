@@ -203,3 +203,17 @@ export interface OstoreListResponse {
   /** Dirs first, then files, each name-sorted. */
   entries: OstoreEntry[]
 }
+
+export interface FileVaultItem {
+  path: string
+  kind: 'file' | 'dir'
+  kdf_salt: string
+  created_at?: string
+}
+
+export interface FileVaultUnlockResponse {
+  ok: boolean
+  path: string
+  kind: 'file' | 'dir'
+  kdf_salt: string
+}

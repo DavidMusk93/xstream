@@ -23,6 +23,7 @@ System architecture, module design, and algorithm specifications.
 | [x-inject.md](design/x-inject.md) | X inject: star X accounts + newest 5 posts pasted by an agent (HTML/text/JSON), no X API |
 | [ui-design.md](design/ui-design.md) | Frontend design spec |
 | [ostore-integration.md](design/ostore-integration.md) | ostore object storage (Rust) + play-direct: arbitrary magnet playback, /files network drive, .adhoc GC protection |
+| [file-vault.md](design/file-vault.md) | Client-side AES encryption for /files: password hash in PG, ciphertext on ostore |
 
 ## `docs/analysis/` — Root Cause Analysis & Investigations
 

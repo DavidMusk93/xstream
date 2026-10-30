@@ -107,6 +107,18 @@
           <button class="btn btn-secondary mt-6" @click="load(currentPath)">Try Again</button>
         </div>
 
+        <!-- Encrypted folder locked -->
+        <div v-else-if="folderLocked" class="text-center py-20 sm:py-28">
+          <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-accent/10 text-accent mb-6">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          </div>
+          <p class="text-[22px] font-bold text-foreground">This folder is encrypted</p>
+          <p class="mt-2 text-[15px] text-foreground-muted max-w-sm mx-auto">Unlock with your password to view and upload files here.</p>
+          <button class="btn btn-primary mt-8" @click="openVaultSheet('unlock', folderVaultEntry)">Unlock folder</button>
+        </div>
+
         <!-- Empty -->
         <div v-else-if="!entries.length" class="text-center py-24">
           <p class="text-[22px] font-bold text-foreground">Nothing here yet</p>
@@ -125,7 +137,12 @@
             class="group/row flex items-center gap-3.5 pl-4 sm:pl-5 pr-2 py-3 min-w-0 border-b border-black/[0.05] last:border-0 cursor-pointer hover:bg-black/[0.025] transition-colors duration-200"
             @click="openEntry(entry)"
           >
-            <FileTile :name="entry.name" :path="entry.path" :kind="fileKind(entry.name, entry.type)" />
+            <FileTile
+              :name="entry.name"
+              :path="entry.path"
+              :kind="fileKind(entry.name, entry.type)"
+              :locked="vault.isEncryptedPath(entry.path)"
+            />
 
             <div class="flex-1 min-w-0">
               <p class="text-[15px] sm:text-[17px] text-foreground truncate leading-snug">{{ entry.name }}</p>
@@ -248,6 +265,15 @@
       </form>
     </Sheet>
 
+    <VaultPasswordSheet
+      ref="vaultSheetRef"
+      v-model:open="vaultSheetOpen"
+      :mode="vaultSheetMode"
+      :target-name="vaultTarget?.name"
+      :target-kind="vaultTarget?.type"
+      @submit="onVaultSubmit"
+    />
+
     <FilePreviewModal v-model:open="previewOpen" v-model:index="previewIndex" :files="fileEntries" />
 
     <SyncToast
@@ -265,6 +291,8 @@
 <script setup lang="ts">
 import type { OstoreEntry } from '~/types/api'
 import { OstoreError } from '~/composables/useOstore'
+import type { VaultSheetMode } from '~/components/files/VaultPasswordSheet.vue'
+import { encryptFile } from '~/utils/fileVaultCrypto'
 
 /** Payload of the backend's `files.changed` SSE event (ostore bridge). */
 interface FilesChange {
@@ -278,6 +306,8 @@ interface FilesChange {
 
 const { track } = useTrack()
 const ostore = useOstore()
+const vault = useFileVault()
+const vaultOps = useFileVaultOps()
 const { onServerEvent } = useEventSource()
 const route = useRoute()
 const router = useRouter()
@@ -318,9 +348,44 @@ function relTime(mtime: number): string {
   return new Date(mtime * 1000).toLocaleDateString()
 }
 
+const folderVaultEntry = computed((): OstoreEntry | null => {
+  const row = vault.vaultRowForPath(currentPath.value)
+  if (!row || row.kind !== 'dir') return null
+  const name = currentPath.value.slice(currentPath.value.lastIndexOf('/') + 1) || currentPath.value
+  return { name, path: currentPath.value, type: 'dir', size: 0, mtime: 0 }
+})
+
+const folderLocked = computed(() => {
+  const row = vault.vaultRowForPath(currentPath.value)
+  return !!row && row.kind === 'dir' && vault.isLockedPath(currentPath.value)
+})
+
+const vaultSheetOpen = ref(false)
+const vaultSheetMode = ref<VaultSheetMode>('unlock')
+const vaultTarget = ref<OstoreEntry | null>(null)
+const vaultSheetRef = ref<{ setError: (m: string) => void; setBusy: (b: boolean) => void; close: () => void }>()
+const pendingNavPath = ref<string | null>(null)
+
+function openVaultSheet(mode: VaultSheetMode, entry?: OstoreEntry | null) {
+  vaultSheetMode.value = mode
+  vaultTarget.value = entry ?? null
+  vaultSheetOpen.value = true
+}
+
 function openEntry(entry: OstoreEntry) {
-  if (entry.type === 'dir') navigateTo(entry.path)
-  else openPreview(entry)
+  if (entry.type === 'dir') {
+    const row = vault.vaultRowForPath(entry.path)
+    if (row?.kind === 'dir' && vault.isLockedPath(entry.path)) {
+      pendingNavPath.value = entry.path
+      openVaultSheet('unlock', entry)
+      return
+    }
+    navigateTo(entry.path)
+  } else if (vault.isLockedPath(entry.path)) {
+    openVaultSheet('unlock', entry)
+  } else {
+    openPreview(entry)
+  }
 }
 
 // Listing. `quiet` reloads (resync after a missed event window) keep the
@@ -514,15 +579,32 @@ function enqueueUpload(files: File[]) {
   if (!uploadActive) drainUploadQueue()
 }
 
+async function prepareUploadBatch(dir: string, batch: File[]): Promise<File[]> {
+  const ctx = vault.vaultContextForPath(dir)
+  if (!ctx || ctx.kind !== 'dir' || vault.isLockedPath(dir)) return batch
+  const key = vault.keyForPath(dir)
+  if (!key) return batch
+  const out: File[] = []
+  for (const f of batch) out.push(await encryptFile(f, key))
+  return out
+}
+
 async function drainUploadQueue() {
   if (uploadActive) return
   uploadActive = true
   const dir = currentPath.value
+  if (vault.vaultRowForPath(dir)?.kind === 'dir' && vault.isLockedPath(dir)) {
+    finishToast('Folder locked', 'Unlock the folder before uploading', 'error')
+    uploadQueue.length = 0
+    uploadActive = false
+    return
+  }
 
   while (uploadQueue.length) {
-    const batch = uploadQueue.splice(0, uploadQueue.length)
+    let batch = uploadQueue.splice(0, uploadQueue.length)
     showRunningToast(`Uploading ${batch.length} file${batch.length > 1 ? 's' : ''}`)
     try {
+      batch = await prepareUploadBatch(dir, batch)
       await ostore.upload(dir, batch, (sent, total) => {
         toastProgressText.value = `${humanSize(sent)} / ${humanSize(total)}`
         toastFraction.value = total ? sent / total : 0.02
@@ -581,7 +663,9 @@ async function submitNameSheet() {
       await ostore.mkdir(joinPath(currentPath.value, name))
     } else if (renameTarget.value) {
       const from = renameTarget.value.path
-      await ostore.move(from, joinPath(parentOf(from), name))
+      const to = joinPath(parentOf(from), name)
+      await ostore.move(from, to)
+      if (vault.isEncryptedPath(from)) await vault.moveVault(from, to)
     }
     nameSheetOpen.value = false
   } catch (e: any) {
@@ -597,6 +681,8 @@ const ICONS = {
   open: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
   download: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
   rename: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
+  lock: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+  unlock: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
   delete: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
 }
 const actionSubtitle = computed(() => {
@@ -611,6 +697,16 @@ const sheetActions = computed(() => {
     { label: 'Open', icon: ICONS.open, run: () => openEntry(e) },
   ]
   if (e.type === 'file') acts.push({ label: 'Download', icon: ICONS.download, run: () => downloadFile(e) })
+  if (vault.isLockedPath(e.path)) {
+    acts.push({ label: 'Unlock', icon: ICONS.unlock, run: () => openVaultSheet('unlock', e) })
+  } else if (!vault.isEncryptedPath(e.path)) {
+    acts.push({ label: 'Encrypt', icon: ICONS.lock, run: () => openVaultSheet('encrypt', e) })
+  } else if (vault.vaultRowForPath(e.path)) {
+    acts.push(
+      { label: 'Change password', icon: ICONS.lock, run: () => openVaultSheet('change', e) },
+      { label: 'Remove encryption', icon: ICONS.unlock, run: () => openVaultSheet('decrypt', e) },
+    )
+  }
   acts.push(
     { label: 'Rename', icon: ICONS.rename, run: () => openNameSheet('rename', e) },
     { label: 'Delete', icon: ICONS.delete, danger: true, run: () => deleteEntry(e) },
@@ -647,13 +743,26 @@ watch(fileEntries, (list, old) => {
 })
 
 async function downloadFile(entry: OstoreEntry) {
+  if (vault.isLockedPath(entry.path)) {
+    openVaultSheet('unlock', entry)
+    return
+  }
   try {
-    const url = await ostore.fileUrl(entry.path)
+    let href: string
+    if (vault.isEncryptedPath(entry.path)) {
+      const { decryptBytes } = await import('~/utils/fileVaultCrypto')
+      const key = vault.keyForPath(entry.path)!
+      const plain = await decryptBytes(await ostore.downloadBytes(entry.path), key)
+      href = URL.createObjectURL(new Blob([plain]))
+    } else {
+      href = await ostore.fileUrl(entry.path)
+    }
     const a = document.createElement('a')
-    a.href = url
+    a.href = href
     a.download = entry.name
     a.rel = 'noopener'
     a.click()
+    if (href.startsWith('blob:')) setTimeout(() => URL.revokeObjectURL(href), 60_000)
   } catch (e: any) {
     finishToast('Download failed', e?.message || '', 'error')
   }
@@ -665,15 +774,84 @@ async function deleteEntry(entry: OstoreEntry) {
   if (!confirm(`Delete ${what}?`)) return
   try {
     await ostore.remove(entry.path, recursive)
+    if (vault.isEncryptedPath(entry.path)) {
+      await vault.removeVault(entry.path, recursive)
+    }
     track('files_delete', { meta: { path: entry.path, type: entry.type } })
   } catch (e: any) {
     finishToast('Delete failed', e?.message || '', 'error')
   }
 }
 
+async function onVaultSubmit(payload: { password: string; newPassword?: string }) {
+  const target = vaultTarget.value
+  if (!target) return
+  const sheet = vaultSheetRef.value
+  try {
+    if (vaultSheetMode.value === 'unlock') {
+      const row = vault.vaultRowForPath(target.path) ?? vault.vaultContextForPath(target.path)
+      const unlockPath = row?.path ?? target.path
+      await vault.unlock(unlockPath, payload.password)
+      sheet?.close()
+      if (pendingNavPath.value) {
+        navigateTo(pendingNavPath.value)
+        pendingNavPath.value = null
+      } else if (target.type === 'file') {
+        openPreview(target)
+      } else {
+        await load(currentPath.value, true)
+      }
+      return
+    }
+    if (vaultSheetMode.value === 'encrypt') {
+      showRunningToast('Encrypting…')
+      const kind = target.type
+      let created = false
+      try {
+        await vault.createVault(target.path, kind, payload.password)
+        created = true
+        const key = vault.keyForPath(target.path)!
+        await vaultOps.encryptExisting(target.path, kind, key)
+        sheet?.close()
+        finishToast('Encrypted', kind === 'dir' ? 'Folder protected' : 'File protected', 'success')
+        await load(currentPath.value, true)
+      } catch (e) {
+        if (created) await vault.removeVault(target.path, kind === 'dir').catch(() => {})
+        throw e
+      }
+      return
+    }
+    if (vaultSheetMode.value === 'decrypt') {
+      showRunningToast('Decrypting…')
+      const row = vault.vaultRowForPath(target.path)
+      if (!row) throw new Error('No encryption metadata for this item')
+      await vault.unlock(row.path, payload.password)
+      await vaultOps.decryptExisting(row.path, row.kind, vault.keyForPath(row.path)!)
+      await vault.removeVault(row.path, row.kind === 'dir')
+      vault.forgetUnlock(row.path)
+      sheet?.close()
+      finishToast('Decrypted', 'Password removed from cloud copy', 'success')
+      await load(currentPath.value, true)
+      return
+    }
+    if (vaultSheetMode.value === 'change' && payload.newPassword) {
+      showRunningToast('Updating password…')
+      const row = vault.vaultRowForPath(target.path)
+      if (!row) throw new Error('No encryption metadata for this item')
+      await vaultOps.changePasswordWithReencrypt(row.path, payload.password, payload.newPassword)
+      sheet?.close()
+      finishToast('Password updated', '', 'success')
+    }
+  } catch (e: any) {
+    const msg = e?.data?.detail ?? e?.message ?? 'Operation failed'
+    sheet?.setError(typeof msg === 'string' ? msg : 'Operation failed')
+  }
+}
+
 onMounted(async () => {
   try {
     await ostore.init()
+    await vault.refreshIndex()
   } catch {
     // 503 = the backend has no ostore configured; anything else also leaves
     // the page on the empty state since every call needs the config.
