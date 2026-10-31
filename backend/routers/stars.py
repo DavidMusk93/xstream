@@ -11,6 +11,7 @@ import json
 import os
 import re
 import time
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, Depends, Path
 from fastapi.responses import Response
@@ -124,6 +125,21 @@ def _scan_cover_files(codes: set[str]) -> dict[str, tuple[bool, bool, bool]]:
         for c in codes
     }
 
+def _iso_utc(value: Any) -> str | None:
+    """Naive timestamps are UTC (session default). Home sort reads this as added_at."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
+
+
 def _build_stars_response() -> list[dict[str, Any]]:
     config = _load_config()
     solo = [a for a in config.get("stars", []) if not a.get("type") or a.get("type") == "solo"]
@@ -143,6 +159,7 @@ def _build_stars_response() -> list[dict[str, Any]]:
         title_rows = conn.execute("""
         SELECT
             s.code,
+            s.created_at,
             COALESCE(jsonb_agg(jsonb_build_object(
                 'code', r.code,
                 'title', r.title,
@@ -167,7 +184,7 @@ def _build_stars_response() -> list[dict[str, Any]]:
 
         db_data: dict[str, dict[str, Any]] = {}
         for row in title_rows:
-            db_data[row[0]] = {"titles": row[1]}
+            db_data[row[0]] = {"titles": row[2], "added_at": _iso_utc(row[1])}
 
         from core import db
         x_profiles = db.load_x_profiles(conn)
@@ -180,7 +197,7 @@ def _build_stars_response() -> list[dict[str, Any]]:
         result = []
         for a in solo:
             code = a["code"]
-            data = db_data.get(code, {"titles": []})
+            data = db_data.get(code, {"titles": [], "added_at": None})
 
             titles = data.get("titles", [])
             for t in titles:
@@ -207,6 +224,7 @@ def _build_stars_response() -> list[dict[str, Any]]:
                 "type": a.get("type", "solo"),
                 "note": a.get("note", ""),
                 "titles": titles,
+                "added_at": data.get("added_at"),
                 "x": x_profiles.get(code),
             })
 

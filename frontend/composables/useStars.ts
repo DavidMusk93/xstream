@@ -22,6 +22,7 @@ export function emptyStarRow(payload: {
     code: payload.code,
     type: 'solo',
     titles: [],
+    added_at: new Date().toISOString(),
   }
 }
 

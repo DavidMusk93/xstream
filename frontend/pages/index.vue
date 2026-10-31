@@ -55,10 +55,11 @@
         <!-- Large title -->
         <div class="relative mb-14 sm:mb-20 px-1">
           <div class="pointer-events-none absolute -top-40 -left-24 w-[640px] max-w-[120vw] h-[420px] rounded-full bg-[radial-gradient(closest-side,rgba(255,55,95,0.10),transparent)]" aria-hidden="true" />
-          <p class="eyebrow rise relative">
+          <p class="eyebrow rise relative flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
             <span class="text-accent">00</span>
             <span>Your collection</span>
-            <span class="h-px w-10 bg-black/10" />
+            <StarSortToggle v-model="starSort" />
+            <span class="h-px w-10 bg-black/10 max-sm:hidden" aria-hidden="true" />
           </p>
           <h1 class="rise relative mt-3 text-[40px] sm:text-[56px] font-bold text-foreground leading-[1.02]" style="--rise-delay: 0.08s">
             Library
@@ -117,6 +118,10 @@
             v-observe
             :data-code="star.code"
             class="star-section scroll-mt-[calc(env(safe-area-inset-top)+116px)]"
+            :class="{
+              'scroll-focus': navActive === star.code,
+              'scroll-dim': scrollShelfFocus,
+            }"
           >
             <StarCard
               v-if="visibleCodes.has(star.code)"
@@ -158,6 +163,13 @@
       :fraction="toastFraction"
       @dismiss="dismissToast"
     />
+
+    <PageScrollRail
+      :visible="canScroll"
+      :at-top="atTop"
+      :at-bottom="atBottom"
+      @scroll="scrollPage"
+    />
   </div>
 </template>
 
@@ -175,12 +187,41 @@ const { creators, refresh: refreshCreators } = useCreators()
 
 const deletedCodes = ref<Set<string>>(new Set())
 // VR / multi-star works are filtered at collection time (scrapers/v2/
-// filters.py) and never reach the API; the backend returns every title
-// newest-first per star and orders stars by newest work, so the API order
-// is the display order.
-const displayStars = computed(() =>
-  (stars.value ?? []).filter(s => !deletedCodes.value.has(s.code))
-)
+// filters.py) and never reach the API. The backend orders stars by newest
+// work; "Added" reorders by follow time (added_at) on the client.
+type StarSort = 'works' | 'added'
+const SORT_KEY = 'xstream.starSort'
+
+function readStarSort(): StarSort {
+  if (!import.meta.client) return 'works'
+  try {
+    const saved = localStorage.getItem(SORT_KEY)
+    if (saved === 'added' || saved === 'works') return saved
+  } catch {
+    // Private mode or a blocked storage API — keep the default.
+  }
+  return 'works'
+}
+
+const starSort = ref<StarSort>(readStarSort())
+watch(starSort, (mode) => {
+  try {
+    localStorage.setItem(SORT_KEY, mode)
+  } catch {
+    // Ignore a full or blocked store; the choice still applies this visit.
+  }
+})
+
+function addedTime(star: { added_at?: string | null }): number {
+  const t = star.added_at ? Date.parse(star.added_at) : NaN
+  return Number.isFinite(t) ? t : 0
+}
+
+const displayStars = computed(() => {
+  const list = (stars.value ?? []).filter(s => !deletedCodes.value.has(s.code))
+  if (starSort.value !== 'added') return list
+  return [...list].sort((a, b) => addedTime(b) - addedTime(a) || a.name.localeCompare(b.name))
+})
 
 // Title dates arrive as D/M/YYYY (see fmtDate in StarCard).
 function titleTime(date?: string): number {
@@ -238,6 +279,48 @@ function scrollToStar(code: string) {
   }
   return false
 }
+
+const atTop = ref(true)
+const atBottom = ref(true)
+const canScroll = ref(false)
+/** Soft-focus shelves once the user has scrolled past the library hero. */
+const scrollShelfFocus = ref(false)
+
+function measureScroll() {
+  const root = document.documentElement
+  const max = root.scrollHeight - root.clientHeight
+  canScroll.value = max > 48
+  atTop.value = window.scrollY <= 8
+  atBottom.value = max - window.scrollY <= 8
+  scrollShelfFocus.value = window.scrollY > 220 && displayStars.value.length > 1
+}
+
+function scrollPage(to: 'top' | 'bottom') {
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const top = to === 'top' ? 0 : document.documentElement.scrollHeight
+  window.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' })
+}
+
+let scrollRaf = 0
+function onPageScroll() {
+  if (scrollRaf) return
+  scrollRaf = requestAnimationFrame(() => {
+    scrollRaf = 0
+    measureScroll()
+  })
+}
+
+let scrollObserver: ResizeObserver | null = null
+onMounted(() => {
+  measureScroll()
+  window.addEventListener('scroll', onPageScroll, { passive: true })
+  scrollObserver = new ResizeObserver(onPageScroll)
+  scrollObserver.observe(document.body)
+})
+watch(displayStars, () => {
+  if (!import.meta.client) return
+  nextTick(measureScroll)
+})
 
 /** Virtual shelf renders StarCard only after intersection — follow must not wait for scroll. */
 function revealStar(code: string, scroll = false) {
@@ -542,6 +625,9 @@ const vObserve = {
 onUnmounted(() => {
   observer?.disconnect()
   bandObserver?.disconnect()
+  window.removeEventListener('scroll', onPageScroll)
+  scrollObserver?.disconnect()
+  if (scrollRaf) cancelAnimationFrame(scrollRaf)
 })
 
 </script>

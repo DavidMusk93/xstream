@@ -63,7 +63,7 @@ detail: `docs/design/architecture-decisions.md`.
 | ostore (separate repo) | `/root/ostore` (github.com/DavidMusk93/ostore) | Rust/axum object storage on :8781, bound dir `data/videos`; `/ostore/*` via Caddy; resumable SSE (`?since=`/`Last-Event-ID`) + webhook object events; Prometheus `GET /api/metrics`; `/files` 网盘页 + `useOstore.ts` call it directly for list/upload/play, but live updates come via `services/ostore_bridge.py` → `files.changed`/`files.resync` on `/api/events` (never a page-owned ostore EventSource) |
 | Scraper pipeline | `scrapers/v2/` | `tasks/sync_titles.py`: sources → fetchers → extractors → sinks (see `docs/design/diff-sync-design.md`) |
 
-Track events (`/api/track`): `star_view`, `play`, `play_ready`, `play_timeout`,
+Track events (`/api/track`): `star_view`, `hero_step` (hero cover paint_ms / cache_hit / src_tier — see `docs/analysis/hero-step-perf.md`), `play`, `play_ready`, `play_timeout`,
 `play_error`, `play_watch`, `copy_magnet` (meta.source: hero/search),
 `like`/`unlike`, `add_star` (meta.source: home/search), `delete_star`, `search`,
 `x_inject`, `play_direct`, `files_upload`, `files_delete`, `files_play` (any file preview; meta.kind).

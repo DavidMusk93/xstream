@@ -47,34 +47,70 @@
       <!-- Stage: the cover is the protagonist; info reads like a caption -->
       <div v-if="activeTitle" class="grid gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] lg:gap-12">
         <div
-          class="hero-stage group/hero relative w-full max-w-[760px] rounded-[22px] overflow-hidden bg-fill shadow-[0_30px_60px_-34px_rgba(0,0,0,0.5)] touch-pan-y select-none"
+          ref="heroStageRef"
+          class="hero-stage group/hero relative w-full max-w-[760px] rounded-[22px] overflow-hidden bg-fill shadow-[0_30px_60px_-34px_rgba(0,0,0,0.5)] touch-pan-y select-none outline-none"
           :class="{ 'controls-shown': controlsShown }"
-          @touchstart.passive="onTouchStart"
-          @touchend.passive="onTouchEnd"
+          tabindex="0"
+          role="group"
+          :aria-label="`${activeTitle.code} cover, swipe or use arrow keys to browse titles`"
+          @pointerdown="onPointerDown"
+          @pointermove="(e) => onPointerMove(e, clampDrag)"
+          @pointerup="onPointerUp"
+          @pointercancel="onPointerCancel"
+          @wheel="onWheel"
+          @keydown="onKeydown"
         >
-          <img
-            v-if="activeTitle.cover_url && !activeImgError"
-            ref="heroImg"
-            :key="activeTitle.code"
-            :src="activeTitle.cover_url"
-            :srcset="heroSrcset(activeTitle)"
-            sizes="(min-width: 1280px) 740px, (min-width: 1024px) 60vw, (min-width: 808px) 760px, calc(100vw - 32px)"
-            :alt="activeTitle.code"
-            class="w-full h-auto block transition-[opacity,transform] duration-700 [transition-timing-function:var(--ease-out)] sm:group-hover/hero:scale-[1.015]"
-            :class="heroLoaded ? 'opacity-100' : 'opacity-0'"
-            :style="{ aspectRatio: coverAR(activeTitle) }"
-            loading="lazy"
-            decoding="async"
-            @load="heroLoaded = true"
-            @error="activeImgError = true"
-          />
           <div
-            v-else
-            class="flex flex-col items-center justify-center p-6 text-center"
+            class="hero-frame relative w-full bg-fill overflow-hidden"
             :style="{ aspectRatio: coverAR(activeTitle) }"
           >
-            <span class="text-[19px] font-semibold text-foreground/50">{{ activeTitle.code }}</span>
-            <span class="mt-1.5 text-[14px] text-foreground-muted/70 line-clamp-3">{{ activeTitle.title }}</span>
+            <img
+              v-if="heroLqipSrc(activeTitle) && !heroLoaded && !activeImgError"
+              :key="`lqip-${activeTitle.code}`"
+              :src="heroLqipSrc(activeTitle)!"
+              alt=""
+              aria-hidden="true"
+              decoding="async"
+              draggable="false"
+              class="hero-lqip absolute inset-0 w-full h-full object-contain pointer-events-none"
+              :style="{
+                transform: dragX ? `translate3d(${dragX}px,0,0)` : undefined,
+              }"
+            />
+            <Transition name="hero-crossfade">
+              <img
+                v-if="activeTitle.cover_url && !activeImgError"
+                ref="heroImg"
+                :key="activeTitle.code"
+                :src="heroSrc(activeTitle)"
+                :srcset="heroSrcset(activeTitle)"
+                sizes="(min-width: 1280px) 740px, (min-width: 1024px) 60vw, (min-width: 808px) 760px, calc(100vw - 32px)"
+                :alt="activeTitle.code"
+                fetchpriority="high"
+                loading="eager"
+                decoding="async"
+                draggable="false"
+                class="hero-hi absolute inset-0 w-full h-full object-contain block [transition-timing-function:var(--ease-out)]"
+                :class="[
+                  heroLoaded ? 'opacity-100' : 'opacity-0',
+                  dragging ? 'duration-0 will-change-transform' : 'transition-opacity duration-150',
+                  !dragX && !dragging ? 'sm:group-hover/hero:scale-[1.015]' : '',
+                ]"
+                :style="{
+                  transform: dragX ? `translate3d(${dragX}px,0,0)` : undefined,
+                }"
+                @load="onHeroImgLoad"
+                @error="activeImgError = true"
+              />
+              <div
+                v-else
+                :key="`${activeTitle.code}-ph`"
+                class="absolute inset-0 flex flex-col items-center justify-center p-6 text-center"
+              >
+                <span class="text-[19px] font-semibold text-foreground/50">{{ activeTitle.code }}</span>
+                <span class="mt-1.5 text-[14px] text-foreground-muted/70 line-clamp-3">{{ activeTitle.title }}</span>
+              </div>
+            </Transition>
           </div>
 
           <!-- Stepping lives on the cover itself: revealed by hover / focus
@@ -103,7 +139,7 @@
         </div>
 
         <div class="min-w-0 flex flex-col lg:py-1 lg:pb-2">
-          <Transition name="swap" mode="out-in">
+          <Transition name="swap">
             <div :key="activeTitle.code" class="lg:mt-auto">
               <div class="flex items-center flex-wrap gap-x-2 gap-y-1 text-[13px] font-medium text-foreground-muted tabular-nums">
                 <span v-if="activeTitle.date">{{ fmtDate(activeTitle.date) }}</span>
@@ -237,6 +273,16 @@
 
 <script setup lang="ts">
 import type { Star, Title } from '~/types/api'
+import {
+  heroLqipSrc,
+  heroSrc,
+  heroSrcset,
+  heroSrcTier,
+  isHeroCoverReady,
+  markHeroCoverReady,
+  prefetchHeroCover,
+  prefetchHeroNeighbors,
+} from '~/utils/heroCover'
 
 const props = defineProps<{
   star: Star
@@ -257,41 +303,74 @@ const activeIndex = ref(0)
 const activeTitle = computed(() => props.star.titles?.[activeIndex.value] || null)
 const total = computed(() => props.star.titles?.length ?? 0)
 
+const heroStageRef = ref<HTMLElement | null>(null)
+const stepAnimLock = ref(false)
+let stepAnimTimer: ReturnType<typeof setTimeout> | null = null
+let heroPaintStart = 0
+let heroPaintMeta: { code: string; cacheHit: boolean } | null = null
+
 function step(delta: number) {
+  if (stepAnimLock.value) return
   const next = activeIndex.value + delta
   if (next < 0 || next >= total.value) return
+  const nextTitle = props.star.titles?.[next]
+  const cacheHit = !!(nextTitle && isHeroCoverReady(nextTitle.code))
+  if (nextTitle) {
+    heroPaintStart = performance.now()
+    heroPaintMeta = { code: nextTitle.code, cacheHit }
+  }
   activeIndex.value = next
+  stepAnimLock.value = true
+  if (stepAnimTimer) clearTimeout(stepAnimTimer)
+  stepAnimTimer = setTimeout(() => {
+    stepAnimLock.value = false
+    stepAnimTimer = null
+  }, cacheHit ? 180 : 300)
   revealThumb(next)
+  if (cacheHit && nextTitle) {
+    heroLoaded.value = true
+    finishHeroPaint(nextTitle)
+  }
 }
 
-// Touch: a horizontal swipe on the cover steps and briefly reveals the
-// controls; vertical motion stays a page scroll (touch-pan-y).
 const controlsShown = ref(false)
 let controlsTimer: ReturnType<typeof setTimeout> | null = null
-let touchX = 0
-let touchY = 0
 
-function onTouchStart(e: TouchEvent) {
-  touchX = e.touches[0].clientX
-  touchY = e.touches[0].clientY
-}
-
-function onTouchEnd(e: TouchEvent) {
-  const dx = e.changedTouches[0].clientX - touchX
-  const dy = e.changedTouches[0].clientY - touchY
-  if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return
-  step(dx < 0 ? 1 : -1)
+function showControlsBriefly() {
   controlsShown.value = true
   if (controlsTimer) clearTimeout(controlsTimer)
   controlsTimer = setTimeout(() => { controlsShown.value = false }, 1600)
 }
+
+function clampDrag(dx: number): number {
+  const atStart = activeIndex.value <= 0 && dx > 0
+  const atEnd = activeIndex.value >= total.value - 1 && dx < 0
+  const damp = atStart || atEnd ? 0.32 : 1
+  return dx * damp
+}
+
+const {
+  dragX,
+  dragging,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
+  onWheel,
+  onKeydown,
+} = useHeroStepGesture({
+  canStep: () => total.value > 1 && !stepAnimLock.value,
+  stageWidth: () => heroStageRef.value?.clientWidth ?? 360,
+  onStep: (delta) => step(delta),
+  onShowControls: showControlsBriefly,
+})
 
 // Keep the stepped-to card in view without nudging the page vertically.
 function revealThumb(idx: number) {
   const row = rowRef.value
   if (!row || !thumbStride.value) return
   const left = idx * thumbStride.value - (row.clientWidth - thumbItemWidth.value) / 2
-  row.scrollTo({ left: Math.max(0, left), behavior: 'smooth' })
+  row.scrollTo({ left: Math.max(0, left), behavior: 'auto' })
 }
 
 const activeImgError = ref(false)
@@ -302,8 +381,39 @@ const thumbErrors = ref<Record<string, boolean>>({})
 const heroImg = ref<HTMLImageElement | null>(null)
 const heroLoaded = ref(false)
 watch(heroImg, (img) => {
-  if (img?.complete && img.naturalWidth > 0) heroLoaded.value = true
+  if (img?.complete && img.naturalWidth > 0) {
+    void onHeroImgLoad({ target: img } as Event)
+  }
 }, { flush: 'post' })
+
+function finishHeroPaint(t: Title) {
+  if (!heroPaintMeta || heroPaintMeta.code !== t.code) return
+  const paint_ms = Math.round(performance.now() - heroPaintStart)
+  track('hero_step', {
+    code: t.code,
+    star_code: props.star.code,
+    meta: {
+      paint_ms,
+      cache_hit: heroPaintMeta.cacheHit,
+      src_tier: heroSrcTier(t),
+    },
+  })
+  heroPaintMeta = null
+}
+
+async function onHeroImgLoad(e: Event) {
+  const img = e.target as HTMLImageElement
+  const t = activeTitle.value
+  if (!t) return
+  try {
+    if (typeof img.decode === 'function') await img.decode()
+  } catch {
+    // Truncated or unsupported — still show if pixels landed.
+  }
+  markHeroCoverReady(t.code)
+  if (activeTitle.value?.code === t.code) heroLoaded.value = true
+  finishHeroPaint(t)
+}
 
 const activeIsHd = computed(() => {
   const t = activeTitle.value
@@ -319,19 +429,6 @@ const activeIsHd = computed(() => {
 // stretch the rail.)
 function coverAR(t: Title): string {
   return t.cover_w && t.cover_h ? `${t.cover_w} / ${t.cover_h}` : '3 / 2'
-}
-
-// Hero srcset: let the browser pick the smallest variant that covers the
-// display box (440px max, ≤2x DPR → the 800px mid wins almost everywhere).
-// Decoding a 1600-2200px original for a 440px box was the main render stall.
-function heroSrcset(t: Title): string | undefined {
-  const candidates: string[] = []
-  if (t.cover_thumb_url) candidates.push(`${t.cover_thumb_url} 400w`)
-  if (t.cover_mid_url) candidates.push(`${t.cover_mid_url} 800w`)
-  if (t.cover_url && t.cover_url.startsWith('/images/')) {
-    candidates.push(`${t.cover_url} ${t.cover_w || 1600}w`)
-  }
-  return candidates.length > 1 ? candidates.join(', ') : undefined
 }
 
 // ── Thumbnail row windowing ──────────────────────────────────────────
@@ -402,11 +499,13 @@ onMounted(() => {
     rowResizeObserver = new ResizeObserver(measureRow)
     rowResizeObserver.observe(rowRef.value)
   }
+  prefetchHeroNeighbors(props.star.titles ?? [], activeIndex.value)
 })
 
 onUnmounted(() => {
   rowResizeObserver?.disconnect()
   if (controlsTimer) clearTimeout(controlsTimer)
+  if (stepAnimTimer) clearTimeout(stepAnimTimer)
 })
 const copied = ref(false)
 const liking = ref(false)
@@ -425,14 +524,26 @@ watch(() => props.star.titles, (titles, prev) => {
   activeImgError.value = false
 })
 
-watch(activeIndex, () => {
+watch(activeIndex, (idx) => {
   activeImgError.value = false
+  prefetchHeroNeighbors(props.star.titles ?? [], idx)
 })
 
-// Keyed on the code, not the index: a refetch can shift the kept title's
-// index without remounting its <img>, and would leave it invisible.
-watch(() => activeTitle.value?.code, () => {
-  heroLoaded.value = false
+watch(() => activeTitle.value?.code, (code) => {
+  if (!code) return
+  activeImgError.value = false
+  const t = activeTitle.value
+  if (!t) return
+  if (isHeroCoverReady(code)) {
+    heroLoaded.value = true
+  } else {
+    heroLoaded.value = false
+    prefetchHeroCover(t)
+  }
+  if (!heroPaintMeta || heroPaintMeta.code !== code) {
+    heroPaintStart = performance.now()
+    heroPaintMeta = { code, cacheHit: isHeroCoverReady(code) }
+  }
 })
 
 function onPlay() {

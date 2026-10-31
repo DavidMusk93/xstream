@@ -121,6 +121,8 @@ export interface Star {
   note?: string
   number?: number
   titles: Title[]
+  /** UTC ISO-8601. When this star was followed (`stars.created_at`). */
+  added_at?: string | null
   x?: XProfile | null
 }
 

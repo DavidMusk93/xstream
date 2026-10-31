@@ -14,7 +14,9 @@ Fluid Interfaces* translated to the web).
 - One accent color, used sparingly for primary actions and selection states.
 - Glassmorphism (`backdrop-filter`) is reserved for floating chrome: the top
   bar, header popovers, toasts, the video modal.
-- No floating corner buttons: every tool lives in the top bar.
+- Tools live in the top bar. The home page may add one floating control
+  when it reuses an existing material (`.scroll-rail` = hero stepping
+  chrome), not a new shadow/ring vocabulary.
 
 ### Taste (owner feedback, 2026-10)
 
@@ -92,6 +94,7 @@ Compose them instead of re-spelling utility strings per page.
 | `.chrome` | Fixed top-bar material (blur only from `sm:` — phones skip the per-frame backdrop cost) |
 | `.surface` | White card, `rounded-[28px]`, `shadow-card` |
 | `.popover` | Floating panel material, `rounded-[22px]`, `shadow-float` |
+| `.scroll-rail` | Home scroll pair: hero-nav material, horizontal `.btn-icon` row |
 | `.btn` + `.btn-primary` / `.btn-secondary` / `.btn-dark` / `.btn-success` | Pill buttons, `h-11` (`.btn-sm` = `h-9`) |
 | `.btn-icon` | 40px round icon button, hover tint |
 | `.action` | 48px round icon-only primary action (Copy / Play / Like); label lives in `data-tip` |
@@ -168,9 +171,31 @@ disk.
 
 Eyebrow `00 Your collection`, large title `Library`, then a stats row
 (Stars / Titles / This week — big tabular numbers split by hairlines) over a
-soft static accent glow; then one shelf per star. Follow
-by URL lives in `AddStarSheet` (with the Recently Added list and a link to
-Search), not on the page.
+soft static accent glow; then one shelf per star. The `00` eyebrow row
+includes `StarSortToggle` (`ui/StarSortToggle.vue`): same pill language as
+`StarNav` (`bg-foreground text-white` active, muted hover inactive), not a
+separate segmented control beside the large title. Choice is remembered in
+`localStorage` (`xstream.starSort`):
+
+- **Latest** (default) — newest playable title first, the `/api/stars` order.
+  A star with no dated title stays at the front.
+- **Added** — when the star was followed, `added_at` descending
+  (`stars.created_at`). Same name breaks ties.
+
+`StarNav` follows whichever order is showing. Follow by URL lives in
+`AddStarSheet` (with the Recently Added list and a link to Search), not on
+the page.
+
+`PageScrollRail` (`ui/PageScrollRail.vue`): horizontal `.scroll-rail` with
+two `.btn-icon` chevrons (hero stepping material). Centered on phones,
+bottom-right from `sm:`. Visible whenever the page can scroll; the end you
+are already at is dimmed via disabled + opacity.
+
+Each `.star-section` uses `v-reveal` with a capped stagger. After
+`scrollY > 220`, desktop shelves enter **scroll focus**: the band-aligned
+section (same observer as `StarNav`) stays full opacity; siblings soften
+(`.scroll-dim` / `.scroll-focus`, archify-style focus while scrolling).
+Phones skip the dim/blur cost.
 
 ### StarCard (shelf)
 
@@ -183,10 +208,21 @@ order) and the name sit above.
   to `760px`, `rounded-[22px]`, soft drop shadow; fades in once decoded.
 - Stepping lives on the cover, not in the info column: round glass
   chevrons sit on its left/right edges with a `n / total` pill bottom-right
-  (`.hero-nav` / `.hero-count`). Hidden at rest; revealed by hover or
-  keyboard focus on desktop, and by a horizontal swipe on touch (the swipe
-  itself steps; controls show for 1.6s). The arrow at either end of the
-  catalog stays hidden. Vertical drags remain page scroll (`touch-pan-y`).
+  (`.hero-nav` / `.hero-count`). Hidden at rest; revealed by hover,
+  keyboard focus, or any horizontal step gesture. **Gestures** (via
+  `useHeroStepGesture` + `utils/heroStepCommit.ts`): pointer drag with live
+  `translateX` follow and rubber-band at the ends; **one commit per gesture**
+  on release (min distance ~12% of stage width, or a flick velocity — small
+  jitter cancels). Trackpad/wheel **accumulates until idle** (~220ms), then
+  at most one step (carousel-style debounce). A ~650ms shared cooldown and a
+  ~380ms post-step lock prevent double steps during the hero transition.
+  Left/Right when the stage is focused (`tabindex="0"`). Vertical drags stay
+  page scroll (`touch-pan-y`). Each step crossfades the hero (`.hero-slide-*`);
+  controls   flash for 1.6s after a gesture step. The arrow at either end of the
+  catalog stays hidden. Paint latency is tracked as `hero_step` (`paint_ms`,
+  `cache_hit`, `src_tier`); hero uses `cover_mid_url` + module prefetch
+  (  `utils/heroCover.ts`) with thumb LQIP under the crossfade (`hero-lqip` /
+  `hero-crossfade`) — see `docs/analysis/hero-step-perf.md`.
 - Info column (pinned to the bottom on `lg:`): date and HD / Unavailable
   chips, code headline (34 / 48 / 56px, tight tracking), 3–4 line title,
   actions. Swapping titles crossfades the block (`swap`); stepping scrolls

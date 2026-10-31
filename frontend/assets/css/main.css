@@ -147,6 +147,16 @@ textarea:focus-visible {
     -webkit-backdrop-filter: blur(24px) saturate(180%);
   }
 
+  /* Home page scroll: same material as hero stepping, horizontal pair. */
+  .scroll-rail {
+    @apply p-0.5 rounded-full bg-white/85 shadow-[0_6px_18px_-6px_rgba(0,0,0,0.35)];
+  }
+  @supports (backdrop-filter: blur(1px)) {
+    @media (min-width: 640px) {
+      .scroll-rail { @apply bg-white/70 backdrop-blur-md; }
+    }
+  }
+
   /* ── Controls ──────────────────────────────── */
 
   .pressable {
@@ -274,6 +284,56 @@ textarea:focus-visible {
   filter: none;
 }
 
+/* Shelf scroll focus: the band-aligned star stays full; siblings soften. */
+@media (min-width: 640px) {
+  .star-section {
+    transition:
+      opacity 0.55s var(--ease-out),
+      transform 0.55s var(--ease-out),
+      filter 0.55s var(--ease-out);
+  }
+  .star-section.scroll-dim:not(.scroll-focus) {
+    opacity: 0.62;
+    transform: translateY(10px) scale(0.992);
+    filter: blur(1px) saturate(0.88);
+  }
+  .star-section.scroll-focus {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+/* Hero title change after a horizontal step (swipe, wheel, keys). */
+/* Hero title change: overlap enter/leave (no out-in gap). */
+.hero-crossfade-enter-active,
+.hero-crossfade-leave-active {
+  transition: opacity 0.22s var(--ease-out);
+}
+.hero-crossfade-leave-active {
+  position: absolute;
+  inset: 0;
+}
+.hero-crossfade-enter-from,
+.hero-crossfade-leave-to {
+  opacity: 0;
+}
+
+/* Thumb LQIP under the hero — soft on desktop only (blur is costly on phones). */
+.hero-lqip {
+  opacity: 1;
+  transform: scale(1.02);
+  filter: saturate(0.92);
+}
+@screen sm {
+  .hero-lqip {
+    filter: saturate(0.9) blur(10px);
+  }
+}
+.hero-frame {
+  contain: layout style paint;
+}
+
 /* Page-load entrance for server-rendered content (runs from first paint,
    so no hide-after-hydration flash). Stagger with --rise-delay. */
 @keyframes rise {
@@ -368,6 +428,15 @@ textarea:focus-visible {
     transform: none;
     filter: none;
   }
+  .star-section.scroll-dim:not(.scroll-focus) {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+  .hero-crossfade-enter-from,
+  .hero-crossfade-leave-to {
+    opacity: 1;
+  }
   .hero-nav,
   .hero-nav:active {
     transform: none;
@@ -378,6 +447,7 @@ textarea:focus-visible {
 @media (prefers-reduced-transparency: reduce) {
   .chrome,
   .popover,
+  .scroll-rail,
   .hero-nav {
     background-color: rgba(255, 255, 255, 0.98);
     backdrop-filter: none;
