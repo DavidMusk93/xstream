@@ -1,4 +1,8 @@
-import { swipeCommitDirection, wheelCommitDirection } from '~/utils/heroStepCommit'
+import {
+  isHeroCoverGestureTarget,
+  swipeCommitDirection,
+  wheelCommitDirection,
+} from '~/utils/heroStepCommit'
 
 /**
  * Hero cover: at most one title step per input gesture.
@@ -7,6 +11,7 @@ import { swipeCommitDirection, wheelCommitDirection } from '~/utils/heroStepComm
  * - Wheel: accumulate until idle (trackpad momentum), then one commit — same
  *   pattern as debounced horizontal wheel handlers in carousel libraries.
  * - Shared cooldown so wheel + pointer cannot double-fire back-to-back.
+ * - Drag follow uses rAF + direct transform (no per-frame Vue re-render).
  */
 
 const LOCK_SLOP = 12
@@ -19,23 +24,60 @@ export function useHeroStepGesture(opts: {
   stageWidth: () => number
   onStep: (delta: -1 | 1) => void
   onShowControls: () => void
+  /** Compositor-only horizontal offset during pointer drag (px). */
+  setDragTranslate: (px: number) => void
 }) {
-  const dragX = ref(0)
   const dragging = ref(false)
 
   let startX = 0
+  let startY = 0
   let startT = 0
   let axis: 'h' | 'v' | null = null
   let activePointer: number | null = null
+  let captureEl: HTMLElement | null = null
   let gestureLockUntil = 0
   let wheelAcc = 0
   let wheelIdleTimer: ReturnType<typeof setTimeout> | null = null
+  let dragRaf = 0
+  let pendingDragPx = 0
+
+  function flushDragFrame() {
+    dragRaf = 0
+    opts.setDragTranslate(pendingDragPx)
+  }
+
+  function scheduleDrag(px: number) {
+    pendingDragPx = px
+    if (dragRaf) return
+    dragRaf = requestAnimationFrame(flushDragFrame)
+  }
+
+  function clearDragVisual() {
+    if (dragRaf) {
+      cancelAnimationFrame(dragRaf)
+      dragRaf = 0
+    }
+    pendingDragPx = 0
+    opts.setDragTranslate(0)
+  }
+
+  function releaseCapture() {
+    if (captureEl != null && activePointer != null) {
+      try {
+        captureEl.releasePointerCapture(activePointer)
+      } catch {
+        // Already released.
+      }
+    }
+    captureEl = null
+    activePointer = null
+  }
 
   function resetPointer() {
     dragging.value = false
     axis = null
-    activePointer = null
-    dragX.value = 0
+    releaseCapture()
+    clearDragVisual()
   }
 
   function stepOnce(delta: -1 | 1) {
@@ -49,29 +91,33 @@ export function useHeroStepGesture(opts: {
 
   function onPointerDown(e: PointerEvent) {
     if (!opts.canStep() || e.button !== 0) return
+    if (!isHeroCoverGestureTarget(e.target)) return
     startX = e.clientX
+    startY = e.clientY
     startT = performance.now()
     axis = null
-    dragging.value = true
     activePointer = e.pointerId
-    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    captureEl = e.currentTarget as HTMLElement
+    captureEl.setPointerCapture(e.pointerId)
   }
 
   function onPointerMove(e: PointerEvent, clampDx: (dx: number) => number) {
-    if (!dragging.value || activePointer !== e.pointerId) return
+    if (activePointer !== e.pointerId) return
     const dx = e.clientX - startX
     const dy = e.clientY - startY
     if (!axis) {
       if (Math.abs(dx) < LOCK_SLOP && Math.abs(dy) < LOCK_SLOP) return
       axis = Math.abs(dx) > Math.abs(dy) * 1.3 ? 'h' : 'v'
       if (axis === 'v') {
-        resetPointer()
+        releaseCapture()
+        axis = null
         return
       }
+      dragging.value = true
     }
     if (axis !== 'h') return
     e.preventDefault()
-    dragX.value = clampDx(dx)
+    scheduleDrag(clampDx(dx))
   }
 
   function onPointerUp(e: PointerEvent) {
@@ -121,10 +167,11 @@ export function useHeroStepGesture(opts: {
 
   onUnmounted(() => {
     if (wheelIdleTimer) clearTimeout(wheelIdleTimer)
+    if (dragRaf) cancelAnimationFrame(dragRaf)
+    clearDragVisual()
   })
 
   return {
-    dragX,
     dragging,
     onPointerDown,
     onPointerMove,

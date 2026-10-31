@@ -219,12 +219,16 @@ order) and the name sit above.
   jitter cancels). Trackpad/wheel **accumulates until idle** (~220ms), then
   at most one step (carousel-style debounce). A ~650ms shared cooldown and a
   ~380ms post-step lock prevent double steps during the hero transition.
-  Left/Right when the stage is focused (`tabindex="0"`). Vertical drags stay
-  page scroll (`touch-pan-y`). Each step crossfades the hero (`.hero-slide-*`);
-  controls   flash for 1.6s after a gesture step. The arrow at either end of the
+  Left/Right when the stage is focused (`tabindex="0"`). Pointer/wheel
+  listeners sit on `.hero-frame` only — `.hero-nav` carries
+  `data-hero-chrome` so `setPointerCapture` never steals button clicks.
+  Horizontal follow moves `.hero-slide` via rAF + `translate3d` (no per-frame
+  Vue re-render). Vertical drags release capture and keep page scroll
+  (`touch-pan-y`; `touch-action: none` only while locked horizontal). Each step crossfades the hero;
+  controls flash for 1.6s after a gesture step. The arrow at either end of the
   catalog stays hidden. Paint latency is tracked as `hero_step` (`paint_ms`,
   `cache_hit`, `src_tier`); hero uses `cover_mid_url` + module prefetch
-  (  `utils/heroCover.ts`) with thumb LQIP under the crossfade (`hero-lqip` /
+  (`utils/heroCover.ts`) with thumb LQIP under the crossfade (`hero-lqip` /
   `hero-crossfade`) — see `docs/analysis/hero-step-perf.md`.
 - Info column (pinned to the bottom on `lg:`): date and HD / Unavailable
   chips, code headline (34 / 48 / 56px, tight tracking), 3–4 line title,

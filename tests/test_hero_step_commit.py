@@ -43,6 +43,16 @@ console.log('ok');
     assert out == "ok"
 
 
+def test_gesture_target_rejects_non_element():
+    out = _run_ts(r"""
+import { isHeroCoverGestureTarget } from './utils/heroStepCommit.ts';
+if (isHeroCoverGestureTarget(null)) process.exit(1);
+if (isHeroCoverGestureTarget({})) process.exit(1);
+console.log('ok');
+""")
+    assert out == "ok"
+
+
 def test_wheel_commits_once_per_accumulator():
     out = _run_ts(r"""
 import { wheelCommitDirection } from './utils/heroStepCommit.ts';

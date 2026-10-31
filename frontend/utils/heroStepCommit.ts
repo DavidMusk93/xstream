@@ -22,3 +22,9 @@ export function wheelCommitDirection(
   if (Math.abs(accumulatedDeltaX) < threshold) return null
   return accumulatedDeltaX > 0 ? 1 : -1
 }
+
+/** True when the event target is the cover — not hero-nav or other chrome. */
+export function isHeroCoverGestureTarget(target: EventTarget | null): boolean {
+  if (typeof Element === 'undefined' || !(target instanceof Element)) return false
+  return !target.closest('button, a, input, textarea, select, label, [data-hero-chrome]')
+}

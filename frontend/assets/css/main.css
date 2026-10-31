@@ -333,6 +333,13 @@ textarea:focus-visible {
 .hero-frame {
   contain: layout style paint;
 }
+.hero-slide {
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+}
+.hero-frame.hero-dragging-h {
+  touch-action: none;
+}
 
 /* Page-load entrance for server-rendered content (runs from first paint,
    so no hide-after-hydration flash). Stagger with --rise-delay. */

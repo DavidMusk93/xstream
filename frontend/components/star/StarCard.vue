@@ -53,88 +53,91 @@
           tabindex="0"
           role="group"
           :aria-label="`${activeTitle.code} cover, swipe or use arrow keys to browse titles`"
-          @pointerdown="onPointerDown"
-          @pointermove="(e) => onPointerMove(e, clampDrag)"
-          @pointerup="onPointerUp"
-          @pointercancel="onPointerCancel"
-          @wheel="onWheel"
           @keydown="onKeydown"
         >
           <div
             class="hero-frame relative w-full bg-fill overflow-hidden"
+            :class="{ 'hero-dragging-h': dragging }"
             :style="{ aspectRatio: coverAR(activeTitle) }"
+            @pointerdown="onPointerDown"
+            @pointermove="(e) => onPointerMove(e, clampDrag)"
+            @pointerup="onPointerUp"
+            @pointercancel="onPointerCancel"
+            @wheel="onWheel"
           >
-            <img
-              v-if="heroLqipSrc(activeTitle) && !heroLoaded && !activeImgError"
-              :key="`lqip-${activeTitle.code}`"
-              :src="heroLqipSrc(activeTitle)!"
-              alt=""
-              aria-hidden="true"
-              decoding="async"
-              draggable="false"
-              class="hero-lqip absolute inset-0 w-full h-full object-contain pointer-events-none"
-              :style="{
-                transform: dragX ? `translate3d(${dragX}px,0,0)` : undefined,
-              }"
-            />
-            <Transition name="hero-crossfade">
+            <div ref="heroSlideRef" class="hero-slide absolute inset-0">
               <img
-                v-if="activeTitle.cover_url && !activeImgError"
-                ref="heroImg"
-                :key="activeTitle.code"
-                :src="heroSrc(activeTitle)"
-                :srcset="heroSrcset(activeTitle)"
-                sizes="(min-width: 1280px) 740px, (min-width: 1024px) 60vw, (min-width: 808px) 760px, calc(100vw - 32px)"
-                :alt="activeTitle.code"
-                fetchpriority="high"
-                loading="eager"
+                v-if="heroLqipSrc(activeTitle) && !heroLoaded && !activeImgError"
+                :key="`lqip-${activeTitle.code}`"
+                :src="heroLqipSrc(activeTitle)!"
+                alt=""
+                aria-hidden="true"
                 decoding="async"
                 draggable="false"
-                class="hero-hi absolute inset-0 w-full h-full object-contain block [transition-timing-function:var(--ease-out)]"
-                :class="[
-                  heroLoaded ? 'opacity-100' : 'opacity-0',
-                  dragging ? 'duration-0 will-change-transform' : 'transition-opacity duration-150',
-                  !dragX && !dragging ? 'sm:group-hover/hero:scale-[1.015]' : '',
-                ]"
-                :style="{
-                  transform: dragX ? `translate3d(${dragX}px,0,0)` : undefined,
-                }"
-                @load="onHeroImgLoad"
-                @error="activeImgError = true"
+                class="hero-lqip absolute inset-0 w-full h-full object-contain pointer-events-none"
               />
-              <div
-                v-else
-                :key="`${activeTitle.code}-ph`"
-                class="absolute inset-0 flex flex-col items-center justify-center p-6 text-center"
-              >
-                <span class="text-[19px] font-semibold text-foreground/50">{{ activeTitle.code }}</span>
-                <span class="mt-1.5 text-[14px] text-foreground-muted/70 line-clamp-3">{{ activeTitle.title }}</span>
-              </div>
-            </Transition>
+              <Transition name="hero-crossfade">
+                <img
+                  v-if="activeTitle.cover_url && !activeImgError"
+                  ref="heroImg"
+                  :key="activeTitle.code"
+                  :src="heroSrc(activeTitle)"
+                  :srcset="heroSrcset(activeTitle)"
+                  sizes="(min-width: 1280px) 740px, (min-width: 1024px) 60vw, (min-width: 808px) 760px, calc(100vw - 32px)"
+                  :alt="activeTitle.code"
+                  fetchpriority="high"
+                  loading="eager"
+                  decoding="async"
+                  draggable="false"
+                  class="hero-hi absolute inset-0 w-full h-full object-contain block [transition-timing-function:var(--ease-out)]"
+                  :class="[
+                    heroLoaded ? 'opacity-100' : 'opacity-0',
+                    dragging ? 'duration-0' : 'transition-opacity duration-150',
+                    !dragging ? 'sm:group-hover/hero:scale-[1.015]' : '',
+                  ]"
+                  @load="onHeroImgLoad"
+                  @error="activeImgError = true"
+                />
+                <div
+                  v-else
+                  :key="`${activeTitle.code}-ph`"
+                  class="absolute inset-0 flex flex-col items-center justify-center p-6 text-center"
+                >
+                  <span class="text-[19px] font-semibold text-foreground/50">{{ activeTitle.code }}</span>
+                  <span class="mt-1.5 text-[14px] text-foreground-muted/70 line-clamp-3">{{ activeTitle.title }}</span>
+                </div>
+              </Transition>
+            </div>
           </div>
 
           <!-- Stepping lives on the cover itself: revealed by hover / focus
                on desktop, briefly by a swipe on touch -->
           <template v-if="total > 1">
             <button
-              class="hero-nav left-3 sm:left-4"
+              type="button"
+              data-hero-chrome
+              class="hero-nav left-3 sm:left-4 z-10"
               :class="{ 'is-off': activeIndex <= 0 }"
               aria-label="Previous title"
               :disabled="activeIndex <= 0"
-              @click="step(-1)"
+              @pointerdown.stop
+              @click="step(-1, { fromChrome: true })"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
             </button>
             <button
-              class="hero-nav right-3 sm:right-4"
+              type="button"
+              data-hero-chrome
+              class="hero-nav right-3 sm:right-4 z-10"
               :class="{ 'is-off': activeIndex >= total - 1 }"
               aria-label="Next title"
               :disabled="activeIndex >= total - 1"
-              @click="step(1)"
+              @pointerdown.stop
+              @click="step(1, { fromChrome: true })"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
             </button>
-            <span class="hero-count font-mono">{{ activeIndex + 1 }} / {{ total }}</span>
+            <span class="hero-count font-mono z-10" data-hero-chrome>{{ activeIndex + 1 }} / {{ total }}</span>
           </template>
         </div>
 
@@ -304,13 +307,20 @@ const activeTitle = computed(() => props.star.titles?.[activeIndex.value] || nul
 const total = computed(() => props.star.titles?.length ?? 0)
 
 const heroStageRef = ref<HTMLElement | null>(null)
+const heroSlideRef = ref<HTMLElement | null>(null)
+
+function setHeroDragTranslate(px: number) {
+  const el = heroSlideRef.value
+  if (!el) return
+  el.style.transform = px ? `translate3d(${px}px,0,0)` : ''
+}
 const stepAnimLock = ref(false)
 let stepAnimTimer: ReturnType<typeof setTimeout> | null = null
 let heroPaintStart = 0
 let heroPaintMeta: { code: string; cacheHit: boolean } | null = null
 
-function step(delta: number) {
-  if (stepAnimLock.value) return
+function step(delta: number, opts?: { fromChrome?: boolean }) {
+  if (stepAnimLock.value && !opts?.fromChrome) return
   const next = activeIndex.value + delta
   if (next < 0 || next >= total.value) return
   const nextTitle = props.star.titles?.[next]
@@ -350,7 +360,6 @@ function clampDrag(dx: number): number {
 }
 
 const {
-  dragX,
   dragging,
   onPointerDown,
   onPointerMove,
@@ -363,6 +372,7 @@ const {
   stageWidth: () => heroStageRef.value?.clientWidth ?? 360,
   onStep: (delta) => step(delta),
   onShowControls: showControlsBriefly,
+  setDragTranslate: setHeroDragTranslate,
 })
 
 // Keep the stepped-to card in view without nudging the page vertically.
