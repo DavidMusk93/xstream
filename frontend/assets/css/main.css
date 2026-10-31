@@ -365,10 +365,6 @@ textarea:focus-visible {
 .thumb-rail.is-scrolling .thumb-code {
   transition: none !important;
 }
-.thumb-rail .group\/thumb {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 220px;
-}
 .thumb-rail .thumb-cover {
   transition:
     opacity 0.3s var(--ease-out),
