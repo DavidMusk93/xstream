@@ -206,9 +206,10 @@ Editorial layout, no card box — the cover is the protagonist and the info
 reads like a caption. An eyebrow (`01 · N titles ——`, numbered by shelf
 order) and the name sit above.
 
-- Stage (`lg:` two columns, `1.65fr / 1fr`; stacked below): hero cover at
-  natural aspect ratio (`w-full h-auto`, box reserved from `cover_w/h`), up
-  to `760px`, `rounded-[22px]`, soft drop shadow; fades in once decoded.
+- Stage (`lg:` two columns, `1.65fr / 1fr`; stacked below): hero cover in a
+  **fixed `aspect-[3/2]` box** (same geometry as gallery thumbs,
+  `object-contain`, up to `760px`) so stepping never reflows the shelf;
+  `rounded-[22px]`, soft drop shadow; fades in once decoded.
 - Stepping lives on the cover, not in the info column: round glass
   chevrons sit on its left/right edges with a `n / total` pill bottom-right
   (`.hero-nav` / `.hero-count`). Hidden at rest; revealed by hover,
@@ -222,18 +223,20 @@ order) and the name sit above.
   Left/Right when the stage is focused (`tabindex="0"`). Pointer/wheel
   listeners sit on `.hero-frame` only — `.hero-nav` carries
   `data-hero-chrome` so `setPointerCapture` never steals button clicks.
-  Horizontal follow moves `.hero-slide` via rAF + `translate3d` (no per-frame
-  Vue re-render). Vertical drags release capture and keep page scroll
-  (`touch-pan-y`; `touch-action: none` only while locked horizontal). Each step crossfades the hero;
-  controls flash for 1.6s after a gesture step. The arrow at either end of the
-  catalog stays hidden. Paint latency is tracked as `hero_step` (`paint_ms`,
-  `cache_hit`, `src_tier`); hero uses `cover_mid_url` + module prefetch
-  (`utils/heroCover.ts`) with thumb LQIP under the crossfade (`hero-lqip` /
-  `hero-crossfade`) — see `docs/analysis/hero-step-perf.md`.
+  Horizontal follow moves `.hero-track` via rAF + `translate3d` (inline
+  transform only while dragging — no per-frame Vue re-render). Vertical drags
+  release capture and keep page scroll (`touch-pan-y`; `touch-action: none`
+  only while locked horizontal). Each step **slides** the track (CSS
+  transition when not dragging); neighbors stay mounted in a small window
+  (±2). Controls flash for 1.6s after a gesture step. The arrow at either end
+  of the catalog stays hidden. Paint latency is tracked as `hero_step`
+  (`paint_ms`, `cache_hit`, `src_tier`); hero uses `cover_mid_url` + module
+  prefetch (`utils/heroCover.ts`) with thumb LQIP under decode (`hero-lqip`)
+  — see `docs/analysis/hero-step-perf.md`.
 - Info column (pinned to the bottom on `lg:`): date and HD / Unavailable
   chips, code headline (34 / 48 / 56px, tight tracking), 3–4 line title,
-  actions. Swapping titles crossfades the block (`swap`); stepping scrolls
-  the gallery to center the new card.
+  actions. Text updates in place on step (no block swap transition); stepping
+  scrolls the gallery to center the new card.
 - Actions: three icon-only `.action` circles — **Copy Magnet** (accent
   fill, magnet icon → check + success fill + `Copied` tip), Play (dark fill),
   Like (accent tint when liked). Names come from the `data-tip` tooltip
@@ -246,8 +249,11 @@ order) and the name sit above.
   lifted shadow (no
   ring); inactive covers at `opacity-[0.78]`; dead magnets grayscale.
   Hovering the gallery dims the other cards (focus/dim) and lifts the
-  hovered one. The right edge fades out (`.fade-edge-r`). **No copy on
-  thumbnails** — users copy only after viewing the hero.
+  hovered one. Active/inactive styling is driven by `aria-current` + CSS
+  (`.thumb-cover` / `.thumb-dot`) so horizontal scroll does not patch
+  per-thumb Vue classes; the rail window expands while scrolling and
+  trims after idle (~380ms). The right edge fades out (`.fade-edge-r`).
+  **No copy on thumbnails** — users copy only after viewing the hero.
 - Unfollow (trash icon) and Inject (X glyph) show on hover on desktop,
   always on touch.
 - X posts (`XSocialOverlay`, opened by the header X icon or a shelf's X

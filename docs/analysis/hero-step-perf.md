@@ -22,10 +22,11 @@ uv run python scripts/analyze_hero_step_metrics.py --days 7
    main thread. Hero uses `cover_mid_url` (800w) when present.
 2. **Cold image** — every step reset `opacity-0` until load. Module-level
    prefetch + decode cache keeps neighbors warm; cache hits skip the fade.
-3. **`out-in` transition** — left the stage empty while the old image left.
-   Crossfade (`hero-crossfade`) overlaps enter/leave.
-4. **Thumbnail rail `smooth` scroll** — competes with decode on the main
-   thread; stepping uses instant scroll.
+3. **Per-step img swap** — `<Transition>` destroyed/mounted hero `<img>` nodes.
+   Fixed: horizontal `.hero-track` + fixed 3/2 stage; slide transition.
+4. **Thumbnail rail scroll → Vue window** — every scroll pixel updated refs
+   and remounted `v-for` thumbs. Fixed: rAF + expand-only window;
+   `contain: strict` on `.thumb-rail`; stepping uses instant scroll.
 
 ## Targets (after mid + prefetch)
 

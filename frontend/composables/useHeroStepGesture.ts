@@ -11,7 +11,7 @@ import {
  * - Wheel: accumulate until idle (trackpad momentum), then one commit — same
  *   pattern as debounced horizontal wheel handlers in carousel libraries.
  * - Shared cooldown so wheel + pointer cannot double-fire back-to-back.
- * - Drag follow uses rAF + direct transform (no per-frame Vue re-render).
+ * - Drag follow uses rAF + hero track translate (no per-frame Vue re-render).
  */
 
 const LOCK_SLOP = 12

@@ -333,12 +333,70 @@ textarea:focus-visible {
 .hero-frame {
   contain: layout style paint;
 }
-.hero-slide {
-  transform: translate3d(0, 0, 0);
+.hero-track {
   will-change: transform;
+  backface-visibility: hidden;
+}
+.hero-track-anim {
+  transition: transform 0.28s var(--ease-out);
 }
 .hero-frame.hero-dragging-h {
   touch-action: none;
+}
+.thumb-rail {
+  contain: strict;
+  overscroll-behavior-x: contain;
+}
+.thumb-rail .group\/thumb {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 220px;
+}
+.thumb-rail .thumb-cover {
+  transition:
+    opacity 0.3s var(--ease-out),
+    filter 0.3s var(--ease-out),
+    box-shadow 0.3s var(--ease-out);
+  opacity: 0.78;
+}
+.thumb-rail button[aria-current="true"] .thumb-cover {
+  opacity: 1;
+  box-shadow: 0 14px 30px -16px rgba(0, 0, 0, 0.45);
+}
+.thumb-rail .thumb-cover-dead {
+  filter: grayscale(1);
+  opacity: 0.4 !important;
+}
+@media (min-width: 640px) {
+  .thumb-rail:hover button:not([aria-current="true"]) .thumb-cover:not(.thumb-cover-dead) {
+    opacity: 0.45;
+    filter: saturate(0.6);
+  }
+  .thumb-rail .group\/thumb:hover .thumb-cover:not(.thumb-cover-dead) {
+    opacity: 1 !important;
+    filter: none !important;
+    box-shadow: 0 14px 30px -16px rgba(0, 0, 0, 0.4);
+  }
+}
+.thumb-rail .thumb-dot {
+  width: 0;
+  opacity: 0;
+  transition:
+    width 0.3s var(--ease-out),
+    opacity 0.3s var(--ease-out);
+}
+.thumb-rail button[aria-current="true"] .thumb-dot {
+  width: 0.375rem;
+  opacity: 1;
+}
+.thumb-rail .thumb-code {
+  color: #86868b;
+  transition: color 0.2s var(--ease-out);
+}
+.thumb-rail button[aria-current="true"] .thumb-code {
+  color: #1d1d1f;
+}
+.thumb-rail .group\/thumb:hover .thumb-code {
+  color: #1d1d1f;
 }
 
 /* Page-load entrance for server-rendered content (runs from first paint,
