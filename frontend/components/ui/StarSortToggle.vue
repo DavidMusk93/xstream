@@ -8,7 +8,7 @@
       :class="model === 'works'
         ? 'bg-foreground text-white'
         : 'text-foreground-muted hover:text-foreground hover:bg-black/[0.05]'"
-      :aria-checked="model === 'works'"
+      :aria-checked="model === 'works' ? 'true' : 'false'"
       title="Newest work first"
       @click="model = 'works'"
     >
@@ -21,7 +21,7 @@
       :class="model === 'added'
         ? 'bg-foreground text-white'
         : 'text-foreground-muted hover:text-foreground hover:bg-black/[0.05]'"
-      :aria-checked="model === 'added'"
+      :aria-checked="model === 'added' ? 'true' : 'false'"
       title="Recently followed first"
       @click="model = 'added'"
     >
@@ -31,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-export type StarSort = 'works' | 'added'
+import type { StarSort } from '~/utils/starSort'
 
 const model = defineModel<StarSort>({ required: true })
 </script>

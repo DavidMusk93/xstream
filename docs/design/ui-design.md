@@ -174,8 +174,11 @@ Eyebrow `00 Your collection`, large title `Library`, then a stats row
 soft static accent glow; then one shelf per star. The `00` eyebrow row
 includes `StarSortToggle` (`ui/StarSortToggle.vue`): same pill language as
 `StarNav` (`bg-foreground text-white` active, muted hover inactive), not a
-separate segmented control beside the large title. Choice is remembered in
-`localStorage` (`xstream.starSort`):
+separate segmented control beside the large title. Choice is remembered in `localStorage` (`xstream.starSort`) via
+`useStarSort`: SSR/first paint always bootstraps **Latest**, then
+`onMounted` re-reads storage so a saved **Added** cannot show **Latest**
+after refresh (hydration mismatch). Pure sort rules live in
+`utils/starSort.ts` (`tests/test_star_sort.py`):
 
 - **Latest** (default) — newest playable title first, the `/api/stars` order.
   A star with no dated title stays at the front.

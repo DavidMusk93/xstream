@@ -189,38 +189,11 @@ const deletedCodes = ref<Set<string>>(new Set())
 // VR / multi-star works are filtered at collection time (scrapers/v2/
 // filters.py) and never reach the API. The backend orders stars by newest
 // work; "Added" reorders by follow time (added_at) on the client.
-type StarSort = 'works' | 'added'
-const SORT_KEY = 'xstream.starSort'
-
-function readStarSort(): StarSort {
-  if (!import.meta.client) return 'works'
-  try {
-    const saved = localStorage.getItem(SORT_KEY)
-    if (saved === 'added' || saved === 'works') return saved
-  } catch {
-    // Private mode or a blocked storage API — keep the default.
-  }
-  return 'works'
-}
-
-const starSort = ref<StarSort>(readStarSort())
-watch(starSort, (mode) => {
-  try {
-    localStorage.setItem(SORT_KEY, mode)
-  } catch {
-    // Ignore a full or blocked store; the choice still applies this visit.
-  }
-})
-
-function addedTime(star: { added_at?: string | null }): number {
-  const t = star.added_at ? Date.parse(star.added_at) : NaN
-  return Number.isFinite(t) ? t : 0
-}
+const { starSort } = useStarSort()
 
 const displayStars = computed(() => {
   const list = (stars.value ?? []).filter(s => !deletedCodes.value.has(s.code))
-  if (starSort.value !== 'added') return list
-  return [...list].sort((a, b) => addedTime(b) - addedTime(a) || a.name.localeCompare(b.name))
+  return sortStarsForDisplay(list, starSort.value)
 })
 
 // Title dates arrive as D/M/YYYY (see fmtDate in StarCard).
