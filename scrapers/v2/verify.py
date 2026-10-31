@@ -21,6 +21,7 @@ Used by the sync pipeline (new RSS-only codes) and by
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Iterable
 
 from core.logger import get_logger
@@ -32,6 +33,17 @@ log = get_logger("star-verify")
 
 def _norm_url(url: str | None) -> str:
     return (url or "").strip().rstrip("/").lower()
+
+
+# ijavtorrent's actress id is the trailing number. One person can be
+# published under two slugs (`/actress/ooharareina-30555` and
+# `/actress/reina-ohara-30555`); the id is what identifies her.
+_ACTRESS_ID_RE = re.compile(r"/actress/[a-z0-9-]+-(\d+)$")
+
+
+def _actress_id(url: str | None) -> str:
+    match = _ACTRESS_ID_RE.search(_norm_url(url))
+    return match.group(1) if match else ""
 
 
 def _norm_name(name: str | None) -> str:
@@ -47,15 +59,19 @@ def card_belongs_to(links: Iterable[StarLink], star: StarConfig) -> bool | None:
     """Whether an ijavtorrent card's actress links name the synced star.
 
     Returns None when the card names no actress at all (nothing to judge by),
-    True when any link is her page URL (preferred, exact) or her name.
+    True when any link is her page URL (preferred, exact), the same
+    ijavtorrent actress id under a different slug, or her name.
     """
     links = list(links or [])
     if not links:
         return None
     page = _norm_url(star.star_page_url)
+    page_id = _actress_id(star.star_page_url)
     names = star_aliases(star)
     for link in links:
         if page and _norm_url(link.url) == page:
+            return True
+        if page_id and _actress_id(link.url) == page_id:
             return True
         if _norm_name(link.name) in names:
             return True

@@ -232,7 +232,14 @@ class IJavTorrentExtractor:
         hhd800_flags: list[bool] = []
 
         html_snippet = node.html
-        for row_match in re.finditer(r'<tr style="vertical-align: middle">(.*?)</tr>', html_snippet, re.DOTALL):
+        # ijavtorrent's magnet row is `style="vertical-align: middle;"`
+        # (trailing semicolon, 2026-10). The older pages omitted it.
+        # A miss here yields zero magnets and a 7-day no_magnet blacklist.
+        for row_match in re.finditer(
+            r'<tr style="vertical-align:\s*middle\s*;?\s*">(.*?)</tr>',
+            html_snippet,
+            re.DOTALL,
+        ):
             row = row_match.group(1)
             m = re.search(r'href="(magnet:\?xt=[^"]+)"', row)
             if not m:

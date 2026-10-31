@@ -88,6 +88,19 @@ def test_card_matches_by_name_case_insensitively():
     assert card_belongs_to([StarLink(name="  ichika ", url="https://other/x")], STAR) is True
 
 
+def test_card_matches_same_actress_id_under_a_different_slug():
+    """One ijavtorrent actress id is published under more than one slug."""
+    star = StarConfig(
+        name="Slug A", jp="", code="X-1",
+        star_page_url="https://ijavtorrent.com/actress/slug-a-30555",
+    )
+    links = [StarLink(
+        name="Other Spelling",
+        url="https://ijavtorrent.com/actress/other-spelling-30555/",
+    )]
+    assert card_belongs_to(links, star) is True
+
+
 def test_card_naming_another_actress_is_evidence_against():
     links = [StarLink(name="Ichika Nagano", url="https://ijavtorrent.com/actress/ichika-nagano-1")]
     assert card_belongs_to(links, STAR) is False

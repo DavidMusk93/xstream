@@ -983,6 +983,25 @@ def test_ijav_extractor_fully_unescapes_double_escaped_magnets():
     assert "&dn=" in magnet and "&tr=" in magnet
 
 
+def test_ijav_extractor_accepts_semicolon_magnet_rows():
+    """Magnet rows with a trailing CSS semicolon still yield a magnet.
+
+    ijavtorrent changed the row to `vertical-align: middle;` (2026-10).
+    Missing it parses every card as magnet-less and blacklists the code.
+    """
+    from scrapers.v2.extractors import IJavTorrentExtractor
+
+    page = _MAGNET_PAGE.replace(
+        'style="vertical-align: middle"',
+        'style="vertical-align: middle;"',
+    )
+    items = IJavTorrentExtractor().extract(page)
+
+    assert len(items) == 1
+    assert len(items[0].magnets) == 1
+    assert items[0].magnets[0].magnet.startswith("magnet:?xt=urn:btih:")
+
+
 def test_ijav_extractor_drops_invalid_magnets():
     """Magnets that fail validation (no btih hash / entities left) are dropped."""
     from scrapers.v2.extractors import IJavTorrentExtractor
