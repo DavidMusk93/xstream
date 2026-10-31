@@ -347,9 +347,10 @@ textarea:focus-visible {
 .hero-track {
   will-change: transform;
   backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
 }
 .hero-track-anim {
-  transition: transform 0.28s var(--ease-out);
+  transition: transform 0.32s var(--ease-spring);
 }
 .hero-frame.hero-dragging-h {
   touch-action: none;

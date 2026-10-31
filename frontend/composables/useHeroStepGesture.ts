@@ -7,19 +7,20 @@ import {
 /**
  * Hero cover: at most one title step per input gesture.
  *
- * - Pointer: one commit on release (distance or flick velocity), jitter ignored.
- * - Wheel: accumulate until idle (trackpad momentum), then one commit — same
- *   pattern as debounced horizontal wheel handlers in carousel libraries.
- * - Shared cooldown so wheel + pointer cannot double-fire back-to-back.
- * - Drag follow uses rAF + hero track translate (no per-frame Vue re-render).
+ * - Pointer: direct 1:1 finger tracking, rubberband resistance at bounds,
+ *   smooth spring settle on release with zero teleport/jitter.
+ * - Wheel: instantaneous commit once threshold is crossed, then momentum
+ *   cooldown until idle.
+ * - Interruptible: touching down during transition catches the stage cleanly.
  */
 
-const LOCK_SLOP = 12
-const WHEEL_IDLE_MS = 220
-const GESTURE_COOLDOWN_MS = 650
+const LOCK_SLOP = 8
+const WHEEL_IDLE_MS = 180
+const GESTURE_COOLDOWN_MS = 280
 
 export function useHeroStepGesture(opts: {
   canStep: () => boolean
+  canDrag?: () => boolean
   /** Hero stage width for proportional swipe threshold. */
   stageWidth: () => number
   onStep: (delta: -1 | 1) => void
@@ -30,6 +31,14 @@ export function useHeroStepGesture(opts: {
   onHorizontalDrag?: (rawDx: number, clampedDx: number) => void
   /** Trackpad wheel accumulating — warm the likely next slide. */
   onWheelAccumulate?: (accumulatedDeltaX: number) => void
+  /** Release handler for smooth momentum settle. */
+  onDragRelease?: (info: {
+    dx: number
+    clampedDx: number
+    dt: number
+    dir: -1 | 1 | null
+    done: () => void
+  }) => void
 }) {
   const dragging = ref(false)
 
@@ -41,6 +50,7 @@ export function useHeroStepGesture(opts: {
   let captureEl: HTMLElement | null = null
   let gestureLockUntil = 0
   let wheelAcc = 0
+  let wheelLocked = false
   let wheelIdleTimer: ReturnType<typeof setTimeout> | null = null
   let dragRaf = 0
   let pendingDragPx = 0
@@ -65,6 +75,7 @@ export function useHeroStepGesture(opts: {
       dragRaf = 0
     }
     pendingDragPx = 0
+    pendingDragRaw = 0
     opts.setDragTranslate(0)
   }
 
@@ -97,15 +108,24 @@ export function useHeroStepGesture(opts: {
   }
 
   function onPointerDown(e: PointerEvent) {
-    if (!opts.canStep() || e.button !== 0) return
+    const can = opts.canDrag ? opts.canDrag() : opts.canStep()
+    if (!can || e.button !== 0) return
     if (!isHeroCoverGestureTarget(e.target)) return
+    if (activePointer != null) return
+
     startX = e.clientX
     startY = e.clientY
     startT = performance.now()
     axis = null
+    pendingDragPx = 0
+    pendingDragRaw = 0
     activePointer = e.pointerId
     captureEl = e.currentTarget as HTMLElement
-    captureEl.setPointerCapture(e.pointerId)
+    try {
+      captureEl.setPointerCapture(e.pointerId)
+    } catch {
+      // Ignore if capture fails
+    }
   }
 
   function onPointerMove(e: PointerEvent, clampDx: (dx: number) => number) {
@@ -114,13 +134,14 @@ export function useHeroStepGesture(opts: {
     const dy = e.clientY - startY
     if (!axis) {
       if (Math.abs(dx) < LOCK_SLOP && Math.abs(dy) < LOCK_SLOP) return
-      axis = Math.abs(dx) > Math.abs(dy) * 1.3 ? 'h' : 'v'
-      if (axis === 'v') {
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        axis = 'h'
+        dragging.value = true
+      } else {
+        axis = 'v'
         releaseCapture()
-        axis = null
         return
       }
-      dragging.value = true
     }
     if (axis !== 'h') return
     e.preventDefault()
@@ -132,23 +153,71 @@ export function useHeroStepGesture(opts: {
     const dx = e.clientX - startX
     const dt = performance.now() - startT
     const wasHorizontal = axis === 'h'
-    resetPointer()
-    if (!wasHorizontal) return
+    const finalClampedPx = pendingDragPx
+
+    if (dragRaf) {
+      cancelAnimationFrame(dragRaf)
+      dragRaf = 0
+    }
+    releaseCapture()
+    axis = null
+    activePointer = null
+
+    if (!wasHorizontal) {
+      dragging.value = false
+      clearDragVisual()
+      return
+    }
+
     const dir = swipeCommitDirection(dx, dt, opts.stageWidth())
-    if (dir == null) return
-    stepOnce(dir)
+    if (opts.onDragRelease) {
+      opts.onDragRelease({
+        dx,
+        clampedDx: finalClampedPx,
+        dt,
+        dir,
+        done: () => {
+          dragging.value = false
+          clearDragVisual()
+        },
+      })
+    } else {
+      dragging.value = false
+      clearDragVisual()
+      if (dir != null) {
+        stepOnce(dir)
+      }
+    }
   }
 
   function onPointerCancel(e: PointerEvent) {
-    if (activePointer === e.pointerId) resetPointer()
-  }
+    if (activePointer !== e.pointerId) return
+    const finalClampedPx = pendingDragPx
+    const wasHorizontal = axis === 'h'
 
-  function flushWheel() {
-    wheelIdleTimer = null
-    const dir = wheelCommitDirection(wheelAcc)
-    wheelAcc = 0
-    if (dir == null) return
-    stepOnce(dir)
+    if (dragRaf) {
+      cancelAnimationFrame(dragRaf)
+      dragRaf = 0
+    }
+    releaseCapture()
+    axis = null
+    activePointer = null
+
+    if (wasHorizontal && opts.onDragRelease) {
+      opts.onDragRelease({
+        dx: 0,
+        clampedDx: finalClampedPx,
+        dt: 0,
+        dir: null,
+        done: () => {
+          dragging.value = false
+          clearDragVisual()
+        },
+      })
+    } else {
+      dragging.value = false
+      clearDragVisual()
+    }
   }
 
   function onWheel(e: WheelEvent) {
@@ -156,10 +225,30 @@ export function useHeroStepGesture(opts: {
     if (Math.abs(e.deltaX) < Math.abs(e.deltaY) * 0.85) return
     e.preventDefault()
 
+    if (wheelLocked) {
+      if (wheelIdleTimer) clearTimeout(wheelIdleTimer)
+      wheelIdleTimer = setTimeout(() => {
+        wheelLocked = false
+        wheelAcc = 0
+      }, WHEEL_IDLE_MS)
+      return
+    }
+
     wheelAcc += e.deltaX
     opts.onWheelAccumulate?.(wheelAcc)
+
+    const dir = wheelCommitDirection(wheelAcc)
+    if (dir != null) {
+      wheelLocked = true
+      wheelAcc = 0
+      stepOnce(dir)
+    }
+
     if (wheelIdleTimer) clearTimeout(wheelIdleTimer)
-    wheelIdleTimer = setTimeout(flushWheel, WHEEL_IDLE_MS)
+    wheelIdleTimer = setTimeout(() => {
+      wheelLocked = false
+      wheelAcc = 0
+    }, WHEEL_IDLE_MS)
   }
 
   onUnmounted(() => {

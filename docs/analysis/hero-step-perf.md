@@ -31,6 +31,12 @@ uv run python scripts/analyze_hero_step_metrics.py --days 7
 5. **Cold neighbor on drag/wheel** — prefetch waits until commit. Fixed:
    `onHorizontalDrag` / `onWheelAccumulate` widen the hero slide window
    and decode the peeked title before release.
+6. **Release snap-back & gesture lockout** — release previously wiped drag
+   offset before transition started (teleporting backward), and excessive
+   cooldown blocked rapid swipes. Fixed: `onHeroDragRelease` smoothly
+   animates from the release offset directly to target via `--ease-spring`,
+   pointerdown is never locked out, rubberband damping at boundaries, and
+   trackpad wheel commits immediately upon crossing threshold.
 
 ## Targets (after mid + prefetch)
 

@@ -59,7 +59,7 @@
             ref="heroFrameRef"
             class="hero-frame relative w-full aspect-[3/2] bg-fill overflow-hidden"
             :class="{ 'hero-dragging-h': dragging }"
-            @pointerdown="onPointerDown"
+            @pointerdown="onHeroPointerDown"
             @pointermove="(e) => onPointerMove(e, clampDrag)"
             @pointerup="onPointerUp"
             @pointercancel="onPointerCancel"
@@ -69,7 +69,7 @@
             <div
               ref="heroTrackRef"
               class="hero-track flex h-full"
-              :class="{ 'hero-track-anim': !dragging }"
+              :class="{ 'hero-track-anim': !dragging && !settleTimer }"
               :style="heroTrackStyle"
             >
               <div
@@ -77,7 +77,7 @@
                 :key="title.code"
                 class="hero-cell relative shrink-0 h-full overflow-hidden bg-fill"
                 :style="heroCellStyle"
-                :aria-hidden="idx !== activeIndex"
+                :aria-hidden="idx !== displayIndex"
               >
                 <img
                   v-if="heroLqipSrc(title) && !heroCoverReady(title.code) && !heroErrors[title.code]"
@@ -93,9 +93,9 @@
                   :src="heroSrc(title)"
                   :srcset="heroSrcset(title)"
                   sizes="(min-width: 1280px) 740px, (min-width: 1024px) 60vw, (min-width: 808px) 760px, calc(100vw - 32px)"
-                  :alt="idx === activeIndex ? title.code : ''"
-                  :fetchpriority="idx === activeIndex ? 'high' : 'low'"
-                  :loading="idx === activeIndex ? 'eager' : 'lazy'"
+                  :alt="idx === displayIndex ? title.code : ''"
+                  :fetchpriority="idx === displayIndex ? 'high' : 'low'"
+                  :loading="idx === displayIndex ? 'eager' : 'lazy'"
                   decoding="async"
                   draggable="false"
                   class="hero-hi absolute inset-0 w-full h-full object-contain block [transition-timing-function:var(--ease-out)]"
@@ -377,7 +377,7 @@ function slideHeroImgClass(title: Title, idx: number) {
   return [
     ready ? 'opacity-100' : 'opacity-0',
     ready || dragging.value ? 'duration-0' : 'transition-opacity duration-150',
-    idx === activeIndex && !dragging.value ? 'sm:group-hover/hero:scale-[1.015]' : '',
+    idx === activeIndex.value && !dragging.value ? 'sm:group-hover/hero:scale-[1.015]' : '',
   ]
 }
 const stepAnimLock = ref(false)
@@ -418,11 +418,13 @@ function goToIndex(
   }
   ensureHeroIndexInWindow(idx)
   activeIndex.value = idx
-  setHeroDragTranslate(0)
+  if (!settleTimer) {
+    setHeroDragTranslate(0)
+  }
   armStepLock(cacheHit)
 
   if (!opts?.thumbAligned) {
-    revealThumb(idx, opts?.smoothThumb ? 'smooth' : 'auto')
+    revealThumb(idx, opts?.smoothThumb !== false ? 'smooth' : 'auto')
   }
   prefetchHeroNeighbors(props.star.titles ?? [], idx)
   if (cacheHit && title) finishHeroPaint(title)
@@ -481,8 +483,12 @@ function showControlsBriefly() {
 function clampDrag(dx: number): number {
   const atStart = activeIndex.value <= 0 && dx > 0
   const atEnd = activeIndex.value >= total.value - 1 && dx < 0
-  const damp = atStart || atEnd ? 0.32 : 1
-  return dx * damp
+  if (!atStart && !atEnd) return dx
+  const sign = dx > 0 ? 1 : -1
+  const abs = Math.abs(dx)
+  const w = heroSlideWidth.value || 360
+  const damped = (abs * 0.45) / (1 + (abs * 0.45) / (w * 0.35))
+  return sign * damped
 }
 
 const DRAG_PREFETCH_PX = 28
@@ -512,6 +518,75 @@ function onWheelAccumulate(acc: number) {
   warmHeroInDirection(acc > 0 ? 1 : -1)
 }
 
+let settleTimer: ReturnType<typeof setTimeout> | null = null
+
+function cancelHeroSettle() {
+  if (settleTimer) {
+    clearTimeout(settleTimer)
+    settleTimer = null
+  }
+  const el = heroTrackRef.value
+  if (el) {
+    el.style.transition = ''
+    el.style.transform = ''
+  }
+}
+
+function onHeroPointerDown(e: PointerEvent) {
+  cancelHeroSettle()
+  onPointerDown(e)
+}
+
+function onHeroDragRelease({
+  clampedDx,
+  dir,
+  done,
+}: {
+  dx: number
+  clampedDx: number
+  dt: number
+  dir: -1 | 1 | null
+  done: () => void
+}) {
+  const el = heroTrackRef.value
+  const w = heroSlideWidth.value
+  const curIdx = activeIndex.value
+  const canCommit =
+    dir !== null &&
+    ((dir === 1 && curIdx < total.value - 1) || (dir === -1 && curIdx > 0))
+  const targetIdx = canCommit ? curIdx + dir! : curIdx
+
+  if (!el || !w) {
+    if (canCommit) {
+      goToIndex(targetIdx, { fromChrome: true, smoothThumb: true })
+      showControlsBriefly()
+    }
+    done()
+    return
+  }
+
+  ensureHeroIndexInWindow(targetIdx)
+  const targetBase = -(targetIdx - heroWinStart.value) * w
+
+  el.style.transition = 'transform 0.32s var(--ease-spring)'
+  el.style.transform = `translate3d(${targetBase}px,0,0)`
+
+  if (canCommit) {
+    goToIndex(targetIdx, { fromChrome: true, smoothThumb: true })
+    showControlsBriefly()
+  }
+
+  if (settleTimer) clearTimeout(settleTimer)
+  settleTimer = setTimeout(() => {
+    settleTimer = null
+    if (el) {
+      el.style.transition = ''
+      el.style.transform = ''
+    }
+    done()
+  }, 340)
+}
+
 const {
   dragging,
   onPointerDown,
@@ -521,12 +596,14 @@ const {
   onWheel,
 } = useHeroStepGesture({
   canStep: () => total.value > 1 && !stepAnimLock.value,
+  canDrag: () => total.value > 1,
   stageWidth: () => heroStageRef.value?.clientWidth ?? 360,
   onStep: (delta) => step(delta),
   onShowControls: showControlsBriefly,
   setDragTranslate: setHeroDragTranslate,
   onHorizontalDrag,
   onWheelAccumulate,
+  onDragRelease: onHeroDragRelease,
 })
 
 watch(dragging, (isDragging) => {
@@ -552,7 +629,7 @@ function thumbIndexAtScroll(left: number): number {
 }
 
 /** Keep the active thumb centered; flag suppresses hero feedback while programmatic. */
-function revealThumb(idx: number, behavior: ScrollBehavior = 'auto') {
+function revealThumb(idx: number, behavior: ScrollBehavior = 'smooth') {
   ensureThumbIndexInWindow(idx)
   const row = rowRef.value
   if (!row || !thumbStride.value) return
@@ -761,6 +838,7 @@ onUnmounted(() => {
   if (keyBurstTimer) clearTimeout(keyBurstTimer)
   if (controlsTimer) clearTimeout(controlsTimer)
   if (stepAnimTimer) clearTimeout(stepAnimTimer)
+  cancelHeroSettle()
 })
 const copied = ref(false)
 const liking = ref(false)
