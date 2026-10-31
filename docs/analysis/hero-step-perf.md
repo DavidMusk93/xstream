@@ -27,6 +27,9 @@ uv run python scripts/analyze_hero_step_metrics.py --days 7
 4. **Thumbnail rail scroll → Vue window** — every scroll pixel updated refs
    and remounted `v-for` thumbs. Fixed: rAF + expand-only window;
    `contain: strict` on `.thumb-rail`; stepping uses instant scroll.
+5. **Cold neighbor on drag/wheel** — prefetch waits until commit. Fixed:
+   `onHorizontalDrag` / `onWheelAccumulate` widen the hero slide window
+   and decode the peeked title before release.
 
 ## Targets (after mid + prefetch)
 

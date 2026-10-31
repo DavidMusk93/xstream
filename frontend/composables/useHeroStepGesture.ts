@@ -26,6 +26,10 @@ export function useHeroStepGesture(opts: {
   onShowControls: () => void
   /** Compositor-only horizontal offset during pointer drag (px). */
   setDragTranslate: (px: number) => void
+  /** Once per rAF while locked horizontal — prefetch / widen slide window. */
+  onHorizontalDrag?: (rawDx: number, clampedDx: number) => void
+  /** Trackpad wheel accumulating — warm the likely next slide. */
+  onWheelAccumulate?: (accumulatedDeltaX: number) => void
 }) {
   const dragging = ref(false)
 
@@ -40,14 +44,17 @@ export function useHeroStepGesture(opts: {
   let wheelIdleTimer: ReturnType<typeof setTimeout> | null = null
   let dragRaf = 0
   let pendingDragPx = 0
+  let pendingDragRaw = 0
 
   function flushDragFrame() {
     dragRaf = 0
     opts.setDragTranslate(pendingDragPx)
+    opts.onHorizontalDrag?.(pendingDragRaw, pendingDragPx)
   }
 
-  function scheduleDrag(px: number) {
-    pendingDragPx = px
+  function scheduleDrag(rawDx: number, clampedDx: number) {
+    pendingDragRaw = rawDx
+    pendingDragPx = clampedDx
     if (dragRaf) return
     dragRaf = requestAnimationFrame(flushDragFrame)
   }
@@ -117,7 +124,7 @@ export function useHeroStepGesture(opts: {
     }
     if (axis !== 'h') return
     e.preventDefault()
-    scheduleDrag(clampDx(dx))
+    scheduleDrag(dx, clampDx(dx))
   }
 
   function onPointerUp(e: PointerEvent) {
@@ -150,6 +157,7 @@ export function useHeroStepGesture(opts: {
     e.preventDefault()
 
     wheelAcc += e.deltaX
+    opts.onWheelAccumulate?.(wheelAcc)
     if (wheelIdleTimer) clearTimeout(wheelIdleTimer)
     wheelIdleTimer = setTimeout(flushWheel, WHEEL_IDLE_MS)
   }

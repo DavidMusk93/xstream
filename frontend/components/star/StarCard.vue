@@ -100,6 +100,7 @@
                   draggable="false"
                   class="hero-hi absolute inset-0 w-full h-full object-contain block [transition-timing-function:var(--ease-out)]"
                   :class="slideHeroImgClass(title, idx)"
+                  :ref="(el) => bindHeroImgEl(title, el as HTMLImageElement | null)"
                   @load="(e) => onHeroSlideLoad(title, e)"
                   @error="heroErrors[title.code] = true"
                 />
@@ -217,6 +218,7 @@
       <div
         ref="rowRef"
         class="group/rail thumb-rail mt-8 sm:mt-10 flex gap-4 sm:gap-5 items-start overflow-x-auto scrollbar-hide pt-1 pb-2 snap-x snap-mandatory fade-edge-r"
+        :class="{ 'is-scrolling': thumbScrolling }"
         :data-active-index="activeIndex"
         @scroll.passive="onRowScroll"
       >
@@ -304,13 +306,24 @@ const heroTrackRef = ref<HTMLElement | null>(null)
 const heroSlideWidth = ref(0)
 
 const HERO_BUFFER = 3
+const HERO_IDLE_MS = 420
 /** Bumps when a slide finishes decode so `isHeroCoverReady` (module Set) re-renders. */
 const heroReadyTick = ref(0)
 
-const heroWinStart = computed(() => Math.max(0, activeIndex.value - HERO_BUFFER))
-const heroWinEnd = computed(() =>
-  Math.min(total.value, activeIndex.value + HERO_BUFFER + 1),
-)
+const heroWinStart = ref(0)
+const heroWinEnd = ref(5)
+
+function ensureHeroIndexInWindow(idx: number) {
+  const n = total.value
+  heroWinStart.value = Math.min(heroWinStart.value, Math.max(0, idx - HERO_BUFFER))
+  heroWinEnd.value = Math.max(heroWinEnd.value, Math.min(n, idx + HERO_BUFFER + 1))
+}
+
+function trimHeroWindowToIndex(idx: number) {
+  const n = total.value
+  heroWinStart.value = Math.max(0, idx - HERO_BUFFER)
+  heroWinEnd.value = Math.min(n, idx + HERO_BUFFER + 1)
+}
 
 const windowedHeroSlides = computed(() => {
   const titles = props.star.titles ?? []
@@ -376,6 +389,7 @@ function step(delta: number, opts?: { fromChrome?: boolean }) {
     heroPaintStart = performance.now()
     heroPaintMeta = { code: nextTitle.code, cacheHit }
   }
+  ensureHeroIndexInWindow(next)
   activeIndex.value = next
   setHeroDragTranslate(0)
   stepAnimLock.value = true
@@ -404,6 +418,33 @@ function clampDrag(dx: number): number {
   return dx * damp
 }
 
+const DRAG_PREFETCH_PX = 28
+let dragWarmDir: -1 | 0 | 1 = 0
+let heroIdleTimer: ReturnType<typeof setTimeout> | null = null
+
+function warmHeroInDirection(dir: -1 | 1) {
+  const titles = props.star.titles ?? []
+  const peek = activeIndex.value + dir
+  if (peek < 0 || peek >= titles.length) return
+  ensureHeroIndexInWindow(peek)
+  void prefetchHeroCover(titles[peek]).then(() => {
+    heroReadyTick.value++
+  })
+}
+
+function onHorizontalDrag(_rawDx: number, clampedDx: number) {
+  if (Math.abs(clampedDx) < DRAG_PREFETCH_PX) return
+  const dir: -1 | 1 = clampedDx < 0 ? 1 : -1
+  if (dragWarmDir === dir) return
+  dragWarmDir = dir
+  warmHeroInDirection(dir)
+}
+
+function onWheelAccumulate(acc: number) {
+  if (Math.abs(acc) < 36) return
+  warmHeroInDirection(acc > 0 ? 1 : -1)
+}
+
 const {
   dragging,
   onPointerDown,
@@ -418,7 +459,22 @@ const {
   onStep: (delta) => step(delta),
   onShowControls: showControlsBriefly,
   setDragTranslate: setHeroDragTranslate,
+  onHorizontalDrag,
+  onWheelAccumulate,
 })
+
+watch(dragging, (isDragging) => {
+  if (isDragging) return
+  dragWarmDir = 0
+  if (heroIdleTimer) clearTimeout(heroIdleTimer)
+  heroIdleTimer = setTimeout(() => trimHeroWindowToIndex(activeIndex.value), HERO_IDLE_MS)
+})
+
+function bindHeroImgEl(title: Title, el: HTMLImageElement | null) {
+  if (!el?.complete || el.naturalWidth <= 0) return
+  if (isHeroCoverReady(title.code)) return
+  void onHeroSlideLoad(title, { target: el } as Event)
+}
 
 // Keep the stepped-to card in view without nudging the page vertically.
 function revealThumb(idx: number) {
@@ -479,6 +535,7 @@ const activeIsHd = computed(() => {
 // positions) stay exactly as if every item were present.
 const THUMB_BUFFER = 8
 const THUMB_IDLE_MS = 380
+const thumbScrolling = ref(false)
 const rowRef = ref<HTMLElement | null>(null)
 const rowViewWidth = ref(0)
 const thumbItemWidth = ref(0)
@@ -561,13 +618,17 @@ function trimThumbWindowToViewport() {
 let rowScrollRaf = 0
 let thumbScrollIdleTimer: ReturnType<typeof setTimeout> | null = null
 function onRowScroll() {
+  thumbScrolling.value = true
   if (rowScrollRaf) return
   rowScrollRaf = requestAnimationFrame(() => {
     rowScrollRaf = 0
     expandThumbWindowFromScroll()
   })
   if (thumbScrollIdleTimer) clearTimeout(thumbScrollIdleTimer)
-  thumbScrollIdleTimer = setTimeout(trimThumbWindowToViewport, THUMB_IDLE_MS)
+  thumbScrollIdleTimer = setTimeout(() => {
+    thumbScrolling.value = false
+    trimThumbWindowToViewport()
+  }, THUMB_IDLE_MS)
 }
 
 let rowResizeObserver: ResizeObserver | null = null
@@ -586,6 +647,7 @@ function measureRow() {
 }
 
 onMounted(() => {
+  trimHeroWindowToIndex(activeIndex.value)
   measureHeroStage()
   measureRow()
   if (heroFrameRef.value) {
@@ -604,6 +666,7 @@ onUnmounted(() => {
   heroResizeObserver?.disconnect()
   if (rowScrollRaf) cancelAnimationFrame(rowScrollRaf)
   if (thumbScrollIdleTimer) clearTimeout(thumbScrollIdleTimer)
+  if (heroIdleTimer) clearTimeout(heroIdleTimer)
   if (controlsTimer) clearTimeout(controlsTimer)
   if (stepAnimTimer) clearTimeout(stepAnimTimer)
 })
@@ -624,6 +687,7 @@ watch(() => props.star.titles, (titles, prev) => {
 })
 
 watch(activeIndex, (idx) => {
+  ensureHeroIndexInWindow(idx)
   prefetchHeroNeighbors(props.star.titles ?? [], idx)
 })
 

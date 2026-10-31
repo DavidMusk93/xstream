@@ -347,6 +347,11 @@ textarea:focus-visible {
   contain: strict;
   overscroll-behavior-x: contain;
 }
+.thumb-rail.is-scrolling .thumb-cover,
+.thumb-rail.is-scrolling .thumb-dot,
+.thumb-rail.is-scrolling .thumb-code {
+  transition: none !important;
+}
 .thumb-rail .group\/thumb {
   content-visibility: auto;
   contain-intrinsic-size: auto 220px;
