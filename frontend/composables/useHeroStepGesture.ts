@@ -162,17 +162,6 @@ export function useHeroStepGesture(opts: {
     wheelIdleTimer = setTimeout(flushWheel, WHEEL_IDLE_MS)
   }
 
-  function onKeydown(e: KeyboardEvent) {
-    if (!opts.canStep() || e.repeat) return
-    if (e.key === 'ArrowLeft') {
-      e.preventDefault()
-      stepOnce(-1)
-    } else if (e.key === 'ArrowRight') {
-      e.preventDefault()
-      stepOnce(1)
-    }
-  }
-
   onUnmounted(() => {
     if (wheelIdleTimer) clearTimeout(wheelIdleTimer)
     if (dragRaf) cancelAnimationFrame(dragRaf)
@@ -186,6 +175,5 @@ export function useHeroStepGesture(opts: {
     onPointerUp,
     onPointerCancel,
     onWheel,
-    onKeydown,
   }
 }

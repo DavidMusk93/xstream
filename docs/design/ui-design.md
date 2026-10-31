@@ -220,7 +220,9 @@ order) and the name sit above.
   jitter cancels). Trackpad/wheel **accumulates until idle** (~220ms), then
   at most one step (carousel-style debounce). A ~650ms shared cooldown and a
   ~380ms post-step lock prevent double steps during the hero transition.
-  Left/Right when the stage is focused (`tabindex="0"`). Pointer/wheel
+  Left/Right when the stage is focused (`tabindex="0"`): rapid key repeats
+  coalesce (~150ms) — caption/thumb update to the pending index, then the
+  hero track plays **one** slide to catch up. Pointer/wheel
   listeners sit on `.hero-frame` only — `.hero-nav` carries
   `data-hero-chrome` so `setPointerCapture` never steals button clicks.
   Horizontal follow moves `.hero-track` via rAF + `translate3d` (inline
@@ -235,8 +237,10 @@ order) and the name sit above.
   — see `docs/analysis/hero-step-perf.md`.
 - Info column (pinned to the bottom on `lg:`): date and HD / Unavailable
   chips, code headline (34 / 48 / 56px, tight tracking), 3–4 line title,
-  actions. Text updates in place on step (no block swap transition); stepping
-  scrolls the gallery to center the new card.
+  actions.   Text updates in place on step (no block swap transition). Thumbs use
+  `snap-center` + shared index: hero step scrolls the rail (instant);
+  thumb click smooth-scrolls and slides the hero; manual rail scroll syncs
+  hero on idle via nearest snap.
 - Actions: three icon-only `.action` circles — **Copy Magnet** (accent
   fill, magnet icon → check + success fill + `Copied` tip), Play (dark fill),
   Like (accent tint when liked). Names come from the `data-tip` tooltip

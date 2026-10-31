@@ -53,7 +53,7 @@
           tabindex="0"
           role="group"
           :aria-label="`${activeTitle.code} cover, swipe or use arrow keys to browse titles`"
-          @keydown="onKeydown"
+          @keydown="onHeroKeydown"
         >
           <div
             ref="heroFrameRef"
@@ -122,9 +122,9 @@
               type="button"
               data-hero-chrome
               class="hero-nav left-3 sm:left-4 z-10"
-              :class="{ 'is-off': activeIndex <= 0 }"
+              :class="{ 'is-off': displayIndex <= 0 }"
               aria-label="Previous title"
-              :disabled="activeIndex <= 0"
+              :disabled="displayIndex <= 0"
               @pointerdown.stop
               @click="step(-1, { fromChrome: true })"
             >
@@ -134,15 +134,15 @@
               type="button"
               data-hero-chrome
               class="hero-nav right-3 sm:right-4 z-10"
-              :class="{ 'is-off': activeIndex >= total - 1 }"
+              :class="{ 'is-off': displayIndex >= total - 1 }"
               aria-label="Next title"
-              :disabled="activeIndex >= total - 1"
+              :disabled="displayIndex >= total - 1"
               @pointerdown.stop
               @click="step(1, { fromChrome: true })"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
             </button>
-            <span class="hero-count font-mono z-10" data-hero-chrome>{{ activeIndex + 1 }} / {{ total }}</span>
+            <span class="hero-count font-mono z-10" data-hero-chrome>{{ displayIndex + 1 }} / {{ total }}</span>
           </template>
         </div>
 
@@ -219,7 +219,7 @@
         ref="rowRef"
         class="group/rail thumb-rail mt-8 sm:mt-10 flex gap-4 sm:gap-5 items-start overflow-x-auto scrollbar-hide pt-1 pb-2 snap-x snap-mandatory fade-edge-r"
         :class="{ 'is-scrolling': thumbScrolling }"
-        :data-active-index="activeIndex"
+        :data-active-index="displayIndex"
         @scroll.passive="onRowScroll"
       >
         <!-- Windowed rendering: spacers keep the scroll width exact while
@@ -228,10 +228,10 @@
         <button
           v-for="{ title, idx } in windowedTitles"
           :key="title.code"
-          class="group/thumb shrink-0 w-[148px] sm:w-[188px] lg:w-[212px] text-left snap-start active:scale-[0.97] active:duration-100 [transition-timing-function:var(--ease-out)] sm:transition-transform sm:duration-300"
-          :class="activeIndex === idx ? '' : 'sm:hover:-translate-y-1'"
+          class="group/thumb shrink-0 w-[148px] sm:w-[188px] lg:w-[212px] text-left snap-center active:scale-[0.97] active:duration-100 [transition-timing-function:var(--ease-out)] sm:transition-transform sm:duration-300"
+          :class="displayIndex === idx ? '' : 'sm:hover:-translate-y-1'"
           :aria-label="title.code"
-          :aria-current="activeIndex === idx ? 'true' : undefined"
+          :aria-current="displayIndex === idx ? 'true' : undefined"
           @click="pickThumb(idx)"
         >
           <div
@@ -297,8 +297,14 @@ const { add: addLog } = useEventLog()
 
 const id = computed(() => props.star.code.toLowerCase())
 const activeIndex = ref(0)
-const activeTitle = computed(() => props.star.titles?.[activeIndex.value] || null)
+/** Keyboard burst target — metadata leads; hero track catches up in one slide. */
+const pendingIndex = ref<number | null>(null)
+const displayIndex = computed(() => pendingIndex.value ?? activeIndex.value)
+const activeTitle = computed(() => props.star.titles?.[displayIndex.value] || null)
 const total = computed(() => props.star.titles?.length ?? 0)
+
+const HERO_TRACK_MS = 280
+const KEY_BURST_MS = 150
 
 const heroStageRef = ref<HTMLElement | null>(null)
 const heroFrameRef = ref<HTMLElement | null>(null)
@@ -376,30 +382,91 @@ function slideHeroImgClass(title: Title, idx: number) {
 }
 const stepAnimLock = ref(false)
 let stepAnimTimer: ReturnType<typeof setTimeout> | null = null
+let keyBurstTimer: ReturnType<typeof setTimeout> | null = null
 let heroPaintStart = 0
 let heroPaintMeta: { code: string; cacheHit: boolean } | null = null
 
-function step(delta: number, opts?: { fromChrome?: boolean }) {
-  if (stepAnimLock.value && !opts?.fromChrome) return
-  const next = activeIndex.value + delta
-  if (next < 0 || next >= total.value) return
-  const nextTitle = props.star.titles?.[next]
-  const cacheHit = !!(nextTitle && isHeroCoverReady(nextTitle.code))
-  if (nextTitle) {
-    heroPaintStart = performance.now()
-    heroPaintMeta = { code: nextTitle.code, cacheHit }
-  }
-  ensureHeroIndexInWindow(next)
-  activeIndex.value = next
-  setHeroDragTranslate(0)
+function armStepLock(cacheHit: boolean) {
   stepAnimLock.value = true
   if (stepAnimTimer) clearTimeout(stepAnimTimer)
+  const ms = cacheHit ? HERO_TRACK_MS - 40 : HERO_TRACK_MS + 40
   stepAnimTimer = setTimeout(() => {
     stepAnimLock.value = false
     stepAnimTimer = null
-  }, cacheHit ? 220 : 320)
-  revealThumb(next)
-  if (cacheHit && nextTitle) finishHeroPaint(nextTitle)
+  }, ms)
+}
+
+function goToIndex(
+  idx: number,
+  opts?: { fromChrome?: boolean; smoothThumb?: boolean; thumbAligned?: boolean },
+) {
+  if (idx < 0 || idx >= total.value) return
+  if (idx === activeIndex.value && pendingIndex.value == null) return
+  if (stepAnimLock.value && !opts?.fromChrome) return
+
+  pendingIndex.value = null
+  if (keyBurstTimer) {
+    clearTimeout(keyBurstTimer)
+    keyBurstTimer = null
+  }
+
+  const title = props.star.titles?.[idx]
+  const cacheHit = !!(title && isHeroCoverReady(title.code))
+  if (title) {
+    heroPaintStart = performance.now()
+    heroPaintMeta = { code: title.code, cacheHit }
+  }
+  ensureHeroIndexInWindow(idx)
+  activeIndex.value = idx
+  setHeroDragTranslate(0)
+  armStepLock(cacheHit)
+
+  if (!opts?.thumbAligned) {
+    revealThumb(idx, opts?.smoothThumb ? 'smooth' : 'auto')
+  }
+  prefetchHeroNeighbors(props.star.titles ?? [], idx)
+  if (cacheHit && title) finishHeroPaint(title)
+}
+
+function step(delta: number, opts?: { fromChrome?: boolean }) {
+  const base = pendingIndex.value ?? activeIndex.value
+  if (keyBurstTimer) {
+    clearTimeout(keyBurstTimer)
+    keyBurstTimer = null
+  }
+  pendingIndex.value = null
+  goToIndex(base + delta, { fromChrome: opts?.fromChrome })
+}
+
+function scheduleKeyBurst(delta: -1 | 1) {
+  const base = pendingIndex.value ?? activeIndex.value
+  const next = Math.min(total.value - 1, Math.max(0, base + delta))
+  if (next === base) return
+  pendingIndex.value = next
+  ensureHeroIndexInWindow(next)
+  const title = props.star.titles?.[next]
+  if (title) void prefetchHeroCover(title).then(() => { heroReadyTick.value++ })
+  showControlsBriefly()
+  if (keyBurstTimer) clearTimeout(keyBurstTimer)
+  keyBurstTimer = setTimeout(flushKeyBurst, KEY_BURST_MS)
+}
+
+function flushKeyBurst() {
+  keyBurstTimer = null
+  const target = pendingIndex.value
+  if (target == null) return
+  pendingIndex.value = null
+  goToIndex(target, { fromChrome: true })
+}
+
+function onHeroKeydown(e: KeyboardEvent) {
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault()
+    scheduleKeyBurst(-1)
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault()
+    scheduleKeyBurst(1)
+  }
 }
 
 const controlsShown = ref(false)
@@ -452,7 +519,6 @@ const {
   onPointerUp,
   onPointerCancel,
   onWheel,
-  onKeydown,
 } = useHeroStepGesture({
   canStep: () => total.value > 1 && !stepAnimLock.value,
   stageWidth: () => heroStageRef.value?.clientWidth ?? 360,
@@ -476,13 +542,38 @@ function bindHeroImgEl(title: Title, el: HTMLImageElement | null) {
   void onHeroSlideLoad(title, { target: el } as Event)
 }
 
-// Keep the stepped-to card in view without nudging the page vertically.
-function revealThumb(idx: number) {
+let thumbScrollFromCode = false
+
+function thumbIndexAtScroll(left: number): number {
+  if (!thumbStride.value) return activeIndex.value
+  const center = left + (rowViewWidth.value - thumbItemWidth.value) / 2
+  const idx = Math.round(center / thumbStride.value)
+  return Math.min(total.value - 1, Math.max(0, idx))
+}
+
+/** Keep the active thumb centered; flag suppresses hero feedback while programmatic. */
+function revealThumb(idx: number, behavior: ScrollBehavior = 'auto') {
   ensureThumbIndexInWindow(idx)
   const row = rowRef.value
   if (!row || !thumbStride.value) return
   const left = idx * thumbStride.value - (row.clientWidth - thumbItemWidth.value) / 2
-  row.scrollTo({ left: Math.max(0, left), behavior: 'auto' })
+  thumbScrollFromCode = true
+  row.scrollTo({ left: Math.max(0, left), behavior })
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      thumbScrollFromCode = false
+    })
+  })
+}
+
+function syncHeroFromThumbScroll() {
+  if (thumbScrollFromCode || pendingIndex.value != null || dragging.value) return
+  const row = rowRef.value
+  if (!row || !thumbStride.value) return
+  const idx = thumbIndexAtScroll(row.scrollLeft)
+  if (idx !== activeIndex.value) {
+    goToIndex(idx, { fromChrome: true, thumbAligned: true })
+  }
 }
 
 const heroErrors = ref<Record<string, boolean>>({})
@@ -516,9 +607,8 @@ async function onHeroSlideLoad(t: Title, e: Event) {
 }
 
 function pickThumb(idx: number) {
-  if (idx === activeIndex.value) return
-  activeIndex.value = idx
-  revealThumb(idx)
+  if (idx === displayIndex.value) return
+  goToIndex(idx, { fromChrome: true, smoothThumb: true })
 }
 
 const activeIsHd = computed(() => {
@@ -628,6 +718,7 @@ function onRowScroll() {
   thumbScrollIdleTimer = setTimeout(() => {
     thumbScrolling.value = false
     trimThumbWindowToViewport()
+    syncHeroFromThumbScroll()
   }, THUMB_IDLE_MS)
 }
 
@@ -667,6 +758,7 @@ onUnmounted(() => {
   if (rowScrollRaf) cancelAnimationFrame(rowScrollRaf)
   if (thumbScrollIdleTimer) clearTimeout(thumbScrollIdleTimer)
   if (heroIdleTimer) clearTimeout(heroIdleTimer)
+  if (keyBurstTimer) clearTimeout(keyBurstTimer)
   if (controlsTimer) clearTimeout(controlsTimer)
   if (stepAnimTimer) clearTimeout(stepAnimTimer)
 })
