@@ -81,8 +81,10 @@
         </div>
 
         <!-- Loading skeletons -->
-        <div v-if="pending" class="space-y-16 md:space-y-24">
-          <StarCardSkeleton v-for="n in 2" :key="n" />
+        <div v-if="pending">
+          <div v-for="n in 2" :key="n" class="star-section">
+            <StarCardSkeleton />
+          </div>
         </div>
 
         <!-- Error -->
@@ -110,7 +112,7 @@
         </div>
 
         <!-- Star shelves -->
-        <div v-else class="space-y-16 md:space-y-24">
+        <div v-else>
           <div
             v-for="(star, index) in displayStars"
             :id="`star-${star.code.toLowerCase()}`"
@@ -616,6 +618,6 @@ onUnmounted(() => {
  */
 .star-section {
   content-visibility: auto;
-  contain-intrinsic-size: auto 900px;
+  contain-intrinsic-size: auto 850px;
 }
 </style>

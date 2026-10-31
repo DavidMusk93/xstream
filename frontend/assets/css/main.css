@@ -284,6 +284,17 @@ textarea:focus-visible {
   filter: none;
 }
 
+/* Home shelves: hairline + short breath between stars (Apple — not margin stacks). */
+.star-section + .star-section {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  padding-top: 1.5rem;
+}
+@media (min-width: 640px) {
+  .star-section + .star-section {
+    padding-top: 1.75rem;
+  }
+}
+
 /* Shelf scroll focus: the band-aligned star stays full; siblings soften. */
 @media (min-width: 640px) {
   .star-section {

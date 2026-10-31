@@ -171,7 +171,10 @@ disk.
 
 Eyebrow `00 Your collection`, large title `Library`, then a stats row
 (Stars / Titles / This week — big tabular numbers split by hairlines) over a
-soft static accent glow; then one shelf per star. The `00` eyebrow row
+soft static accent glow; then one shelf per star. **Shelf separation** follows
+Apple hierarchy: a `border-black/[0.06]` hairline plus `pt-6 sm:pt-7` on
+`.star-section + .star-section` — never large `space-y` margin stacks between
+panels. The `00` eyebrow row
 includes `StarSortToggle` (`ui/StarSortToggle.vue`): same pill language as
 `StarNav` (`bg-foreground text-white` active, muted hover inactive), not a
 separate segmented control beside the large title. Choice is remembered in `localStorage` (`xstream.starSort`) via
