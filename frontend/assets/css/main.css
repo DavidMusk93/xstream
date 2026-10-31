@@ -344,7 +344,8 @@ textarea:focus-visible {
   touch-action: none;
 }
 .thumb-rail {
-  contain: strict;
+  /* layout/style/paint only — strict (size) collapses rail height to ~0 */
+  contain: content;
   overscroll-behavior-x: contain;
   scroll-padding-inline: 1rem;
 }
