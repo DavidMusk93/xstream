@@ -18,7 +18,7 @@ export function swipeCommitDirection(
   // Momentum projection: project how far the swipe naturally travels (120ms of inertia)
   const projectedDx = dx + vx * 120
   const rawSteps = -projectedDx / w
-  let steps = Math.round(rawSteps)
+  let steps = Math.sign(rawSteps) * Math.round(Math.abs(rawSteps))
 
   // Ensure at least 1 step in the drag direction if threshold was met
   const dir = dx < 0 ? 1 : -1
@@ -40,8 +40,9 @@ export function wheelCommitDirection(
   return accumulatedDeltaX > 0 ? 1 : -1
 }
 
-/** True when the event target is the cover — not hero-nav or other chrome. */
+/** True when the event target is the cover or hero-nav — not other interactive chrome. */
 export function isHeroCoverGestureTarget(target: EventTarget | null): boolean {
   if (typeof Element === 'undefined' || !(target instanceof Element)) return false
+  if (target.closest('[data-hero-nav]')) return true
   return !target.closest('button, a, input, textarea, select, label, [data-hero-chrome]')
 }

@@ -120,24 +120,24 @@
           <template v-if="total > 1">
             <button
               type="button"
+              data-hero-nav
               data-hero-chrome
               class="hero-nav left-3 sm:left-4 z-10"
               :class="{ 'is-off': displayIndex <= 0 }"
               aria-label="Previous title"
               :disabled="displayIndex <= 0"
-              @pointerdown.stop
               @click="step(-1, { fromChrome: true })"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
             </button>
             <button
               type="button"
+              data-hero-nav
               data-hero-chrome
               class="hero-nav right-3 sm:right-4 z-10"
               :class="{ 'is-off': displayIndex >= total - 1 }"
               aria-label="Next title"
               :disabled="displayIndex >= total - 1"
-              @pointerdown.stop
               @click="step(1, { fromChrome: true })"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
@@ -221,6 +221,9 @@
         :class="{ 'is-scrolling': thumbScrolling }"
         :data-active-index="displayIndex"
         @scroll.passive="onRowScroll"
+        @pointerdown="onThumbPointerDown"
+        @touchstart.passive="onThumbPointerDown"
+        @wheel.passive="onThumbPointerDown"
       >
         <!-- Windowed rendering: spacers keep the scroll width exact while
              only the visible ±THUMB_BUFFER thumbnails exist in the DOM -->
@@ -316,26 +319,22 @@ const HERO_IDLE_MS = 420
 /** Bumps when a slide finishes decode so `isHeroCoverReady` (module Set) re-renders. */
 const heroReadyTick = ref(0)
 
-const heroWinStart = ref(0)
 const heroWinEnd = ref(5)
 
 function ensureHeroIndexInWindow(idx: number) {
   const n = total.value
-  heroWinStart.value = Math.min(heroWinStart.value, Math.max(0, idx - HERO_BUFFER))
   heroWinEnd.value = Math.max(heroWinEnd.value, Math.min(n, idx + HERO_BUFFER + 1))
 }
 
 function trimHeroWindowToIndex(idx: number) {
   const n = total.value
-  heroWinStart.value = Math.max(0, idx - HERO_BUFFER)
-  heroWinEnd.value = Math.min(n, idx + HERO_BUFFER + 1)
+  heroWinEnd.value = Math.max(heroWinEnd.value, Math.min(n, idx + HERO_BUFFER + 1))
 }
 
 const windowedHeroSlides = computed(() => {
   const titles = props.star.titles ?? []
-  const start = heroWinStart.value
   const end = heroWinEnd.value
-  return titles.slice(start, end).map((title, i) => ({ title, idx: start + i }))
+  return titles.slice(0, end).map((title, i) => ({ title, idx: i }))
 })
 
 const heroCellStyle = computed(() =>
@@ -345,7 +344,7 @@ const heroCellStyle = computed(() =>
 const heroTrackStyle = computed(() => {
   const w = heroSlideWidth.value
   if (!w) return undefined
-  const base = -(activeIndex.value - heroWinStart.value) * w
+  const base = -activeIndex.value * w
   return { '--track-base': `${base}px` }
 })
 
@@ -538,7 +537,7 @@ function onHeroDragRelease({
   ensureHeroIndexInWindow(targetIdx)
 
   if (el && w) {
-    const targetBase = -(targetIdx - heroWinStart.value) * w
+    const targetBase = -targetIdx * w
     el.classList.add('hero-track-anim')
     el.style.setProperty('--track-base', `${targetBase}px`)
     el.style.removeProperty('--drag-x')
@@ -584,10 +583,23 @@ function bindHeroImgEl(title: Title, el: HTMLImageElement | null) {
   void onHeroSlideLoad(title, { target: el } as Event)
 }
 
-let thumbScrollFromCode = false
+let thumbUserInteracting = false
+let programmaticThumbUntil = 0
+
+function onThumbPointerDown() {
+  thumbUserInteracting = true
+}
 
 function thumbIndexAtScroll(left: number): number {
   if (!thumbStride.value) return activeIndex.value
+  const row = rowRef.value
+  if (!row) return activeIndex.value
+  const maxScroll = Math.max(0, row.scrollWidth - row.clientWidth)
+  // At the start of the rail, the first item is selected
+  if (left <= 20) return 0
+  // At the end of the rail, the last item is selected
+  if (maxScroll > 0 && left >= maxScroll - 20) return total.value - 1
+
   const center = left + (rowViewWidth.value - thumbItemWidth.value) / 2
   const idx = Math.round(center / thumbStride.value)
   return Math.min(total.value - 1, Math.max(0, idx))
@@ -599,17 +611,14 @@ function revealThumb(idx: number, behavior: ScrollBehavior = 'smooth') {
   const row = rowRef.value
   if (!row || !thumbStride.value) return
   const left = idx * thumbStride.value - (row.clientWidth - thumbItemWidth.value) / 2
-  thumbScrollFromCode = true
+  thumbUserInteracting = false
+  programmaticThumbUntil = Date.now() + 600
   row.scrollTo({ left: Math.max(0, left), behavior })
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      thumbScrollFromCode = false
-    })
-  })
 }
 
 function syncHeroFromThumbScroll() {
-  if (thumbScrollFromCode || pendingIndex.value != null || dragging.value) return
+  if (Date.now() < programmaticThumbUntil || !thumbUserInteracting || pendingIndex.value != null || dragging.value) return
+  thumbUserInteracting = false
   const row = rowRef.value
   if (!row || !thumbStride.value) return
   const idx = thumbIndexAtScroll(row.scrollLeft)

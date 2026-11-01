@@ -176,7 +176,7 @@ export function useHeroStepGesture(opts: {
       return
     }
 
-    const dir = swipeCommitDirection(dx, dt, opts.stageWidth())
+    const dir = finalClampedPx === 0 ? null : swipeCommitDirection(dx, dt, opts.stageWidth())
     if (opts.onDragRelease) {
       opts.onDragRelease({
         dx,
@@ -214,7 +214,7 @@ export function useHeroStepGesture(opts: {
 
     if (wasHorizontal && opts.onDragRelease) {
       // Evaluate commit based on distance already traveled before cancel, instead of blindly discarding
-      const dir = swipeCommitDirection(dx, dt, opts.stageWidth())
+      const dir = finalClampedPx === 0 ? null : swipeCommitDirection(dx, dt, opts.stageWidth())
       opts.onDragRelease({
         dx,
         clampedDx: finalClampedPx,

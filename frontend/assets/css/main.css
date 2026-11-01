@@ -87,6 +87,7 @@ textarea:focus-visible {
     @apply absolute top-1/2 w-10 h-10 -mt-5 rounded-full flex items-center justify-center
       bg-white/85 text-foreground shadow-[0_6px_18px_-6px_rgba(0,0,0,0.35)];
     opacity: 0;
+    pointer-events: none;
     transform: scale(0.88);
     transition: opacity 0.2s var(--ease-out), transform 0.3s var(--ease-out), background-color 0.2s;
   }
@@ -99,14 +100,14 @@ textarea:focus-visible {
     transition: opacity 0.2s var(--ease-out);
   }
   @media (hover: hover) {
-    .hero-stage:hover .hero-nav,
+    .hero-stage:hover .hero-nav:not(.is-off),
+    .hero-stage.controls-shown .hero-nav:not(.is-off) { opacity: 1; pointer-events: auto; transform: none; }
     .hero-stage:hover .hero-count { opacity: 1; transform: none; }
   }
-  .hero-stage:focus-within .hero-nav,
-  .hero-stage.controls-shown .hero-nav,
+  .hero-stage:focus-within .hero-nav:not(.is-off) { opacity: 1; pointer-events: auto; transform: none; }
   .hero-stage:focus-within .hero-count,
   .hero-stage.controls-shown .hero-count { opacity: 1; transform: none; }
-  .hero-stage .hero-nav.is-off { opacity: 0 !important; pointer-events: none; }
+  .hero-stage .hero-nav.is-off { opacity: 0 !important; pointer-events: none !important; }
   @supports (backdrop-filter: blur(1px)) {
     @media (min-width: 640px) {
       .hero-nav { @apply bg-white/70 backdrop-blur-md; }
