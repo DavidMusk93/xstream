@@ -58,15 +58,16 @@ export function useHeroStepGesture(opts: {
 
   function flushDragFrame() {
     dragRaf = 0
-    opts.setDragTranslate(pendingDragPx)
     opts.onHorizontalDrag?.(pendingDragRaw, pendingDragPx)
   }
 
   function scheduleDrag(rawDx: number, clampedDx: number) {
     pendingDragRaw = rawDx
     pendingDragPx = clampedDx
-    if (dragRaf) return
-    dragRaf = requestAnimationFrame(flushDragFrame)
+    opts.setDragTranslate(clampedDx)
+    if (!dragRaf) {
+      dragRaf = requestAnimationFrame(flushDragFrame)
+    }
   }
 
   function clearDragVisual() {

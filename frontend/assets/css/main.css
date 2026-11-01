@@ -350,7 +350,7 @@ textarea:focus-visible {
   transform: translate3d(calc(var(--track-base, 0px) + var(--drag-x, 0px)), 0, 0);
 }
 .hero-track-anim {
-  transition: transform 0.32s var(--ease-spring);
+  transition: transform 0.28s var(--ease-out);
 }
 .hero-frame.hero-dragging-h {
   touch-action: none;

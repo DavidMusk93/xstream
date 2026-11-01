@@ -7,8 +7,8 @@ export function swipeCommitDirection(
 ): -1 | 1 | null {
   const dt = Math.max(dtMs, 1)
   const vx = dx / dt
-  const minDist = Math.min(80, Math.max(44, widthPx * 0.12))
-  const flick = Math.abs(vx) >= 0.42 && Math.abs(dx) >= 20
+  const minDist = Math.min(48, Math.max(28, widthPx * 0.08))
+  const flick = Math.abs(vx) >= 0.28 && Math.abs(dx) >= 20
   if (Math.abs(dx) >= minDist || flick) {
     return dx < 0 ? 1 : -1
   }

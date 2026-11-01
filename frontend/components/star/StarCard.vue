@@ -370,12 +370,11 @@ function heroCoverReady(code: string): boolean {
   return isHeroCoverReady(code)
 }
 
-function slideHeroImgClass(title: Title, idx: number) {
+function slideHeroImgClass(title: Title, _idx: number) {
   const ready = heroCoverReady(title.code)
   return [
     ready ? 'opacity-100' : 'opacity-0',
     ready || dragging.value ? 'duration-0' : 'transition-opacity duration-150',
-    idx === activeIndex.value && !dragging.value ? 'sm:group-hover/hero:scale-[1.015]' : '',
   ]
 }
 const stepAnimLock = ref(false)
@@ -477,14 +476,9 @@ function showControlsBriefly() {
 }
 
 function clampDrag(dx: number): number {
-  const atStart = activeIndex.value <= 0 && dx > 0
-  const atEnd = activeIndex.value >= total.value - 1 && dx < 0
-  if (!atStart && !atEnd) return dx
-  const sign = dx > 0 ? 1 : -1
-  const abs = Math.abs(dx)
-  const w = heroSlideWidth.value || 360
-  const damped = (abs * 0.45) / (1 + (abs * 0.45) / (w * 0.35))
-  return sign * damped
+  if (activeIndex.value <= 0 && dx > 0) return 0
+  if (activeIndex.value >= total.value - 1 && dx < 0) return 0
+  return dx
 }
 
 const DRAG_PREFETCH_PX = 28
