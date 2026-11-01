@@ -69,7 +69,7 @@
             <div
               ref="heroTrackRef"
               class="hero-track flex h-full"
-              :class="{ 'hero-track-anim': !dragging && !settleTimer }"
+              :class="{ 'hero-track-anim': !dragging }"
               :style="heroTrackStyle"
             >
               <div
@@ -346,19 +346,17 @@ const heroTrackStyle = computed(() => {
   const w = heroSlideWidth.value
   if (!w) return undefined
   const base = -(activeIndex.value - heroWinStart.value) * w
-  return { transform: `translate3d(${base}px,0,0)` }
+  return { '--track-base': `${base}px` }
 })
 
 /** Compositor-only offset while dragging — never touches reactive state per frame. */
 function setHeroDragTranslate(px: number) {
   const el = heroTrackRef.value
-  const w = heroSlideWidth.value
-  if (!el || !w) return
+  if (!el) return
   if (px) {
-    const base = -(activeIndex.value - heroWinStart.value) * w
-    el.style.transform = `translate3d(${base + px}px,0,0)`
+    el.style.setProperty('--drag-x', `${px}px`)
   } else {
-    el.style.transform = ''
+    el.style.removeProperty('--drag-x')
   }
 }
 
@@ -418,9 +416,7 @@ function goToIndex(
   }
   ensureHeroIndexInWindow(idx)
   activeIndex.value = idx
-  if (!settleTimer) {
-    setHeroDragTranslate(0)
-  }
+  setHeroDragTranslate(0)
   armStepLock(cacheHit)
 
   if (!opts?.thumbAligned) {
@@ -518,27 +514,15 @@ function onWheelAccumulate(acc: number) {
   warmHeroInDirection(acc > 0 ? 1 : -1)
 }
 
-let settleTimer: ReturnType<typeof setTimeout> | null = null
-
-function cancelHeroSettle() {
-  if (settleTimer) {
-    clearTimeout(settleTimer)
-    settleTimer = null
-  }
+function onHeroPointerDown(e: PointerEvent) {
   const el = heroTrackRef.value
   if (el) {
-    el.style.transition = ''
-    el.style.transform = ''
+    el.classList.remove('hero-track-anim')
   }
-}
-
-function onHeroPointerDown(e: PointerEvent) {
-  cancelHeroSettle()
   onPointerDown(e)
 }
 
 function onHeroDragRelease({
-  clampedDx,
   dir,
   done,
 }: {
@@ -556,35 +540,21 @@ function onHeroDragRelease({
     ((dir === 1 && curIdx < total.value - 1) || (dir === -1 && curIdx > 0))
   const targetIdx = canCommit ? curIdx + dir! : curIdx
 
-  if (!el || !w) {
-    if (canCommit) {
-      goToIndex(targetIdx, { fromChrome: true, smoothThumb: true })
-      showControlsBriefly()
-    }
-    done()
-    return
-  }
-
   ensureHeroIndexInWindow(targetIdx)
-  const targetBase = -(targetIdx - heroWinStart.value) * w
 
-  el.style.transition = 'transform 0.32s var(--ease-spring)'
-  el.style.transform = `translate3d(${targetBase}px,0,0)`
+  if (el && w) {
+    const targetBase = -(targetIdx - heroWinStart.value) * w
+    el.classList.add('hero-track-anim')
+    el.style.setProperty('--track-base', `${targetBase}px`)
+    el.style.removeProperty('--drag-x')
+  }
 
   if (canCommit) {
     goToIndex(targetIdx, { fromChrome: true, smoothThumb: true })
     showControlsBriefly()
   }
 
-  if (settleTimer) clearTimeout(settleTimer)
-  settleTimer = setTimeout(() => {
-    settleTimer = null
-    if (el) {
-      el.style.transition = ''
-      el.style.transform = ''
-    }
-    done()
-  }, 340)
+  done()
 }
 
 const {
@@ -838,7 +808,6 @@ onUnmounted(() => {
   if (keyBurstTimer) clearTimeout(keyBurstTimer)
   if (controlsTimer) clearTimeout(controlsTimer)
   if (stepAnimTimer) clearTimeout(stepAnimTimer)
-  cancelHeroSettle()
 })
 const copied = ref(false)
 const liking = ref(false)
