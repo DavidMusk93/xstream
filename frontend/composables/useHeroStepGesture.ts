@@ -23,7 +23,7 @@ export function useHeroStepGesture(opts: {
   canDrag?: () => boolean
   /** Hero stage width for proportional swipe threshold. */
   stageWidth: () => number
-  onStep: (delta: -1 | 1) => void
+  onStep: (delta: number) => void
   onShowControls: () => void
   /** Compositor-only horizontal offset during pointer drag (px). */
   setDragTranslate: (px: number) => void
@@ -36,7 +36,7 @@ export function useHeroStepGesture(opts: {
     dx: number
     clampedDx: number
     dt: number
-    dir: -1 | 1 | null
+    dir: number | null
     done: () => void
   }) => void
 }) {
@@ -99,7 +99,7 @@ export function useHeroStepGesture(opts: {
     clearDragVisual()
   }
 
-  function stepOnce(delta: -1 | 1) {
+  function stepOnce(delta: number) {
     if (!opts.canStep()) return
     const now = Date.now()
     if (now < gestureLockUntil) return
@@ -122,10 +122,15 @@ export function useHeroStepGesture(opts: {
     pendingDragRaw = 0
     activePointer = e.pointerId
     captureEl = e.currentTarget as HTMLElement
-    try {
-      captureEl.setPointerCapture(e.pointerId)
-    } catch {
-      // Ignore if capture fails
+    // On mouse, capture pointer so drag continues outside window.
+    // On touch, native touch routing already keeps delivery to initial target,
+    // while setPointerCapture on iOS Safari can trigger gesture cancellation.
+    if (e.pointerType === 'mouse') {
+      try {
+        captureEl.setPointerCapture(e.pointerId)
+      } catch {
+        // Ignore if capture fails
+      }
     }
   }
 
@@ -135,7 +140,8 @@ export function useHeroStepGesture(opts: {
     const dy = e.clientY - startY
     if (!axis) {
       if (Math.abs(dx) < LOCK_SLOP && Math.abs(dy) < LOCK_SLOP) return
-      if (Math.abs(dx) >= Math.abs(dy)) {
+      // Use 0.75 ratio (~53 degrees) to accommodate natural thumb sweep arcs on mobile
+      if (Math.abs(dx) >= Math.abs(dy) * 0.75) {
         axis = 'h'
         dragging.value = true
       } else {
@@ -193,6 +199,8 @@ export function useHeroStepGesture(opts: {
 
   function onPointerCancel(e: PointerEvent) {
     if (activePointer !== e.pointerId) return
+    const dx = pendingDragRaw
+    const dt = Math.max(1, performance.now() - startT)
     const finalClampedPx = pendingDragPx
     const wasHorizontal = axis === 'h'
 
@@ -205,11 +213,13 @@ export function useHeroStepGesture(opts: {
     activePointer = null
 
     if (wasHorizontal && opts.onDragRelease) {
+      // Evaluate commit based on distance already traveled before cancel, instead of blindly discarding
+      const dir = swipeCommitDirection(dx, dt, opts.stageWidth())
       opts.onDragRelease({
-        dx: 0,
+        dx,
         clampedDx: finalClampedPx,
-        dt: 0,
-        dir: null,
+        dt,
+        dir,
         done: () => {
           dragging.value = false
           clearDragVisual()

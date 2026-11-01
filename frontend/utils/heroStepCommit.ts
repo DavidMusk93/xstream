@@ -4,15 +4,32 @@ export function swipeCommitDirection(
   dx: number,
   dtMs: number,
   widthPx: number,
-): -1 | 1 | null {
+): number | null {
   const dt = Math.max(dtMs, 1)
   const vx = dx / dt
-  const minDist = Math.min(48, Math.max(28, widthPx * 0.08))
+  const w = Math.max(widthPx, 200)
+  const minDist = Math.min(48, Math.max(28, w * 0.08))
   const flick = Math.abs(vx) >= 0.28 && Math.abs(dx) >= 20
-  if (Math.abs(dx) >= minDist || flick) {
-    return dx < 0 ? 1 : -1
+
+  if (Math.abs(dx) < minDist && !flick) {
+    return null
   }
-  return null
+
+  // Momentum projection: project how far the swipe naturally travels (120ms of inertia)
+  const projectedDx = dx + vx * 120
+  const rawSteps = -projectedDx / w
+  let steps = Math.round(rawSteps)
+
+  // Ensure at least 1 step in the drag direction if threshold was met
+  const dir = dx < 0 ? 1 : -1
+  if (dir > 0) {
+    steps = Math.max(1, steps)
+  } else {
+    steps = Math.min(-1, steps)
+  }
+
+  // Cap max multi-step swipe to 4 slides at once
+  return Math.min(4, Math.max(-4, steps))
 }
 
 export function wheelCommitDirection(

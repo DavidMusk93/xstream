@@ -57,7 +57,7 @@
         >
           <div
             ref="heroFrameRef"
-            class="hero-frame relative w-full aspect-[3/2] bg-fill overflow-hidden"
+            class="hero-frame relative w-full aspect-[3/2] bg-fill overflow-hidden touch-pan-y select-none"
             :class="{ 'hero-dragging-h': dragging }"
             @pointerdown="onHeroPointerDown"
             @pointermove="(e) => onPointerMove(e, clampDrag)"
@@ -523,16 +523,17 @@ function onHeroDragRelease({
   dx: number
   clampedDx: number
   dt: number
-  dir: -1 | 1 | null
+  dir: number | null
   done: () => void
 }) {
   const el = heroTrackRef.value
   const w = heroSlideWidth.value
   const curIdx = activeIndex.value
-  const canCommit =
-    dir !== null &&
-    ((dir === 1 && curIdx < total.value - 1) || (dir === -1 && curIdx > 0))
-  const targetIdx = canCommit ? curIdx + dir! : curIdx
+  let targetIdx = curIdx
+  if (dir !== null && dir !== 0) {
+    targetIdx = Math.min(total.value - 1, Math.max(0, curIdx + dir))
+  }
+  const canCommit = targetIdx !== curIdx
 
   ensureHeroIndexInWindow(targetIdx)
 
