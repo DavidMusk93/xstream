@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -72,12 +73,15 @@ MAX_NEW_TITLES = 20  # Max new titles processed per sync (prevent stars with too
 def _title_brief(item: VideoItem) -> dict[str, str]:
     """Compact title row for sync.completed notify payloads (Telegram / tg-lint)."""
     best = item.magnets[0] if item.magnets else None
+    domain = os.environ.get("XSTREAM_DOMAIN") or "cc.guohuasun.com"
+    code_l = item.code.lower()
     return {
         "code": item.code,
-        "title": (item.title or "")[:160],
+        "title": (item.title or "")[:200],
         "date": item.release_date or "",
         "resolution": (best.resolution if best else "") or "",
         "size": (best.size if best else "") or "",
+        "cover_url": f"https://{domain}/images/titles/{code_l}/{code_l}.jpg",
     }
 
 MAX_FETCH_ATTEMPTS = 3  # Retries per star before declaring the fetch failed

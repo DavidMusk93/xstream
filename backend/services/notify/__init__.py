@@ -90,6 +90,7 @@ async def dispatch(event: str, data: dict[str, Any]) -> None:
 
 async def send_test_message() -> None:
     ts = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    domain = os.environ.get("XSTREAM_DOMAIN") or "cc.guohuasun.com"
     sample = {
         "total_new": 2,
         "total_updated": 1,
@@ -100,8 +101,21 @@ async def send_test_message() -> None:
             "name": "Demo Star",
             "count": 2,
             "new_titles": [
-                {"code": "ABC-001", "title": "Sample work title", "date": "01/15/2026", "resolution": "4K", "size": "5.2GB"},
-                {"code": "ABC-002", "title": "Another release", "date": "01/20/2026", "resolution": "1080p", "size": "4.1GB"},
+                {
+                    "code": "ABF-137",
+                    "title": "Let's Make A Baby? 4 Situations Where The Uterus Begs For Creampie",
+                    "date": "01/15/2026",
+                    "resolution": "4K",
+                    "size": "5.2GB",
+                    "cover_url": f"https://{domain}/images/titles/abf-137/abf-137.jpg",
+                },
+                {
+                    "code": "ABC-002",
+                    "title": "Another release with English description",
+                    "date": "01/20/2026",
+                    "resolution": "1080p",
+                    "size": "4.1GB",
+                },
             ],
         }],
         "failed": [],

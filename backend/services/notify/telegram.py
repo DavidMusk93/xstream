@@ -61,13 +61,29 @@ async def _send_one(
     text: str,
     parse_mode: str | None,
 ) -> bool:
+    import re
+
     payload: dict[str, Any] = {
         "chat_id": chat_id,
         "text": text,
-        "disable_web_page_preview": True,
     }
     if parse_mode:
         payload["parse_mode"] = parse_mode
+
+    # Check for hidden image link preview tag <a href="...">&#8203;</a>
+    m = re.search(r'<a\s+href="([^"]+)"[^>]*>&#8203;</a>', text)
+    if m:
+        payload["link_preview_options"] = {
+            "is_disabled": False,
+            "url": m.group(1),
+            "prefer_large_media": True,
+            "show_above_text": True,
+        }
+    else:
+        payload["link_preview_options"] = {
+            "is_disabled": True,
+        }
+        payload["disable_web_page_preview"] = True
     r = await client.post(url, json=payload)
     if r.status_code != 200:
         log.warning(f"telegram sendMessage HTTP {r.status_code}: {r.text[:200]}")

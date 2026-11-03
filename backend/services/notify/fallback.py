@@ -42,10 +42,26 @@ def _sync_completed(d: dict[str, Any]) -> str:
     updated = int(d.get("total_updated") or 0)
     elapsed = d.get("elapsed", "?")
     trigger = esc(str(d.get("trigger") or "sync"))
+
+    # First cover URL across all stars/titles for hidden link preview
+    cover_anchor = ""
+    for block in d.get("star_updates") or []:
+        for t in block.get("new_titles") or []:
+            c = str(t.get("cover_url") or "").strip()
+            if c:
+                cover_anchor = f'<a href="{esc(c)}">&#8203;</a>'
+                break
+        if cover_anchor:
+            break
+
+    stats = f"✨ <b>{new}</b> new"
+    if updated > 0:
+        stats += f" · <b>{updated}</b> updated"
+    stats += f" · <i>{trigger} ({esc(str(elapsed))}s)</i>"
+
     lines = [
-        "📚 <b>Library sync complete</b>\n",
-        f"{kv('New', f'<b>{new}</b>')} · {kv('Updated', f'<b>{updated}</b>')}",
-        f"<i>{trigger} · {esc(str(elapsed))}s</i>",
+        f"{cover_anchor}📚 <b>Library sync complete</b>",
+        stats,
     ]
     for block in d.get("star_updates") or []:
         name = esc(str(block.get("name") or "?"))
@@ -54,34 +70,37 @@ def _sync_completed(d: dict[str, Any]) -> str:
         head = f"\n⭐ <b>{name}</b>"
         if code:
             head += f" · <code>{esc(code)}</code>"
-        head += f"\n<b>{count}</b> new title(s)"
+        head += f" (<b>{count}</b> new)\n"
         titles = block.get("new_titles") or []
         body_parts: list[str] = []
         for t in titles:
-            tc = esc(str(t.get("code") or ""))
-            title = esc(str(t.get("title") or ""))
-            meta = " · ".join(
-                x
-                for x in (
-                    str(t.get("date") or ""),
-                    str(t.get("resolution") or ""),
-                    str(t.get("size") or ""),
-                )
-                if x
-            )
-            part = f"• <code>{tc}</code>"
-            if title:
-                part += f"\n  {title}"
-            if meta:
-                part += f"\n  <i>{esc(meta)}</i>"
+            tc = esc(str(t.get("code") or "").strip())
+            title = esc(str(t.get("title") or "").strip())
+            date = str(t.get("date") or "").strip()
+            res = str(t.get("resolution") or "").strip().strip("[]")
+            size = str(t.get("size") or "").strip()
+
+            badges: list[str] = []
+            if res:
+                badges.append(f"🏷 <code>{esc(res)}</code>")
+            if size:
+                badges.append(f"💾 <code>{esc(size)}</code>")
+            if date:
+                badges.append(f"📅 <code>{esc(date)}</code>")
+
+            part = f"🎬 <b><code>{tc}</code></b>"
+            if badges:
+                part += " · " + " · ".join(badges)
+            if title and not title.lower() == tc.lower():
+                part += f'\n   <i>"{title}"</i>'
             body_parts.append(part)
         if body_parts:
-            head += "\n" + blockquote("\n".join(body_parts), expandable=len(body_parts) > 3)
+            head += blockquote("\n\n".join(body_parts), expandable=len(body_parts) > 1)
         lines.append(head)
     failed = d.get("failed") or []
     if failed:
         names = ", ".join(esc(str(x)) for x in failed)
-        lines.append(f"\n⚠️ {kv('Failed stars', f'<i>{names}</i>')}")
+        lines.append(f"\n⚠️ <b>Failed stars:</b> <i>{names}</i>")
     return "\n".join(lines) + "\n"
 
 
