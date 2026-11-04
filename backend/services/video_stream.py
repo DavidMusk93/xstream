@@ -130,22 +130,27 @@ def _is_data_at_offset(path: str, offset: int) -> bool:
 
 
 def _read_once(path: str, start: int, chunk_size: int) -> bytearray:
-    """Read [start, start+chunk_size) via mmap. Returns bytearray."""
+    """Read [start, start+chunk_size) via pread (avoids full-file mmap and VMA retention). Returns bytearray."""
     try:
-        with open(path, "rb") as f:
-            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-                return bytearray(mm[start:start + chunk_size])
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            return bytearray(os.pread(fd, chunk_size, start))
+        finally:
+            os.close(fd)
     except (OSError, ValueError):
         data = bytearray()
-        with open(path, "rb") as f:
-            f.seek(start)
-            remaining = chunk_size
-            while remaining > 0:
-                buf = f.read(min(16384, remaining))
-                if not buf:
-                    break
-                data.extend(buf)
-                remaining -= len(buf)
+        try:
+            with open(path, "rb") as f:
+                f.seek(start)
+                remaining = chunk_size
+                while remaining > 0:
+                    buf = f.read(min(16384, remaining))
+                    if not buf:
+                        break
+                    data.extend(buf)
+                    remaining -= len(buf)
+        except OSError:
+            pass
         return data
 
 

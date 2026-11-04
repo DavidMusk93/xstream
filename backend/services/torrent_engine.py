@@ -374,11 +374,11 @@ class TorrentEngine:
         # download immediately; with True ~1/3 of escapes stall permanently
         # on a single-seed swarm.
         settings["close_redundant_connections"] = False
-        # CRITICAL: disable mmap storage to avoid finished-state deadlock.
-        # libtorrent 2.0 mmap creates full-size sparse files on add, then
-        # force_recheck reads page-cache zeros and falsely marks pieces
-        # complete. POSIX storage does not have this bug.
-        settings["mmap_file_size_cutoff"] = 0
+        # CRITICAL: disable mmap storage to avoid finished-state deadlock and GB-scale VMA bloat.
+        # libtorrent 2.0 uses mmap for files >= mmap_file_size_cutoff blocks (16 KiB each).
+        # A value of 0 forced ALL files into mmap. Setting cutoff to 2_147_483_647 (~35 TB)
+        # ensures all files use standard POSIX pread/pwrite disk I/O.
+        settings["mmap_file_size_cutoff"] = 2_147_483_647
         self.session.apply_settings(settings)
         # Verify setting was applied
         applied = self.session.get_settings().get("mmap_file_size_cutoff")
