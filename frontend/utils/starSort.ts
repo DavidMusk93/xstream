@@ -34,14 +34,13 @@ export function parseDiscoveredAt(iso: string | null | undefined): number {
 
 /**
  * Client-side multi-key sort for display:
- * - 'works': Multi-sort keys on release:
+ * - 'works': Exactly two keys on release:
  *     1. Release date DESC (作品发布日期)
  *     2. Discovery date on xstream (discovered_at / created_at) DESC (作品发现日志)
- *     3. Star name ASC
- * - 'added': Followed date (added_at) DESC -> star name ASC
+ * - 'added': Followed date (added_at) DESC
  */
 export function sortStarsForDisplay(list: Star[], mode: StarSort): Star[] {
-  // Titles within each star are ordered by multi-sort keys: release date -> discovered_at -> code
+  // Titles within each star are ordered by exactly two keys: release date -> discovered_at
   const sorted = list.map(star => {
     const titles = [...(star.titles ?? [])]
     titles.sort((a, b) => {
@@ -50,26 +49,24 @@ export function sortStarsForDisplay(list: Star[], mode: StarSort): Star[] {
       if (ra !== rb) return rb - ra
       const da = parseDiscoveredAt(a.discovered_at)
       const db = parseDiscoveredAt(b.discovered_at)
-      if (da !== db) return db - da
-      return (b.code || '').localeCompare(a.code || '')
+      return db - da
     })
     return { ...star, titles }
   })
 
   if (mode === 'added') {
     return sorted.sort(
-      (a, b) => parseAddedAt(b.added_at) - parseAddedAt(a.added_at) || a.name.localeCompare(b.name),
+      (a, b) => parseAddedAt(b.added_at) - parseAddedAt(a.added_at),
     )
   }
 
-  // 'works': Multi-sort keys on release
+  // 'works': Exactly two keys on release
   return sorted.sort((a, b) => {
     const ra = parseReleaseDate(a.titles?.[0]?.date)
     const rb = parseReleaseDate(b.titles?.[0]?.date)
     if (ra !== rb) return rb - ra
     const da = parseDiscoveredAt(a.titles?.[0]?.discovered_at)
     const db = parseDiscoveredAt(b.titles?.[0]?.discovered_at)
-    if (da !== db) return db - da
-    return a.name.localeCompare(b.name)
+    return db - da
   })
 }

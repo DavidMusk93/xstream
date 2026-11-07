@@ -174,8 +174,7 @@ def _build_stars_response() -> list[dict[str, Any]]:
                 'user_liked', COALESCE(r.user_liked, 0)
             ) ORDER BY 
                 r.release_date_sort DESC NULLS LAST,
-                r.created_at DESC,
-                r.code DESC
+                r.created_at DESC
             )
             FILTER (WHERE r.code IS NOT NULL), '[]'::jsonb) AS titles,
             MAX(r.created_at) AS max_title_created_at,
@@ -243,14 +242,10 @@ def _build_stars_response() -> list[dict[str, Any]]:
 
         def _star_sort_key(star):
             meta = db_data.get(star.get("code"), {})
-            # Compound multi-sort keys:
-            # 1. Newest work release date (YYYYMMDD)
-            # 2. Newest work discovery timestamp (ISO UTC)
-            # 3. Star name
+            # Exactly two keys: 1. Release date DESC, 2. Discovery timestamp DESC
             return (
                 meta.get("max_release") or "",
                 meta.get("max_disc_ts") or "",
-                star.get("name") or "",
             )
 
         result.sort(key=_star_sort_key, reverse=True)

@@ -35,8 +35,7 @@ def _is_primary_title(work_code: str) -> bool:
                             PARTITION BY star_id
                             ORDER BY 
                                 release_date_sort DESC NULLS LAST,
-                                created_at DESC,
-                                code DESC
+                                created_at DESC
                         ) AS rn
                     FROM titles
                 ) t ON t.star_id = s.id AND t.rn = 1
