@@ -5,27 +5,14 @@
       type="button"
       role="radio"
       class="h-7 px-2.5 rounded-full text-[12px] font-medium transition-[background-color,color,transform] duration-300 ease-spring active:scale-[0.96] active:duration-100"
-      :class="model === 'release'
+      :class="model === 'works'
         ? 'bg-foreground text-white'
         : 'text-foreground-muted hover:text-foreground hover:bg-black/[0.05]'"
-      :aria-checked="model === 'release' ? 'true' : 'false'"
-      title="按作品发布日期 (Newest release date first)"
-      @click="model = 'release'"
+      :aria-checked="model === 'works' ? 'true' : 'false'"
+      title="Newest work first (release date, then discovery log)"
+      @click="model = 'works'"
     >
-      Release
-    </button>
-    <button
-      type="button"
-      role="radio"
-      class="h-7 px-2.5 rounded-full text-[12px] font-medium transition-[background-color,color,transform] duration-300 ease-spring active:scale-[0.96] active:duration-100"
-      :class="model === 'discovered'
-        ? 'bg-foreground text-white'
-        : 'text-foreground-muted hover:text-foreground hover:bg-black/[0.05]'"
-      :aria-checked="model === 'discovered' ? 'true' : 'false'"
-      title="按作品发现/入库日期 (Recently discovered on xstream first)"
-      @click="model = 'discovered'"
-    >
-      Discovered
+      Latest
     </button>
     <button
       type="button"
@@ -35,10 +22,10 @@
         ? 'bg-foreground text-white'
         : 'text-foreground-muted hover:text-foreground hover:bg-black/[0.05]'"
       :aria-checked="model === 'added' ? 'true' : 'false'"
-      title="按关注时间 (Recently followed star first)"
+      title="Recently followed first"
       @click="model = 'added'"
     >
-      Followed
+      Added
     </button>
   </span>
 </template>

@@ -1,14 +1,12 @@
 import type { Star } from '~/types/api'
 
-export type StarSort = 'release' | 'discovered' | 'added'
+export type StarSort = 'works' | 'added'
 
 export const STAR_SORT_STORAGE_KEY = 'xstream.starSort'
 
-/** Parse persisted sort; unknown values or legacy 'works' fall back to 'release'. */
+/** Parse persisted sort; unknown values fall back to newest-work order. */
 export function parseStarSort(raw: string | null | undefined): StarSort {
-  if (raw === 'discovered' || raw === 'added' || raw === 'release') return raw
-  if (raw === 'works') return 'release'
-  return 'release'
+  return raw === 'added' || raw === 'works' ? raw : 'works'
 }
 
 export function parseAddedAt(iso: string | null | undefined): number {
@@ -35,65 +33,42 @@ export function parseDiscoveredAt(iso: string | null | undefined): number {
 }
 
 /**
- * Client-side multi-key sort for stars and their titles:
- * - 'release': Newest release date first -> ties broken by newest discovered -> name
- * - 'discovered': Newest discovered on xstream first -> ties broken by release date -> name
- * - 'added': Star follow date (added_at) first -> name
+ * Client-side multi-key sort for display:
+ * - 'works': Multi-sort keys on release:
+ *     1. Release date DESC (作品发布日期)
+ *     2. Discovery date on xstream (discovered_at / created_at) DESC (作品发现日志)
+ *     3. Star name ASC
+ * - 'added': Followed date (added_at) DESC -> star name ASC
  */
 export function sortStarsForDisplay(list: Star[], mode: StarSort): Star[] {
-  // First clone each star and sort titles inside according to the chosen mode
-  const sortedStars = list.map(star => {
+  // Titles within each star are ordered by multi-sort keys: release date -> discovered_at -> code
+  const sorted = list.map(star => {
     const titles = [...(star.titles ?? [])]
-    if (mode === 'discovered') {
-      titles.sort((a, b) => {
-        const da = parseDiscoveredAt(a.discovered_at)
-        const db = parseDiscoveredAt(b.discovered_at)
-        if (da !== db) return db - da
-        const ra = parseReleaseDate(a.date)
-        const rb = parseReleaseDate(b.date)
-        if (ra !== rb) return rb - ra
-        return (b.code || '').localeCompare(a.code || '')
-      })
-    } else {
-      // mode === 'release' or mode === 'added'
-      titles.sort((a, b) => {
-        const ra = parseReleaseDate(a.date)
-        const rb = parseReleaseDate(b.date)
-        if (ra !== rb) return rb - ra
-        const da = parseDiscoveredAt(a.discovered_at)
-        const db = parseDiscoveredAt(b.discovered_at)
-        if (da !== db) return db - da
-        return (b.code || '').localeCompare(a.code || '')
-      })
-    }
+    titles.sort((a, b) => {
+      const ra = parseReleaseDate(a.date)
+      const rb = parseReleaseDate(b.date)
+      if (ra !== rb) return rb - ra
+      const da = parseDiscoveredAt(a.discovered_at)
+      const db = parseDiscoveredAt(b.discovered_at)
+      if (da !== db) return db - da
+      return (b.code || '').localeCompare(a.code || '')
+    })
     return { ...star, titles }
   })
 
   if (mode === 'added') {
-    return sortedStars.sort(
+    return sorted.sort(
       (a, b) => parseAddedAt(b.added_at) - parseAddedAt(a.added_at) || a.name.localeCompare(b.name),
     )
   }
 
-  if (mode === 'discovered') {
-    return sortedStars.sort((a, b) => {
-      const da = Math.max(0, ...(a.titles?.map(t => parseDiscoveredAt(t.discovered_at)) ?? []))
-      const db = Math.max(0, ...(b.titles?.map(t => parseDiscoveredAt(t.discovered_at)) ?? []))
-      if (da !== db) return db - da
-      const ra = Math.max(0, ...(a.titles?.map(t => parseReleaseDate(t.date)) ?? []))
-      const rb = Math.max(0, ...(b.titles?.map(t => parseReleaseDate(t.date)) ?? []))
-      if (ra !== rb) return rb - ra
-      return a.name.localeCompare(b.name)
-    })
-  }
-
-  // mode === 'release' (default)
-  return sortedStars.sort((a, b) => {
-    const ra = Math.max(0, ...(a.titles?.map(t => parseReleaseDate(t.date)) ?? []))
-    const rb = Math.max(0, ...(b.titles?.map(t => parseReleaseDate(t.date)) ?? []))
+  // 'works': Multi-sort keys on release
+  return sorted.sort((a, b) => {
+    const ra = parseReleaseDate(a.titles?.[0]?.date)
+    const rb = parseReleaseDate(b.titles?.[0]?.date)
     if (ra !== rb) return rb - ra
-    const da = Math.max(0, ...(a.titles?.map(t => parseDiscoveredAt(t.discovered_at)) ?? []))
-    const db = Math.max(0, ...(b.titles?.map(t => parseDiscoveredAt(t.discovered_at)) ?? []))
+    const da = parseDiscoveredAt(a.titles?.[0]?.discovered_at)
+    const db = parseDiscoveredAt(b.titles?.[0]?.discovered_at)
     if (da !== db) return db - da
     return a.name.localeCompare(b.name)
   })

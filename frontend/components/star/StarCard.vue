@@ -149,13 +149,7 @@
         <div class="min-w-0 flex flex-col lg:py-1 lg:pb-2">
             <div class="lg:mt-auto">
               <div class="flex items-center flex-wrap gap-x-2 gap-y-1 text-[13px] font-medium text-foreground-muted tabular-nums">
-                <span v-if="activeTitle.date" :title="`Release date: ${fmtDate(activeTitle.date)}`">{{ fmtDate(activeTitle.date) }}</span>
-                <span
-                  v-if="activeTitle.discovered_at"
-                  class="chip bg-black/[0.04] text-foreground-muted"
-                  :title="`Discovered on xstream: ${activeTitle.discovered_at}`"
-                >Disc. {{ fmtDiscovered(activeTitle.discovered_at) }}</span>
-                <span v-if="isNewlyDiscovered(activeTitle.discovered_at)" class="chip bg-accent/10 text-accent font-medium">New</span>
+                <span v-if="activeTitle.date">{{ fmtDate(activeTitle.date) }}</span>
                 <span v-if="activeIsHd" class="chip bg-black/[0.06] text-foreground">HD</span>
                 <span v-if="activeTitle.magnet_status === 'dead'" class="chip bg-danger/10 text-danger">Unavailable</span>
               </div>
@@ -268,7 +262,7 @@
           <div class="mt-2.5 flex items-center gap-1.5 px-0.5 whitespace-nowrap">
             <span class="thumb-dot h-1.5 rounded-full bg-accent" aria-hidden="true" />
             <span class="thumb-code text-[13px] font-semibold truncate">{{ title.code }}</span>
-            <span class="ml-auto text-[12px] text-foreground-muted/70 tabular-nums">{{ props.sortMode === 'discovered' && title.discovered_at ? shortDiscovered(title.discovered_at) : shortDate(title.date) }}</span>
+            <span class="ml-auto text-[12px] text-foreground-muted/70 tabular-nums">{{ shortDate(title.date) }}</span>
           </div>
         </button>
         <div v-if="trailPad > 0" class="shrink-0 h-px" :style="{ width: `${trailPad}px` }" aria-hidden="true" />
@@ -279,7 +273,6 @@
 
 <script setup lang="ts">
 import type { Star, Title } from '~/types/api'
-import type { StarSort } from '~/utils/starSort'
 import {
   heroLqipSrc,
   heroSrc,
@@ -294,7 +287,6 @@ import {
 const props = defineProps<{
   star: Star
   index?: number
-  sortMode?: StarSort
 }>()
 
 const emit = defineEmits<{
@@ -921,32 +913,5 @@ function fmtDate(dateStr?: string): string {
     return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`
   }
   return dateStr
-}
-
-function fmtDiscovered(iso?: string): string {
-  if (!iso) return ''
-  const t = new Date(iso)
-  if (isNaN(t.getTime())) return ''
-  const y = t.getUTCFullYear()
-  const m = String(t.getUTCMonth() + 1).padStart(2, '0')
-  const d = String(t.getUTCDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
-}
-
-function shortDiscovered(iso?: string): string {
-  if (!iso) return ''
-  const t = new Date(iso)
-  if (isNaN(t.getTime())) return ''
-  const y = String(t.getUTCFullYear()).slice(2)
-  const m = String(t.getUTCMonth() + 1).padStart(2, '0')
-  const d = String(t.getUTCDate()).padStart(2, '0')
-  return `${y}.${m}.${d}`
-}
-
-function isNewlyDiscovered(iso?: string): boolean {
-  if (!iso) return false
-  const t = Date.parse(iso)
-  if (isNaN(t)) return false
-  return Date.now() - t < 7 * 24 * 3600 * 1000
 }
 </script>

@@ -129,7 +129,6 @@
               v-if="visibleCodes.has(star.code)"
               :star="star"
               :index="index"
-              :sort-mode="starSort"
               @play="openVideo"
               @deleted="onStarDeleted"
               @social="openSocial"
