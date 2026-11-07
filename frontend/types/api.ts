@@ -44,6 +44,7 @@ export interface Title {
   code: string
   title?: string
   date?: string
+  discovered_at?: string
   resolution?: string
   cover_url?: string
   cover_thumb_url?: string

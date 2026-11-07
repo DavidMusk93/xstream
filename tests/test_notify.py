@@ -116,3 +116,62 @@ def test_tg_lint_sync_completed_binary():
     assert "Library sync" in out
     assert "ABC-100" in out
     assert "<b>" in out
+
+
+def test_sync_completed_renders_cover_and_full_info_per_work():
+    from backend.services.notify.fallback import format_html
+    from backend.services.notify import telegram as tg
+
+    sample = {
+        "total_new": 2,
+        "total_updated": 0,
+        "elapsed": 5.0,
+        "trigger": "scheduled",
+        "star_updates": [{
+            "name": "Demo Star",
+            "code": "DEMO-01",
+            "count": 2,
+            "new_titles": [
+                {
+                    "code": "AAA-111",
+                    "title": "Full Uncut Title 1",
+                    "date": "10/11/2026",
+                    "resolution": "4K",
+                    "size": "5.2GB",
+                    "magnet": "magnet:?xt=urn:btih:hash1",
+                    "cover_url": "https://cc.guohuasun.com/images/titles/aaa-111/aaa-111.jpg",
+                },
+                {
+                    "code": "BBB-222",
+                    "title": "Full Uncut Title 2",
+                    "date": "11/11/2026",
+                    "resolution": "1080p",
+                    "size": "4.1GB",
+                    "magnet": "magnet:?xt=urn:btih:hash2",
+                    "cover_url": "https://cc.guohuasun.com/images/titles/bbb-222/bbb-222.jpg",
+                },
+            ],
+        }],
+        "failed": [],
+    }
+
+    html = format_html("sync.completed", sample)
+    assert "===SPLIT===" in html
+    assert "expandable" not in html  # No collapsed/truncated blockquote
+
+    chunks = tg.split_message(html, parse_mode="HTML")
+    # 1 header + 2 works = 3 distinct messages
+    assert len(chunks) == 3
+    assert "Library sync complete" in chunks[0]
+
+    # Work 1 card has Work 1's cover
+    assert '<a href="https://cc.guohuasun.com/images/titles/aaa-111/aaa-111.jpg">&#8203;</a>' in chunks[1]
+    assert "AAA-111" in chunks[1]
+    assert "Full Uncut Title 1" in chunks[1]
+    assert "hash1" in chunks[1]
+
+    # Work 2 card has Work 2's cover
+    assert '<a href="https://cc.guohuasun.com/images/titles/bbb-222/bbb-222.jpg">&#8203;</a>' in chunks[2]
+    assert "BBB-222" in chunks[2]
+    assert "Full Uncut Title 2" in chunks[2]
+    assert "hash2" in chunks[2]

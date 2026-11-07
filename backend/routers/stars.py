@@ -156,6 +156,7 @@ def _build_stars_response() -> list[dict[str, Any]]:
         # DEAD_PURGE_TTL_DAYS (docs/design/magnet-check.md). Liked titles are
         # the exception: they stay visible (and greyed) so the owner can
         # unlike them, and they are never purged.
+        today_str = datetime.now(timezone.utc).strftime("%Y%m%d")
         title_rows = conn.execute("""
         SELECT
             s.code,
@@ -164,14 +165,31 @@ def _build_stars_response() -> list[dict[str, Any]]:
                 'code', r.code,
                 'title', r.title,
                 'date', COALESCE(r.release_date, ''),
+                'discovered_at', COALESCE(to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), ''),
+                'effective_date', CASE 
+                    WHEN r.release_date_sort IS NOT NULL AND r.release_date_sort <= %s
+                    THEN GREATEST(to_char(r.created_at, 'YYYYMMDD'), r.release_date_sort)
+                    ELSE to_char(r.created_at, 'YYYYMMDD')
+                END,
                 'resolution', COALESCE(r.resolution, ''),
                 'cover_w', r.cover_w,
                 'cover_h', r.cover_h,
                 'magnet', COALESCE(r.magnet, ''),
                 'magnet_status', COALESCE(r.magnet_status, ''),
                 'user_liked', COALESCE(r.user_liked, 0)
-            ) ORDER BY r.release_date_sort DESC NULLS LAST, r.code DESC)
-            FILTER (WHERE r.code IS NOT NULL), '[]'::jsonb) AS titles
+            ) ORDER BY 
+                CASE 
+                    WHEN r.release_date_sort IS NOT NULL AND r.release_date_sort <= %s
+                    THEN GREATEST(to_char(r.created_at, 'YYYYMMDD'), r.release_date_sort)
+                    ELSE to_char(r.created_at, 'YYYYMMDD')
+                END DESC,
+                r.created_at DESC,
+                r.release_date_sort DESC NULLS LAST,
+                r.code DESC
+            )
+            FILTER (WHERE r.code IS NOT NULL), '[]'::jsonb) AS titles,
+            MAX(r.created_at) AS max_title_created_at,
+            MAX(r.release_date_sort) AS max_release_date_sort
         FROM stars s
         LEFT JOIN titles r ON r.star_id = s.id
             AND (
@@ -180,11 +198,16 @@ def _build_stars_response() -> list[dict[str, Any]]:
             )
         GROUP BY s.id, s.code, s.name
         ORDER BY s.name
-        """).fetchall()
+        """, (today_str, today_str)).fetchall()
 
         db_data: dict[str, dict[str, Any]] = {}
         for row in title_rows:
-            db_data[row[0]] = {"titles": row[2], "added_at": _iso_utc(row[1])}
+            db_data[row[0]] = {
+                "titles": row[2],
+                "added_at": _iso_utc(row[1]),
+                "max_disc_ts": _iso_utc(row[3]),
+                "max_release": row[4] or "",
+            }
 
         from core import db
         x_profiles = db.load_x_profiles(conn)
@@ -228,16 +251,27 @@ def _build_stars_response() -> list[dict[str, Any]]:
                 "x": x_profiles.get(code),
             })
 
-        def _latest_date(star):
+        def _star_sort_key(star):
             titles = star.get("titles", [])
-            if titles and titles[0].get("date"):
-                d = titles[0]["date"]
-                if d and "/" in d:
-                    parts = d.split("/")
-                    return f"{parts[2]}{parts[1].zfill(2)}{parts[0].zfill(2)}"
-            return "99999999"
+            code = star.get("code")
+            meta = db_data.get(code, {})
+            if titles:
+                first = titles[0]
+                eff = first.get("effective_date") or ""
+                if not eff and first.get("date"):
+                    parts = first["date"].split("/")
+                    if len(parts) == 3:
+                        eff = f"{parts[2]}{parts[1].zfill(2)}{parts[0].zfill(2)}"
+                disc_ts = meta.get("max_disc_ts") or first.get("discovered_at") or ""
+                rel = meta.get("max_release") or ""
+                return (eff or "00000000", disc_ts, rel, star.get("name") or "")
+            return ("00000000", meta.get("added_at") or "", "", star.get("name") or "")
 
-        result.sort(key=_latest_date, reverse=True)
+        result.sort(key=_star_sort_key, reverse=True)
+
+        for star in result:
+            for t in star.get("titles", []):
+                t.pop("effective_date", None)
 
         number = 1
         for star in result:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
@@ -42,7 +43,9 @@ async def send_messages(chunks: list[str], *, parse_mode: str | None) -> None:
         return
     url = _TELEGRAM_API.format(token=token)
     async with httpx.AsyncClient(timeout=_SEND_TIMEOUT) as client:
-        for text in chunks:
+        for i, text in enumerate(chunks):
+            if i > 0:
+                await asyncio.sleep(0.08)
             ok = await _send_one(client, url, chat_id, text[:_MAX_LEN], parse_mode)
             if ok:
                 continue
@@ -103,6 +106,16 @@ def _strip_html(text: str) -> str:
 
 
 def split_message(text: str, max_len: int = _MAX_LEN, *, parse_mode: str | None = None) -> list[str]:
+    if "===SPLIT===" in text:
+        parts = [p.strip() for p in text.split("===SPLIT===") if p.strip()]
+        chunks: list[str] = []
+        for part in parts:
+            chunks.extend(_split_chunk(part, max_len, parse_mode=parse_mode))
+        return chunks
+    return _split_chunk(text, max_len, parse_mode=parse_mode)
+
+
+def _split_chunk(text: str, max_len: int = _MAX_LEN, *, parse_mode: str | None = None) -> list[str]:
     if len(text) <= max_len:
         return [text]
     chunks: list[str] = []

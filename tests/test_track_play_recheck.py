@@ -19,14 +19,22 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture()
 def client(monkeypatch):
+    monkeypatch.setenv("XSTREAM_NOTIFY_ENABLED", "0")
     scheduled: list[str] = []
 
     async def _fake_schedule(code: str) -> None:
         scheduled.append(code)
 
+    async def _fake_write(fn, *args, **kwargs):
+        return 1
+
     monkeypatch.setattr(
         "backend.routers.magnets.schedule_title_magnet_recheck",
         _fake_schedule,
+    )
+    monkeypatch.setattr(
+        "backend.routers.track.db_write",
+        _fake_write,
     )
     app = FastAPI()
     app.include_router(track.router)

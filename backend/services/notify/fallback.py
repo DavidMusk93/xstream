@@ -38,48 +38,45 @@ def _short_json(data: dict[str, Any], limit: int = 400) -> str:
 
 
 def _sync_completed(d: dict[str, Any]) -> str:
+    import os
+
     new = int(d.get("total_new") or 0)
     updated = int(d.get("total_updated") or 0)
     elapsed = d.get("elapsed", "?")
     trigger = esc(str(d.get("trigger") or "sync"))
-
-    # First cover URL across all stars/titles for hidden link preview
-    cover_anchor = ""
-    for block in d.get("star_updates") or []:
-        for t in block.get("new_titles") or []:
-            c = str(t.get("cover_url") or "").strip()
-            if c:
-                cover_anchor = f'<a href="{esc(c)}">&#8203;</a>'
-                break
-        if cover_anchor:
-            break
+    domain = os.environ.get("XSTREAM_DOMAIN") or "cc.guohuasun.com"
 
     stats = f"✨ <b>{new}</b> new"
     if updated > 0:
         stats += f" · <b>{updated}</b> updated"
     stats += f" · <i>{trigger} ({esc(str(elapsed))}s)</i>"
 
-    lines = [
-        f"{cover_anchor}📚 <b>Library sync complete</b>",
+    header_lines = [
+        "📚 <b>Library sync complete</b>",
         stats,
     ]
+
+    failed = d.get("failed") or []
+    if failed:
+        names = ", ".join(esc(str(x)) for x in failed)
+        header_lines.append(f"\n⚠️ <b>Failed stars:</b> <i>{names}</i>")
+
+    cards: list[str] = ["\n".join(header_lines)]
+
     for block in d.get("star_updates") or []:
         name = esc(str(block.get("name") or "?"))
         code = str(block.get("code") or "")
-        count = int(block.get("count") or 0)
-        head = f"\n⭐ <b>{name}</b>"
-        if code:
-            head += f" · <code>{esc(code)}</code>"
-        head += f" (<b>{count}</b> new)\n"
         titles = block.get("new_titles") or []
-        body_parts: list[str] = []
         for t in titles:
             tc = esc(str(t.get("code") or "").strip())
             title = esc(str(t.get("title") or "").strip())
             date = str(t.get("date") or "").strip()
             res = str(t.get("resolution") or "").strip().strip("[]")
             size = str(t.get("size") or "").strip()
+            magnet = str(t.get("magnet") or "").strip()
+            cover_url = str(t.get("cover_url") or "").strip()
 
+            cover_anchor = f'<a href="{esc(cover_url)}">&#8203;</a>' if cover_url else ""
             badges: list[str] = []
             if res:
                 badges.append(f"🏷 <code>{esc(res)}</code>")
@@ -88,20 +85,33 @@ def _sync_completed(d: dict[str, Any]) -> str:
             if date:
                 badges.append(f"📅 <code>{esc(date)}</code>")
 
-            part = f"🎬 <b><code>{tc}</code></b>"
-            if badges:
-                part += " · " + " · ".join(badges)
+            star_label = f"⭐ <b>{name}</b>"
+            if code:
+                star_label += f" · <code>{esc(code)}</code>"
+
+            card_parts = [
+                f"{cover_anchor}{star_label} · 🎬 <b><code>{tc}</code></b>",
+            ]
             if title and not title.lower() == tc.lower():
-                part += f'\n   <i>"{title}"</i>'
-            body_parts.append(part)
-        if body_parts:
-            head += blockquote("\n\n".join(body_parts), expandable=len(body_parts) > 1)
-        lines.append(head)
-    failed = d.get("failed") or []
-    if failed:
-        names = ", ".join(esc(str(x)) for x in failed)
-        lines.append(f"\n⚠️ <b>Failed stars:</b> <i>{names}</i>")
-    return "\n".join(lines) + "\n"
+                card_parts.append(f'<i>"{title}"</i>')
+            if badges:
+                card_parts.append(" · ".join(badges))
+            if magnet:
+                card_parts.append(f"🧲 <code>{esc(magnet)}</code>")
+            if domain and tc:
+                card_parts.append(f'🔗 <a href="https://{domain}/#search={tc}">Open in xstream</a>')
+
+            cards.append("\n".join(card_parts))
+
+    if new == 0 and not d.get("star_updates"):
+        log_lines = d.get("log_lines") or []
+        if log_lines:
+            tail = "<i>No structured updates; tail log:</i>\n" + "\n".join(
+                f"  {esc(str(ln))}" for ln in log_lines[:8]
+            )
+            cards[0] += "\n" + blockquote(tail, expandable=False)
+
+    return "\n\n===SPLIT===\n\n".join(cards) + "\n"
 
 
 def _metrics_alert(d: dict[str, Any]) -> str:

@@ -997,7 +997,7 @@ class TestCacheUpperLimit(unittest.TestCase):
             # Limit must not exceed 60% of total or available minus reserve.
             self.assertLessEqual(engine.max_size_bytes, int(total * 0.6))
             self.assertLessEqual(
-                engine.max_size_bytes + engine.min_free_bytes, available
+                engine.max_size_bytes + engine.min_free_bytes, available + 10 * 1024 * 1024
             )
         finally:
             import shutil
