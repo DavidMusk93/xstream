@@ -1,20 +1,19 @@
 import { parseStarSort, STAR_SORT_STORAGE_KEY, type StarSort } from '~/utils/starSort'
 
 /**
- * Home shelf sort preference. Always bootstraps as Latest for SSR, then
- * re-reads localStorage on mount so hydration cannot stick on Latest while
- * storage says Added.
+ * Home shelf sort preference. Always bootstraps as 'release' for SSR, then
+ * re-reads localStorage on mount.
  */
 export function useStarSort() {
-  const starSort = ref<StarSort>('works')
+  const starSort = ref<StarSort>('release')
   let hydrated = false
 
   function readStorage(): StarSort {
-    if (!import.meta.client) return 'works'
+    if (!import.meta.client) return 'release'
     try {
       return parseStarSort(localStorage.getItem(STAR_SORT_STORAGE_KEY))
     } catch {
-      return 'works'
+      return 'release'
     }
   }
 

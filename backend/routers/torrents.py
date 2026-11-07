@@ -25,7 +25,6 @@ def _is_primary_title(work_code: str) -> bool:
     if not work_code:
         return False
     try:
-        today_str = datetime.now(timezone.utc).strftime("%Y%m%d")
         conn = _db_conn()
         try:
             row = conn.execute("""
@@ -35,19 +34,14 @@ def _is_primary_title(work_code: str) -> bool:
                         ROW_NUMBER() OVER (
                             PARTITION BY star_id
                             ORDER BY 
-                                CASE 
-                                    WHEN release_date_sort IS NOT NULL AND release_date_sort <= %s
-                                    THEN GREATEST(to_char(created_at, 'YYYYMMDD'), release_date_sort)
-                                    ELSE to_char(created_at, 'YYYYMMDD')
-                                END DESC,
-                                created_at DESC,
                                 release_date_sort DESC NULLS LAST,
+                                created_at DESC,
                                 code DESC
                         ) AS rn
                     FROM titles
                 ) t ON t.star_id = s.id AND t.rn = 1
                 WHERE t.code = %s
-            """, [today_str, work_code.upper()]).fetchone()
+            """, [work_code.upper()]).fetchone()
             return row is not None
         finally:
             conn.close()

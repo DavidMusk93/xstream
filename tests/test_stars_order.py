@@ -67,35 +67,35 @@ def test_payload_orders_by_newest_work_and_exposes_added_at(stars_db):
     assert by_code["BBB-001"]["added_at"].startswith("2026-01-15")
 
 
-def test_discovery_date_takes_precedence_over_older_releases(stars_db):
-    """Star Alpha had an older catalog title discovered on xstream today.
-    Star Beta had a newer release title discovered last month.
-    Alpha leads because xstream's discovery log reflects recent update activity.
+def test_discovery_date_breaks_release_date_ties(stars_db):
+    """When two stars have works with the same release date,
+    the work discovered more recently on xstream breaks the tie.
     """
     from datetime import datetime, timezone
     from backend.routers.stars import _build_stars_response
 
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    # Beta's work was discovered 30 days ago
+    # Beta's work released 2026-08-01, discovered earlier
     stars_db.execute(
         """
         INSERT INTO titles (star_id, star_code, code, title, magnet, magnet_hash,
                             magnet_status, release_date, release_date_sort, created_at)
-        VALUES (2, 'X', 'BBB-020', 'recent release', 'm:', %s, 'ok', '15/6/2026', '20260615', '2026-01-01 10:00:00')
+        VALUES (2, 'X', 'BBB-020', 'same release date earlier disc', 'm:', %s, 'ok', '1/8/2026', '20260801', '2026-01-01 10:00:00')
         """,
         ("b" * 40,),
     )
-    # Alpha's work is a 2020 title, but discovered on xstream today
+    # Alpha's work released 2026-08-01, discovered today
     stars_db.execute(
         """
         INSERT INTO titles (star_id, star_code, code, title, magnet, magnet_hash,
                             magnet_status, release_date, release_date_sort, created_at)
-        VALUES (1, 'X', 'AAA-020', 'classic discovered today', 'm:', %s, 'ok', '1/1/2020', '20200101', %s)
+        VALUES (1, 'X', 'AAA-020', 'same release date recent disc', 'm:', %s, 'ok', '1/8/2026', '20260801', %s)
         """,
         ("a" * 40, today_str),
     )
 
     payload = _build_stars_response()
+    # Same release date (20260801), so Alpha leads Beta due to newer discovery timestamp
     assert [s["code"] for s in payload] == ["AAA-001", "BBB-001"]
     assert payload[0]["titles"][0]["code"] == "AAA-020"
     assert "discovered_at" in payload[0]["titles"][0]

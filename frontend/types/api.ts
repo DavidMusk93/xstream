@@ -44,6 +44,7 @@ export interface Title {
   code: string
   title?: string
   date?: string
+  release_date_sort?: string
   discovered_at?: string
   resolution?: string
   cover_url?: string

@@ -156,7 +156,6 @@ def _build_stars_response() -> list[dict[str, Any]]:
         # DEAD_PURGE_TTL_DAYS (docs/design/magnet-check.md). Liked titles are
         # the exception: they stay visible (and greyed) so the owner can
         # unlike them, and they are never purged.
-        today_str = datetime.now(timezone.utc).strftime("%Y%m%d")
         title_rows = conn.execute("""
         SELECT
             s.code,
@@ -165,12 +164,8 @@ def _build_stars_response() -> list[dict[str, Any]]:
                 'code', r.code,
                 'title', r.title,
                 'date', COALESCE(r.release_date, ''),
+                'release_date_sort', COALESCE(r.release_date_sort, ''),
                 'discovered_at', COALESCE(to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), ''),
-                'effective_date', CASE 
-                    WHEN r.release_date_sort IS NOT NULL AND r.release_date_sort <= %s
-                    THEN GREATEST(to_char(r.created_at, 'YYYYMMDD'), r.release_date_sort)
-                    ELSE to_char(r.created_at, 'YYYYMMDD')
-                END,
                 'resolution', COALESCE(r.resolution, ''),
                 'cover_w', r.cover_w,
                 'cover_h', r.cover_h,
@@ -178,13 +173,8 @@ def _build_stars_response() -> list[dict[str, Any]]:
                 'magnet_status', COALESCE(r.magnet_status, ''),
                 'user_liked', COALESCE(r.user_liked, 0)
             ) ORDER BY 
-                CASE 
-                    WHEN r.release_date_sort IS NOT NULL AND r.release_date_sort <= %s
-                    THEN GREATEST(to_char(r.created_at, 'YYYYMMDD'), r.release_date_sort)
-                    ELSE to_char(r.created_at, 'YYYYMMDD')
-                END DESC,
-                r.created_at DESC,
                 r.release_date_sort DESC NULLS LAST,
+                r.created_at DESC,
                 r.code DESC
             )
             FILTER (WHERE r.code IS NOT NULL), '[]'::jsonb) AS titles,
@@ -198,7 +188,7 @@ def _build_stars_response() -> list[dict[str, Any]]:
             )
         GROUP BY s.id, s.code, s.name
         ORDER BY s.name
-        """, (today_str, today_str)).fetchall()
+        """).fetchall()
 
         db_data: dict[str, dict[str, Any]] = {}
         for row in title_rows:
@@ -252,26 +242,18 @@ def _build_stars_response() -> list[dict[str, Any]]:
             })
 
         def _star_sort_key(star):
-            titles = star.get("titles", [])
-            code = star.get("code")
-            meta = db_data.get(code, {})
-            if titles:
-                first = titles[0]
-                eff = first.get("effective_date") or ""
-                if not eff and first.get("date"):
-                    parts = first["date"].split("/")
-                    if len(parts) == 3:
-                        eff = f"{parts[2]}{parts[1].zfill(2)}{parts[0].zfill(2)}"
-                disc_ts = meta.get("max_disc_ts") or first.get("discovered_at") or ""
-                rel = meta.get("max_release") or ""
-                return (eff or "00000000", disc_ts, rel, star.get("name") or "")
-            return ("00000000", meta.get("added_at") or "", "", star.get("name") or "")
+            meta = db_data.get(star.get("code"), {})
+            # Compound multi-sort keys:
+            # 1. Newest work release date (YYYYMMDD)
+            # 2. Newest work discovery timestamp (ISO UTC)
+            # 3. Star name
+            return (
+                meta.get("max_release") or "",
+                meta.get("max_disc_ts") or "",
+                star.get("name") or "",
+            )
 
         result.sort(key=_star_sort_key, reverse=True)
-
-        for star in result:
-            for t in star.get("titles", []):
-                t.pop("effective_date", None)
 
         number = 1
         for star in result:
