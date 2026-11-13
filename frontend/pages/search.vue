@@ -84,18 +84,26 @@
                 v-for="(a, i) in actresses"
                 :key="a.url"
                 v-reveal="Math.min(i, 5) * 0.05"
-                class="surface shrink-0 w-[148px] p-3 flex flex-col gap-3"
+                class="surface shrink-0 w-[148px] p-3 flex flex-col gap-3 transition-all duration-300 ease-spring hover:-translate-y-1 hover:shadow-lg"
               >
                 <!-- Natural aspect ratio, never cropped -->
-                <div class="rounded-2xl overflow-hidden bg-fill">
+                <div class="rounded-2xl overflow-hidden bg-fill relative">
+                  <div
+                    v-if="!isImgReady(a.url) && !failedCovers.has(a.url)"
+                    class="thumb-shimmer absolute inset-0 pointer-events-none"
+                    aria-hidden="true"
+                  />
                   <img
                     v-if="a.image && !failedCovers.has(a.url)"
+                    :ref="(el) => bindImgEl(a.url, el as HTMLImageElement | null)"
                     :src="a.image"
                     :alt="a.name"
                     referrerpolicy="no-referrer"
                     loading="lazy"
                     decoding="async"
-                    class="w-full h-auto block"
+                    class="w-full h-auto block select-none transition-opacity duration-300 ease-spring"
+                    :class="isImgReady(a.url) ? 'opacity-100' : 'opacity-0'"
+                    @load="onImgLoad(a.url, $event)"
                     @error="failedCovers.add(a.url)"
                   />
                   <div v-else class="aspect-square flex items-center justify-center text-[28px] font-semibold text-foreground-muted/50">
@@ -127,18 +135,26 @@
                 v-for="(item, i) in items"
                 :key="item.code"
                 v-reveal="Math.min(i, 3) * 0.06"
-                class="surface flex flex-col sm:flex-row gap-5 sm:gap-8 p-4 sm:p-6"
+                class="surface flex flex-col sm:flex-row gap-5 sm:gap-8 p-4 sm:p-6 transition-all duration-300 ease-spring hover:-translate-y-1 hover:shadow-lg"
               >
                 <!-- Cover: natural aspect ratio, never cropped -->
                 <div class="relative w-full sm:w-[280px] md:w-[320px] shrink-0 self-start rounded-[18px] overflow-hidden bg-fill">
+                  <div
+                    v-if="!isImgReady(item.code) && !failedCovers.has(item.code)"
+                    class="thumb-shimmer absolute inset-0 pointer-events-none"
+                    aria-hidden="true"
+                  />
                   <img
                     v-if="item.cover_url && !failedCovers.has(item.code)"
+                    :ref="(el) => bindImgEl(item.code, el as HTMLImageElement | null)"
                     :src="item.cover_url"
                     :alt="item.code"
                     referrerpolicy="no-referrer"
                     loading="lazy"
                     decoding="async"
-                    class="w-full h-auto block"
+                    class="w-full h-auto block select-none transition-opacity duration-300 ease-spring"
+                    :class="isImgReady(item.code) ? 'opacity-100' : 'opacity-0'"
+                    @load="onImgLoad(item.code, $event)"
                     @error="failedCovers.add(item.code)"
                   />
                   <div v-else class="flex flex-col items-center justify-center p-6 text-center aspect-[3/2]">
@@ -264,10 +280,33 @@
 
 <script setup lang="ts">
 import type { SearchResponse, SearchResultActress, SearchResultItem, SearchResultMagnet, SearchResultStar } from '~/types/api'
+import { decodeThumbImage } from '~/utils/thumbCover'
 
 const config = useRuntimeConfig()
 const { track } = useTrack()
 const { add: addLog } = useEventLog()
+
+const readyImages = reactive<Record<string, boolean>>({})
+
+function isImgReady(key: string): boolean {
+  return !!readyImages[key]
+}
+
+async function onImgLoad(key: string, e: Event) {
+  const img = e.target as HTMLImageElement
+  const ok = await decodeThumbImage(img)
+  if (ok) {
+    readyImages[key] = true
+  }
+}
+
+function bindImgEl(key: string, el: HTMLImageElement | null) {
+  if (!el?.complete || el.naturalWidth <= 0) return
+  if (readyImages[key]) return
+  void decodeThumbImage(el).then((ok) => {
+    if (ok) readyImages[key] = true
+  })
+}
 
 const query = ref('')
 const lastQuery = ref('')

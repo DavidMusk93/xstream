@@ -148,24 +148,28 @@
 
         <div class="min-w-0 flex flex-col lg:py-1 lg:pb-2">
             <div class="lg:mt-auto">
-              <div class="flex items-center flex-wrap gap-x-2 gap-y-1 text-[13px] font-medium text-foreground-muted tabular-nums">
-                <span v-if="activeTitle.date">{{ fmtDate(activeTitle.date) }}</span>
-                <span v-if="activeIsHd" class="chip bg-black/[0.06] text-foreground">HD</span>
-                <span v-if="activeTitle.magnet_status === 'dead'" class="chip bg-danger/10 text-danger">Unavailable</span>
-              </div>
-              <h3 class="mt-2 text-[34px] sm:text-[48px] lg:text-[56px] font-bold text-foreground leading-[1] tracking-[-0.03em]">
-                {{ activeTitle.code }}
-              </h3>
-              <p class="mt-4 text-[15px] sm:text-[17px] text-foreground-muted leading-relaxed line-clamp-3 lg:line-clamp-4">
-                {{ activeTitle.title }}
-              </p>
+              <Transition name="editorial-swap" mode="out-in">
+                <div :key="activeTitle.code">
+                  <div class="flex items-center flex-wrap gap-x-2 gap-y-1 text-[13px] font-medium text-foreground-muted tabular-nums">
+                    <span v-if="activeTitle.date">{{ fmtDate(activeTitle.date) }}</span>
+                    <span v-if="activeIsHd" class="chip bg-black/[0.06] text-foreground">HD</span>
+                    <span v-if="activeTitle.magnet_status === 'dead'" class="chip bg-danger/10 text-danger">Unavailable</span>
+                  </div>
+                  <h3 class="mt-2 text-[34px] sm:text-[48px] lg:text-[56px] font-bold text-foreground leading-[1] tracking-[-0.03em]">
+                    {{ activeTitle.code }}
+                  </h3>
+                  <p class="mt-4 text-[15px] sm:text-[17px] text-foreground-muted leading-relaxed line-clamp-3 lg:line-clamp-4">
+                    {{ activeTitle.title }}
+                  </p>
+                </div>
+              </Transition>
 
               <!-- Icon-only actions; Copy stays first and accent — it is the
                    real primary action (49 copies vs 1 play in early tracking) -->
               <div class="flex items-center gap-3 mt-6 sm:mt-8">
                 <button
-                  class="action text-white shadow-[0_6px_20px_-6px_rgba(255,55,95,0.6)] hover:-translate-y-0.5"
-                  :class="copied ? 'bg-success shadow-none' : 'bg-accent hover:bg-accent-hover'"
+                  class="action text-white shadow-[0_6px_20px_-6px_rgba(255,55,95,0.6)] hover:-translate-y-1 hover:scale-[1.04]"
+                  :class="copied ? 'bg-success shadow-none animate-sensual-pop' : 'bg-accent hover:bg-accent-hover'"
                   :data-tip="copied ? 'Copied' : 'Copy magnet'"
                   :data-tip-show="copied || undefined"
                   aria-label="Copy magnet"
@@ -181,7 +185,7 @@
                 </button>
 
                 <button
-                  class="action bg-foreground text-white hover:bg-black hover:-translate-y-0.5"
+                  class="action bg-foreground text-white hover:bg-black hover:-translate-y-1 hover:scale-[1.04]"
                   data-tip="Play"
                   aria-label="Play"
                   :disabled="!activePlayable"
@@ -191,8 +195,11 @@
                 </button>
 
                 <button
-                  class="action hover:-translate-y-0.5"
-                  :class="activeLiked ? 'bg-accent/10 text-accent hover:bg-accent/15' : 'bg-black/[0.05] text-foreground hover:bg-black/[0.08]'"
+                  class="action hover:-translate-y-1 hover:scale-[1.04]"
+                  :class="[
+                    activeLiked ? 'bg-accent/10 text-accent hover:bg-accent/15' : 'bg-black/[0.05] text-foreground hover:bg-black/[0.08]',
+                    justLiked ? 'animate-heart-sensual ring-2 ring-accent/30' : ''
+                  ]"
                   :data-tip="activeLiked ? 'Liked' : 'Like'"
                   :aria-pressed="activeLiked"
                   :aria-label="activeLiked ? 'Unlike' : 'Like'"
@@ -231,26 +238,38 @@
         <button
           v-for="{ title, idx } in windowedTitles"
           :key="title.code"
-          class="group/thumb shrink-0 w-[148px] sm:w-[188px] lg:w-[212px] text-left snap-center active:scale-[0.97] active:duration-100 [transition-timing-function:var(--ease-out)] sm:transition-transform sm:duration-300"
-          :class="displayIndex === idx ? '' : 'sm:hover:-translate-y-1'"
+          class="group/thumb shrink-0 w-[148px] sm:w-[188px] lg:w-[212px] text-left snap-center active:scale-[0.96] active:duration-100 [transition-timing-function:var(--ease-sensual)] sm:transition-transform sm:duration-300"
+          :class="displayIndex === idx ? '' : 'sm:hover:-translate-y-1.5'"
           :aria-label="title.code"
           :aria-current="displayIndex === idx ? 'true' : undefined"
           @click="pickThumb(idx)"
         >
           <div
-            class="thumb-cover aspect-[3/2] rounded-[14px] overflow-hidden bg-fill"
+            class="thumb-cover aspect-[3/2] rounded-[14px] overflow-hidden bg-fill relative"
             :class="title.magnet_status === 'dead' ? 'thumb-cover-dead' : ''"
           >
+            <!-- Loading shimmer placeholder while thumbnail is decoding -->
+            <div
+              v-if="!isThumbReady(title.code) && !thumbErrors[title.code]"
+              class="thumb-shimmer absolute inset-0 pointer-events-none"
+              aria-hidden="true"
+            />
+
             <!-- Fixed box + contain: every thumbnail gets the same height and
                  an abnormal cover (portrait, wrong dims) letterboxes inside
                  instead of stretching the rail. Never object-cover. -->
             <img
               v-if="title.cover_url && !thumbErrors[title.code]"
-              :src="title.cover_thumb_url || `/api/cover/${title.code}?thumb=1`"
+              :ref="(el) => bindThumbImgEl(title.code, el as HTMLImageElement | null)"
+              :src="thumbSrcMap[title.code] || title.cover_thumb_url || `/api/cover/${title.code}?thumb=1`"
               :alt="title.code"
-              class="h-full w-full object-contain"
+              loading="lazy"
               decoding="async"
-              @error="thumbErrors[title.code] = true"
+              draggable="false"
+              class="h-full w-full object-contain block select-none group-hover/thumb:scale-[1.03] transition-transform duration-500 ease-spring"
+              :class="thumbImgClass(title.code)"
+              @load="(e) => onThumbLoad(title.code, e)"
+              @error="(e) => onThumbError(title, e)"
             />
             <div
               v-else
@@ -273,6 +292,11 @@
 
 <script setup lang="ts">
 import type { Star, Title } from '~/types/api'
+import {
+  isThumbReady as isGlobalThumbReady,
+  markThumbReady as markGlobalThumbReady,
+  decodeThumbImage,
+} from '~/utils/thumbCover'
 import {
   heroLqipSrc,
   heroSrc,
@@ -629,6 +653,55 @@ function syncHeroFromThumbScroll() {
 
 const heroErrors = ref<Record<string, boolean>>({})
 const thumbErrors = ref<Record<string, boolean>>({})
+const thumbReadyTick = ref(0)
+const thumbSrcMap = reactive<Record<string, string>>({})
+const thumbFallbackTries = reactive<Record<string, boolean>>({})
+
+function isThumbReady(code: string): boolean {
+  void thumbReadyTick.value
+  return isGlobalThumbReady(code)
+}
+
+function thumbImgClass(code: string) {
+  const ready = isThumbReady(code)
+  return [
+    ready ? 'opacity-100' : 'opacity-0',
+    ready ? 'duration-0' : 'transition-opacity duration-300 ease-spring',
+  ]
+}
+
+async function onThumbLoad(code: string, e: Event) {
+  const img = e.target as HTMLImageElement
+  const ok = await decodeThumbImage(img)
+  if (ok) {
+    markGlobalThumbReady(code)
+    thumbReadyTick.value++
+  }
+}
+
+function bindThumbImgEl(code: string, el: HTMLImageElement | null) {
+  if (!el?.complete || el.naturalWidth <= 0) return
+  if (isGlobalThumbReady(code)) return
+  void decodeThumbImage(el).then((ok) => {
+    if (ok) {
+      markGlobalThumbReady(code)
+      thumbReadyTick.value++
+    }
+  })
+}
+
+function onThumbError(title: Title, e: Event) {
+  const code = title.code
+  const img = e.target as HTMLImageElement
+  const fallback = `/api/cover/${code}?thumb=1`
+  if (!thumbFallbackTries[code] && !img.src.includes(`/api/cover/${code}`)) {
+    thumbFallbackTries[code] = true
+    thumbSrcMap[code] = fallback
+    img.src = fallback
+    return
+  }
+  thumbErrors.value[code] = true
+}
 
 function finishHeroPaint(t: Title) {
   if (!heroPaintMeta || heroPaintMeta.code !== t.code) return
@@ -710,7 +783,7 @@ const trailPad = computed(() => {
 function initThumbWindow() {
   const totalN = props.star.titles?.length ?? 0
   if (!thumbStride.value || !rowViewWidth.value) {
-    thumbWinEnd.value = Math.min(totalN, 20)
+    thumbWinEnd.value = Math.min(totalN, 10)
     return
   }
   const visible = Math.ceil(rowViewWidth.value / thumbStride.value)
@@ -852,6 +925,9 @@ function onPlay() {
   emit('play', activeTitle.value.magnet!, activeTitle.value.code, props.star.code)
 }
 
+const justLiked = ref(false)
+let likeAnimTimer: ReturnType<typeof setTimeout> | null = null
+
 async function toggleLike() {
   if (liking.value || !activeTitle.value) return
   liking.value = true
@@ -860,6 +936,11 @@ async function toggleLike() {
     const newVal = !activeLiked.value
     await likeTitle(activeTitle.value.code, newVal)
     activeTitle.value.user_liked = newVal
+    if (newVal) {
+      justLiked.value = true
+      if (likeAnimTimer) clearTimeout(likeAnimTimer)
+      likeAnimTimer = setTimeout(() => { justLiked.value = false }, 600)
+    }
     track(newVal ? 'like' : 'unlike', { code: activeTitle.value.code, star_code: props.star.code })
     addLog({ kind: 'action', title: `${newVal ? 'Liked' : 'Unliked'} ${activeTitle.value.code}`, detail: props.star.name, state: 'success' })
   } catch (e: any) {

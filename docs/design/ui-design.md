@@ -240,23 +240,24 @@ order) and the name sit above.
   — see `docs/analysis/hero-step-perf.md`.
 - Info column (pinned to the bottom on `lg:`): date and HD / Unavailable
   chips, code headline (34 / 48 / 56px, tight tracking), 3–4 line title,
-  actions.   Text updates in place on step (no block swap transition). Thumbs use
-  `snap-center` + shared index: hero step scrolls the rail (instant);
+  actions. Text updates with an editorial crossfade (`.editorial-swap`) on step.
+  Thumbs use `snap-center` + shared index: hero step scrolls the rail (instant);
   thumb click smooth-scrolls and slides the hero; manual rail scroll syncs
   hero on idle via nearest snap.
 - Actions: three icon-only `.action` circles — **Copy Magnet** (accent
-  fill, magnet icon → check + success fill + `Copied` tip), Play (dark fill),
-  Like (accent tint when liked). Names come from the `data-tip` tooltip
-  (hover on desktop; forced visible after copy via `data-tip-show`).
+  fill, magnet icon → check + success fill + `Copied` tip + sensual pop pulse),
+  Play (dark fill, spring lift), Like (accent tint when liked + heart burst animation).
+  Names come from the `data-tip` tooltip (hover on desktop; forced visible after copy via `data-tip-show`).
 - Gallery: captioned cards `w-[148/188/212px]`, `rounded-[14px]`, caption =
   code + `YY.MM.DD`. Thumbnails sit in a fixed `aspect-[3/2]` box with
   `object-contain`, so every card shares one height and an abnormal cover
   (portrait, wrong dims) letterboxes instead of stretching the rail —
-  `object-cover` stays forbidden. Active = accent dot before the code +
-  lifted shadow (no
-  ring); inactive covers at `opacity-[0.78]`; dead magnets grayscale.
+  `object-cover` stays forbidden. Thumbnails stay `opacity-0` with a subtle shimmer
+  wave until fully decoded (`img.decode()`), preventing progressive half-rendered
+  JPEGs on initial load. Active = accent dot before the code + lifted shadow + accent ring halo;
+  inactive covers at `opacity-[0.78]`; dead magnets grayscale.
   Hovering the gallery dims the other cards (focus/dim) and lifts the
-  hovered one. Active/inactive styling is driven by `aria-current` + CSS
+  hovered one (`scale-[1.02]`). Active/inactive styling is driven by `aria-current` + CSS
   (`.thumb-cover` / `.thumb-dot`) so horizontal scroll does not patch
   per-thumb Vue classes; the rail window expands while scrolling and
   trims after idle (~380ms). The right edge fades out (`.fade-edge-r`).
