@@ -583,10 +583,12 @@ class TorrentEngine:
         if loaded:
             log.info(f"preloaded {loaded} cached torrents from {self.cache_dir}")
 
+    _HD_SOURCE_TAGS = ("hhd800", "4k688")
+
     def _pick_video_file(self, ti: lt.torrent_info) -> tuple[int, int, str, bool]:
-        """Pick video file from torrent. Prefer hhd800.com HD source, otherwise largest."""
+        """Pick video file from torrent. Prefer hhd800/4k688 HD source, otherwise largest."""
         fs = ti.files()
-        hhd800_candidates = []
+        hd_candidates = []
         all_video_candidates = []
         for idx in range(fs.num_files()):
             name = fs.file_path(idx)
@@ -596,13 +598,13 @@ class TorrentEngine:
                 continue
             if any(p.search(name) for p in SPAM_PATTERNS):
                 continue
-            if "hhd800" in name.lower():
-                hhd800_candidates.append((size, idx, name))
+            if any(tag in name.lower() for tag in self._HD_SOURCE_TAGS):
+                hd_candidates.append((size, idx, name))
             all_video_candidates.append((size, idx, name))
-        if hhd800_candidates:
-            hhd800_candidates.sort(reverse=True)
-            return (*hhd800_candidates[0], True)
-        # Fall back to largest video file when no hhd800
+        if hd_candidates:
+            hd_candidates.sort(reverse=True)
+            return (*hd_candidates[0], True)
+        # Fall back to largest video file when no HD tag matched
         if all_video_candidates:
             all_video_candidates.sort(reverse=True)
             return (*all_video_candidates[0], False)

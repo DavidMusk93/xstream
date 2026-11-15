@@ -379,16 +379,21 @@ def test_extractor_skips_prefix_blacklist_and_missing_hash():
 
 
 def test_extractor_marks_hhd800_hd_source():
-    """The '+++ [FHD]' uploads on sukebei are the hhd800 releases — same rule as ijavtorrent."""
+    """The '+++ [FHD]'/'+++ [LTX]'/'4k688' uploads on sukebei are HD sources."""
     rss = _rss(
         _item("+++ [FHD] SNOS-334 瀬戸環奈 hd source", info_hash="a" * 40),
+        _item("+++ [LTX] MFYD-216 瀬戸環奈 ltx source", info_hash="c" * 40),
+        _item("4k688.com@START-649 瀬戸環奈 4k688 source", info_hash="d" * 40),
         _item("[Reducing Mosaic] SNOS-334 瀬戸環奈 low quality", info_hash="b" * 40),
     )
-    (it,) = SukebeiRssExtractor().extract(rss, star_names={"瀬戸環奈"})
+    items = SukebeiRssExtractor().extract(rss, star_names={"瀬戸環奈"})
+    by_code = {it.code: it for it in items}
 
-    assert it.magnets[0].is_hhd800 is True
-    assert it.magnets[0].resolution == "[FHD]"
-    assert it.magnets[1].is_hhd800 is False
+    assert by_code["SNOS-334"].magnets[0].is_hhd800 is True
+    assert by_code["SNOS-334"].magnets[0].resolution == "[FHD]"
+    assert by_code["SNOS-334"].magnets[1].is_hhd800 is False
+    assert by_code["MFYD-216"].magnets[0].is_hhd800 is True
+    assert by_code["START-649"].magnets[0].is_hhd800 is True
 
 
 def test_extractor_parses_vr_resolution_tags():
@@ -1000,6 +1005,24 @@ def test_ijav_extractor_accepts_semicolon_magnet_rows():
     assert len(items) == 1
     assert len(items[0].magnets) == 1
     assert items[0].magnets[0].magnet.startswith("magnet:?xt=urn:btih:")
+
+
+def test_ijav_extractor_accepts_highlighted_magnet_rows_and_hd_markers():
+    """Highlighted <tr> rows (extra CSS after vertical-align) and 4k688/LTX markers work."""
+    from scrapers.v2.extractors import IJavTorrentExtractor
+
+    page = _MAGNET_PAGE.replace(
+        'style="vertical-align: middle"',
+        'style="vertical-align: middle;background:rgba(192,38,211,.12);box-shadow:inset 4px 0 #c026d3"',
+    ).replace(
+        "SNOS-373%20Test",
+        "%2B%2B%2B%20%5BLTX%5D%20SNOS-373%204k688.com%40SNOS-373",
+    )
+    items = IJavTorrentExtractor().extract(page)
+
+    assert len(items) == 1
+    assert len(items[0].magnets) == 1
+    assert items[0].magnets[0].is_hhd800 is True
 
 
 def test_ijav_extractor_drops_invalid_magnets():

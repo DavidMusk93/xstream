@@ -1274,6 +1274,38 @@ class TestProgressPushSegments(unittest.TestCase):
         # MockTorrentHandle.status().progress is fixed at 0.5
         self.assertEqual(progress_events[0]["check_progress"], 50.0)
 
+    def test_pick_video_file_prefers_4k688_hd_source(self) -> None:
+        """4k688.com@*.mp4 files are treated as preferred HD source like hhd800."""
+        class _FakeFiles:
+            def __init__(self, entries: list[tuple[str, int]]) -> None:
+                self._entries = entries
+
+            def num_files(self) -> int:
+                return len(self._entries)
+
+            def file_path(self, idx: int) -> str:
+                return self._entries[idx][0]
+
+            def file_size(self, idx: int) -> int:
+                return self._entries[idx][1]
+
+        class _FakeTi:
+            def __init__(self, entries: list[tuple[str, int]]) -> None:
+                self._files = _FakeFiles(entries)
+
+            def files(self) -> _FakeFiles:
+                return self._files
+
+        ti = _FakeTi([
+            ("START-649/other_large_clip.mp4", 5_000_000_000),
+            ("START-649/4k688.com@START-649.mp4", 3_500_000_000),
+        ])
+        size, idx, name, is_hd = self.engine._pick_video_file(ti)  # type: ignore[arg-type]
+        self.assertEqual(idx, 1)
+        self.assertEqual(name, "START-649/4k688.com@START-649.mp4")
+        self.assertEqual(size, 3_500_000_000)
+        self.assertTrue(is_hd)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

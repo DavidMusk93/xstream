@@ -80,10 +80,28 @@ def _extract_resolution(magnet_url: str) -> str:
     decoded = _extract_dn(magnet_url)
     if not decoded:
         return ""
+    lower = decoded.lower()
     for pat in ["[4K]", "[FHDC]", "[FHD]", "[HD/720p]", "[HD]", "[720p]", "[1080p]"]:
-        if pat.lower() in decoded.lower():
+        if pat.lower() in lower:
             return pat
+    if "1080p" in lower:
+        return "1080p"
+    if "720p" in lower:
+        return "720p"
     return ""
+
+
+_HD_UPLOADER_PREFIXES = ("+++ [fhd]", "+++ [fhdc]", "+++ [ltx]")
+_HD_SOURCE_MARKERS = ("hhd800", "4k688")
+
+
+def _is_hd_source(raw_text: str, dn_or_title: str = "") -> bool:
+    """Return True if a magnet row or torrent title is from the HD release group."""
+    raw_l = raw_text.lower()
+    dn_l = dn_or_title.lstrip().lower()
+    if any(m in raw_l or m in dn_l for m in _HD_SOURCE_MARKERS):
+        return True
+    return dn_l.startswith(_HD_UPLOADER_PREFIXES)
 
 
 class IJavTorrentExtractor:
@@ -232,11 +250,11 @@ class IJavTorrentExtractor:
         hhd800_flags: list[bool] = []
 
         html_snippet = node.html
-        # ijavtorrent's magnet row is `style="vertical-align: middle;"`
-        # (trailing semicolon, 2026-10). The older pages omitted it.
-        # A miss here yields zero magnets and a 7-day no_magnet blacklist.
+        # Match any <tr> containing a magnet link; ijavtorrent styles
+        # highlighted rows (e.g. LTX/featured) with extra background/shadow
+        # CSS after `vertical-align: middle;`.
         for row_match in re.finditer(
-            r'<tr style="vertical-align:\s*middle\s*;?\s*">(.*?)</tr>',
+            r'<tr\b[^>]*>(.*?)</tr>',
             html_snippet,
             re.DOTALL,
         ):
@@ -251,8 +269,7 @@ class IJavTorrentExtractor:
             magnets.append(magnet_url)
             resolutions.append(_extract_resolution(magnet_url))
             dn = _extract_dn(magnet_url)
-            is_hhd800 = "hhd800" in row.lower() or (dn.startswith("+++ [FHD]") if dn else False)
-            hhd800_flags.append(is_hhd800)
+            hhd800_flags.append(_is_hd_source(row, dn))
 
             size_m = re.search(r'fa-weight-hanging"></i>\s*([0-9.]+\s*GB)', row, re.I)
             sizes.append(size_m.group(1) if size_m else "")
@@ -418,9 +435,9 @@ class SukebeiRssExtractor:
             size = _size_to_gb(item.findtext(f"{{{NYAA_NS}}}size") or "")
             resolution = _parse_resolution_tag(title)
             release = _pubdate_to_release(item.findtext("pubDate") or "")
-            # Same hhd800 HD-source rule as the ijavtorrent extractor: the
-            # "+++ [FHD]" uploads on sukebei are the hhd800 releases.
-            is_hhd800 = title.lstrip().startswith("+++ [FHD]") or "hhd800" in title_lower
+            # Same HD-source rule as the ijavtorrent extractor: hhd800/4k688
+            # and "+++ [FHD]"/"+++ [FHDC]"/"+++ [LTX]" uploads on sukebei.
+            is_hhd800 = _is_hd_source(title, title)
 
             candidate = MagnetCandidate(
                 magnet=_build_magnet(info_hash, title),
