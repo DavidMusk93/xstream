@@ -297,6 +297,62 @@ def _merge_into(dst: VideoItem, src: VideoItem) -> None:
         dst.cover_url = src.cover_url
 
 
+_HD_RESOLUTIONS = frozenset({"[4K]", "[FHDC]", "[FHD]", "[8KVR]", "[4KVR]"})
+
+
+def _has_hd_magnet(item: VideoItem) -> bool:
+    """Return True if item already has an HD/hhd800/4k688 magnet candidate."""
+    return any(
+        m.is_hhd800 or m.resolution in _HD_RESOLUTIONS
+        for m in item.magnets
+    )
+
+
+async def _enrich_weak_magnets_by_code(
+    fetcher: HttpxFetcher,
+    items: list[VideoItem],
+    limiter: SukebeiRateLimiter,
+) -> int:
+    """Best-effort per-code sukebei RSS fallback for items lacking an HD magnet.
+
+    When star-name RSS search misses an upload (e.g. star lacks a Japanese
+    alias or uploader omitted the star name), querying sukebei by exact code
+    still recovers `+++ [FHD]` / `4k688` / `hhd800` releases. Never raises;
+    transient errors or empty responses are logged and skipped.
+    """
+    weak = [it for it in items if not _has_hd_magnet(it)]
+    if not weak:
+        return 0
+    extractor = SukebeiRssExtractor()
+    upgraded = 0
+    for item in weak:
+        url = SUKEBEI_RSS_URL.format(q=urllib.parse.quote(item.code))
+        try:
+            await limiter.acquire()
+            rss = await fetcher.fetch(url)
+            if not rss.rstrip().endswith("</rss>"):
+                continue
+            limiter.note_response(rss.count("<item>"))
+            candidates = extractor.extract(rss, star_names=None)
+        except Exception as e:
+            if "429" in str(e):
+                limiter.backoff()
+            log.debug(f"code fallback RSS skipped for {item.code}: {type(e).__name__}: {e}")
+            continue
+        target_code = item.code.upper()
+        matched = [c for c in candidates if c.code == target_code]
+        if not matched:
+            continue
+        before = len(item.magnets)
+        for src in matched:
+            _merge_into(item, src)
+        if len(item.magnets) > before and _has_hd_magnet(item):
+            upgraded += 1
+    if upgraded:
+        log.info(f"code fallback RSS upgraded {upgraded}/{len(weak)} weak-magnet items to HD")
+    return upgraded
+
+
 async def fetch_star_page(
     fetcher: HttpxFetcher,
     star: StarConfig,
@@ -784,16 +840,19 @@ async def _rss_enrich_all(
                 rss_items = await fetch_star_rss(fetcher, star, limiter)
             except NoRssResultsError:
                 await db_write(db.record_rss_empty, star_id)
-                await _emit("rss", star=star.name, done=i, total=len(stars), enriched=0, new=0)
-                continue
+                if not ijav_by_star.get(star.code):
+                    await _emit("rss", star=star.name, done=i, total=len(stars), enriched=0, new=0)
+                    continue
+                rss_items = []
             except Exception as e:
                 n_failed += 1
                 log.warning(f"phase B: rss failed for {star.name}: {type(e).__name__}: {e}")
                 await _emit("rss", star=star.name, done=i, total=len(stars),
                             enriched=0, new=0, error=f"{type(e).__name__}: {e}"[:200])
                 continue
-            # The source answered with usable items — reset any empty streak.
-            await db_write(db.clear_rss_empty, star_id)
+            else:
+                # The source answered with usable items — reset any empty streak.
+                await db_write(db.clear_rss_empty, star_id)
 
             merged = _drop_hidden(
                 merge_sources(ijav_by_star.get(star.code, []), rss_items, star.name),
@@ -819,6 +878,7 @@ async def _rss_enrich_all(
             if not sync_items:
                 await _emit("rss", star=star.name, done=i, total=len(stars), enriched=0, new=0)
                 continue
+            await _enrich_weak_magnets_by_code(fetcher, sync_items, limiter)
 
             # Covers: only for codes phase A did not already fetch one for.
             already_covered = phase_a_covers.get(star.code, set())
@@ -895,8 +955,9 @@ async def sync_star(
             ]
     except OSError:
         roster_names = []
+    limiter = SukebeiRateLimiter()
     items = await fetch_star(
-        fetcher, star, asyncio.Semaphore(1), SukebeiRateLimiter(), roster_names
+        fetcher, star, asyncio.Semaphore(1), limiter, roster_names
     )
     blacklisted = await db_read(db.load_blacklisted_codes)
     items = _drop_blacklisted(items, star_id, blacklisted)
@@ -911,6 +972,8 @@ async def sync_star(
 
     if not new_items:
         return {"name": star.name, "count": 0, "titles": []}
+
+    await _enrich_weak_magnets_by_code(fetcher, new_items, limiter)
 
     cover_items = [(it.code, it.cover_url or "") for it in new_items]
     cover_map = await download_covers_batch(cover_items, concurrency=COVER_DOWNLOAD_CONCURRENCY)

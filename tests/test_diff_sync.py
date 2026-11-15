@@ -1504,3 +1504,50 @@ async def test_rss_enrich_clears_streak_on_results(sink_db, monkeypatch):
     assert sink_db.execute(
         "SELECT count(*) FROM star_rss_state WHERE star_id = 1"
     ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_enrich_weak_magnets_by_code_upgrades_non_hd():
+    """Weak-magnet items fall back to exact-code sukebei RSS; HD items are skipped."""
+    weak_mag = "magnet:?xt=urn:btih:" + "11" * 20
+    hd_mag = "magnet:?xt=urn:btih:" + "22" * 20
+    weak_item = VideoItem(
+        code="MFYD-216",
+        title="Sample",
+        magnets=[MagnetCandidate(magnet=weak_mag, resolution="[MP4/720p]")],
+        all_magnet_urls=[weak_mag],
+    )
+    hd_item = VideoItem(
+        code="SSIS-001",
+        title="Already HD",
+        magnets=[MagnetCandidate(magnet=hd_mag, resolution="[FHD]", is_hhd800=True)],
+        all_magnet_urls=[hd_mag],
+    )
+    rss_xml = _rss(_item("+++ [FHD] MFYD-216 凪あすか"))
+    mock_fetcher = AsyncMock()
+    mock_fetcher.fetch = AsyncMock(return_value=rss_xml)
+
+    upgraded = await sync_titles._enrich_weak_magnets_by_code(
+        mock_fetcher, [weak_item, hd_item], SukebeiRateLimiter()
+    )
+
+    assert upgraded == 1
+    assert sync_titles._has_hd_magnet(weak_item)
+    assert any(m.resolution == "[FHD]" for m in weak_item.magnets)
+    mock_fetcher.fetch.assert_called_once_with(_rss_url("MFYD-216"))
+
+
+@pytest.mark.asyncio
+async def test_enrich_weak_magnets_by_code_tolerates_fetch_error():
+    """Per-code fallback is best-effort and never fails the sync on fetch errors."""
+    weak_item = VideoItem(code="MFYD-216", title="Sample", magnets=[], all_magnet_urls=[])
+    mock_fetcher = AsyncMock()
+    mock_fetcher.fetch = AsyncMock(side_effect=RuntimeError("network down"))
+
+    upgraded = await sync_titles._enrich_weak_magnets_by_code(
+        mock_fetcher, [weak_item], SukebeiRateLimiter()
+    )
+
+    assert upgraded == 0
+    assert weak_item.magnets == []
+
