@@ -91,8 +91,14 @@ def _extract_resolution(magnet_url: str) -> str:
     return ""
 
 
-_HD_UPLOADER_PREFIXES = ("+++ [fhd]", "+++ [fhdc]", "+++ [ltx]")
+_HD_UPLOADER_PREFIXES = ("+++ [fhd]", "+++ [fhdc]")
 _HD_SOURCE_MARKERS = ("hhd800", "4k688")
+_LTX_RE = re.compile(r"(?:\[LTX[^\]]*\]|\bLTX\b)", re.IGNORECASE)
+
+
+def _is_ltx(text: str) -> bool:
+    """Return True if a magnet dn or torrent title is an LTX mosaic-removal release."""
+    return bool(text and _LTX_RE.search(text))
 
 
 def _is_hd_source(raw_text: str, dn_or_title: str = "") -> bool:
@@ -266,9 +272,11 @@ class IJavTorrentExtractor:
             if not _is_valid_magnet(magnet_url):
                 log.warning(f"dropping invalid magnet in row: {m.group(1)[:80]}")
                 continue
+            dn = _extract_dn(magnet_url)
+            if _is_ltx(dn):
+                continue
             magnets.append(magnet_url)
             resolutions.append(_extract_resolution(magnet_url))
-            dn = _extract_dn(magnet_url)
             hhd800_flags.append(_is_hd_source(row, dn))
 
             size_m = re.search(r'fa-weight-hanging"></i>\s*([0-9.]+\s*GB)', row, re.I)
@@ -415,6 +423,8 @@ class SukebeiRssExtractor:
         grouped: dict[str, dict] = {}
         for item in root.iter("item"):
             title = item.findtext("title") or ""
+            if _is_ltx(title):
+                continue
             title_lower = title.lower()
             if names_ci and not any(n in title_lower for n in names_ci):
                 continue
