@@ -19,7 +19,7 @@
         </div>
       </div>
     </div>
-    <div class="mt-8 sm:mt-10 flex gap-4 sm:gap-5 overflow-hidden">
+    <div class="mt-8 sm:mt-10 -mx-4 px-4 sm:mx-0 sm:px-0 flex gap-4 sm:gap-5 overflow-hidden">
       <div v-for="i in 7" :key="i" class="shrink-0 w-[148px] sm:w-[188px] lg:w-[212px]">
         <Skeleton class="w-full aspect-[3/2] !rounded-[14px]" />
         <Skeleton class="mt-2.5 h-3 w-20 rounded" />

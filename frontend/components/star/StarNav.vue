@@ -1,6 +1,6 @@
 <template>
   <nav class="max-w-7xl mx-auto sm:px-3">
-    <div ref="railRef" class="relative flex items-center gap-1 px-3 pb-2.5 overflow-x-auto scrollbar-hide sm:fade-edges-x">
+    <div ref="railRef" class="relative flex items-center gap-1 px-4 sm:px-3 pb-2.5 overflow-x-auto scrollbar-hide fade-edges-x">
       <a
         v-for="star in stars"
         :key="star.code"

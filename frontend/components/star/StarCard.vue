@@ -224,7 +224,7 @@
       <!-- Gallery: every title gets a captioned card -->
       <div
         ref="rowRef"
-        class="group/rail thumb-rail mt-8 sm:mt-10 flex gap-4 sm:gap-5 items-start overflow-x-auto scrollbar-hide pt-1 pb-2 snap-x snap-mandatory fade-edge-r"
+        class="group/rail thumb-rail mt-8 sm:mt-10 -mx-4 px-4 sm:mx-0 sm:px-0 flex gap-4 sm:gap-5 items-start overflow-x-auto scrollbar-hide pt-2 pb-4 snap-x snap-mandatory sm:fade-edge-r"
         :class="{ 'is-scrolling': thumbScrolling }"
         :data-active-index="displayIndex"
         @scroll.passive="onRowScroll"
