@@ -1,0 +1,15 @@
+[Unit]
+Description=VNC & noVNC Display Server for Testing
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/root/run-vnc-session.sh
+Restart=always
+RestartSec=2
+User=root
+WorkingDirectory=/root
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

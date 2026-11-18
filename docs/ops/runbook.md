@@ -35,6 +35,34 @@ systemctl reload caddy
 | 443 | Caddy | HTTPS reverse proxy |
 | 3000 | Nuxt frontend | SSR rendering |
 | 8765 | FastAPI backend | BitTorrent + HTTP API |
+| 6080 | noVNC / websockify | Browser access to the test display |
+
+## VNC Test Browser
+
+`vnc-testing.service` runs a shared `DISPLAY=:99` test browser session at
+1600×900. The source files are `scripts/run-vnc-session.sh` and
+`deploy/vnc-testing.service`; install and restart them with:
+
+```bash
+install -m 755 scripts/run-vnc-session.sh /root/run-vnc-session.sh
+install -m 644 deploy/vnc-testing.service /etc/systemd/system/vnc-testing.service
+systemctl daemon-reload
+systemctl restart vnc-testing.service
+```
+
+For remote browser access, use quality 4 instead of the noVNC default 6:
+
+```text
+http://<host>:6080/vnc.html?autoconnect=1&resize=scale&quality=4&compression=2
+```
+
+Port 6080 has no TLS; use Tailscale or SSH forwarding on untrusted networks.
+Native RFB port 5900 is loopback-only. For a native VNC client, create an SSH
+tunnel first, then connect to the forwarded local port:
+
+```bash
+ssh -N -L 5900:127.0.0.1:5900 root@<host>
+```
 
 ## Logging
 
