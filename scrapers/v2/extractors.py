@@ -305,12 +305,52 @@ _ACTRESS_NAME_RE = re.compile(
 )
 
 
+# ijavtorrent actress page path: /actress/<slug>-<numeric id>, where the
+# slug may be renamed over time while the id stays stable (see verify.py).
+_ACTRESS_PATH_RE = re.compile(r"^/actress/([a-z0-9][a-z0-9-]*)-(\d+)$", re.IGNORECASE)
+
+
+def normalize_actress_url(raw: str) -> tuple[str, str, str] | None:
+    """Normalize any ijavtorrent actress link into (url, slug, star_id).
+
+    Accepts every shape a user can paste or the site can emit: the site's
+    own `https://ijavtorrent.com/actress/julia-326/` (trailing slash),
+    scheme-less `ijavtorrent.com/actress/julia-326`, `http://`, `www.`/`m.`
+    hosts, uppercase slugs, query strings and `#` fragments. Returns None
+    when the input is not an actress page URL (directory pages, movie
+    pages, other hosts).
+    """
+    text = (raw or "").strip().strip("<>").strip()
+    if not text:
+        return None
+    text = text.split("#", 1)[0].split("?", 1)[0].strip()
+    if not re.match(r"^[a-z][a-z0-9+.-]*://", text, re.IGNORECASE):
+        text = "https://" + text.lstrip("/")
+    try:
+        parts = urllib.parse.urlsplit(text)
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower()
+    site = urllib.parse.urlsplit(IJAV_BASE_URL).hostname or "ijavtorrent.com"
+    if host != site and not host.endswith("." + site):
+        return None
+    path = re.sub(r"/{2,}", "/", parts.path or "")
+    if len(path) > 1:
+        path = path.rstrip("/")
+    match = _ACTRESS_PATH_RE.match(path)
+    if not match:
+        return None
+    slug, star_id = match.group(1).lower(), match.group(2)
+    return f"{IJAV_BASE_URL}/actress/{slug}-{star_id}", slug, star_id
+
+
 def parse_actress_directory(html: str) -> list[dict]:
     """Parse an ijavtorrent /actresses page into [{name, url, image, movies}].
 
     Entries are deduped by URL (the ?searchTerm= result repeats a card per
-    matched section). Trailing slashes are stripped: POST /api/stars/add
-    anchors its actress-URL regex at the numeric id.
+    matched section). Paths are normalized through normalize_actress_url so
+    the directory's trailing-slash links match what POST /api/stars/add
+    stores.
     """
     images = {path.rstrip("/"): img for path, img in _ACTRESS_IMG_RE.findall(html)}
     actresses: dict[str, dict] = {}

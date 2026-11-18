@@ -23,6 +23,7 @@ from core import get_logger
 from core.db.connection import _conn as _db_conn
 from core.db.write_queue import db_read, db_write
 from core.events import publish_event
+from scrapers.v2.extractors import normalize_actress_url
 
 log = get_logger("stars-router")
 router = APIRouter(prefix="/api/stars", tags=["stars"], dependencies=[Depends(require_auth)])
@@ -322,25 +323,27 @@ class AddStarResponse(BaseModel):
 @router.post("/add")
 async def add_star(request: AddStarRequest) -> AddStarResponse:
     """Add a new actor: parse ijavtorrent actress page URL, dedupe, write to config.json and DB, background sync titles."""
-    url = request.star_page_url.strip()
-
-    # URL format validation
-    if not url.startswith("https://ijavtorrent.com/actress/"):
-        raise HTTPException(status_code=400, detail="URL 必须是 ijavtorrent actress 页面")
-
-    m = re.search(r"/actress/([a-z0-9-]+)-(\d+)$", url)
-    if not m:
-        raise HTTPException(status_code=400, detail="URL 格式无法解析")
-    slug, star_id = m.groups()
+    # Tolerant URL parsing: the site links actress pages with a trailing
+    # slash, users paste scheme-less / www. / uppercase forms, and the slug
+    # changes when ijav renames a performer — all of it normalizes here.
+    parsed = normalize_actress_url(request.star_page_url)
+    if not parsed:
+        raise HTTPException(
+            status_code=400,
+            detail="URL 必须是 ijavtorrent 演员页，例如 https://ijavtorrent.com/actress/julia-326",
+        )
+    url, slug, star_id = parsed
     handle = slug.replace("-", "_")
 
-    # Load config and deduplicate
+    # Load config and deduplicate (by actress id — trailing slashes, http vs
+    # https, www. hosts and slug renames all point at the same person)
     config = _load_config()
     stars = config.get("stars", [])
     for s in stars:
-        if s.get("star_page_url") == url:
-            raise HTTPException(status_code=409, detail="Actor already exists")
-        if s.get("handle") == handle:
+        existing = normalize_actress_url(s.get("star_page_url", ""))
+        if existing and existing[2] == star_id:
+            raise HTTPException(status_code=409, detail=f"{s.get('name', slug)} 已在库中")
+        if s.get("star_page_url") == url or s.get("handle") == handle:
             raise HTTPException(status_code=409, detail="该 handle 已被占用")
 
     # Fetch page and extract info
