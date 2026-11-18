@@ -22,13 +22,17 @@ offline-crawled local index (data/actress_index.json) is the fallback.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
+import os
 import re
 import time
 import urllib.parse
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 
 from backend.routers.auth import require_auth
@@ -40,6 +44,7 @@ from scrapers.v2.extractors import (
     IJAV_BASE_URL,
     IJavTorrentExtractor,
     SukebeiRssExtractor,
+    normalize_actress_url,
     parse_actress_directory,
 )
 from scrapers.v2.filters import hidden_reason
@@ -65,6 +70,7 @@ _CODE_QUERY_RE = re.compile(r"^[A-Za-z0-9]{2,10}-?\d{2,5}$")
 class SearchResultStar(BaseModel):
     name: str
     url: str
+    code: str = ""  # library code when followed — lets the UI jump to her shelf
     followed: bool = False
 
 
@@ -109,6 +115,141 @@ class SearchResponse(BaseModel):
 
 def _norm_code(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", s).upper()
+
+
+# ── Remote cover proxy ───────────────────────────────────────────────
+# ijavtorrent covers live on images.ijavtorrent.com (Bunny CDN behind
+# Cloudflare). Hotlinking them in the browser is unreliable on mobile
+# networks and gains nothing — no shared cache, no auth. Instead the first
+# request downloads the image, caches it under images/search/, and every
+# later request is a 307 to /images/search/<file> served statically by
+# Caddy (same pattern as /api/cover and /api/social/x/media).
+_COVER_DIR = Path(__file__).resolve().parents[2] / "images" / "search"
+_COVER_HEADERS = {"Cache-Control": "public, max-age=2592000, immutable"}
+_COVER_MAX_BYTES = 8 * 1024 * 1024
+_COVER_PRUNE_AT = 2000
+_ALLOWED_COVER_HOSTS = ("images.ijavtorrent.com", "ijavtorrent.com")
+_COVER_EXTS = (".jpg", ".png", ".webp", ".gif")
+_MIME_BY_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
+
+
+def _valid_cover_source(url: str) -> bool:
+    """Only ijavtorrent's own image hosts — never an open proxy."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https"):
+        return False
+    host = (parts.hostname or "").lower()
+    return any(host == h or host.endswith("." + h) for h in _ALLOWED_COVER_HOSTS)
+
+
+def _cover_stem(url: str) -> str:
+    return hashlib.sha1(url.encode("utf-8")).hexdigest()[:20]
+
+
+def _cached_cover(url: str) -> str | None:
+    """Cache filename for a remote URL, if it was downloaded before.
+
+    The extension comes from the bytes (the CDN serves WebP under .jpg
+    URLs), so every known extension is probed for the URL's stem.
+    """
+    stem = _cover_stem(url)
+    for ext in _COVER_EXTS:
+        name = f"{stem}{ext}"
+        if (_COVER_DIR / name).exists():
+            return name
+    return None
+
+
+def proxied_cover(url: str | None) -> str | None:
+    """Browser-facing URL for a remote cover (None when not proxyable)."""
+    if not url or not _valid_cover_source(url):
+        return None
+    return f"/api/search/cover?u={urllib.parse.quote(url, safe='')}"
+
+
+def _image_mime(data: bytes) -> str:
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:4] == b"GIF8":
+        return "image/gif"
+    return ""
+
+
+def _store_cover(name: str, data: bytes) -> bool:
+    """Atomically write a cached cover, keeping the directory bounded."""
+    try:
+        _COVER_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _COVER_DIR / f".{name}.tmp"
+        tmp.write_bytes(data)
+        os.replace(tmp, _COVER_DIR / name)
+    except OSError as exc:
+        log.warning(f"cover cache write failed for {name}: {exc}")
+        return False
+    try:
+        entries = [
+            (e.stat().st_mtime, e.path)
+            for e in os.scandir(_COVER_DIR)
+            if e.is_file() and not e.name.startswith(".")
+        ]
+    except OSError:
+        return True
+    if len(entries) > _COVER_PRUNE_AT:
+        entries.sort()
+        for _, stale in entries[: len(entries) - _COVER_PRUNE_AT]:
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
+    return True
+
+
+@router.get("/cover")
+async def search_cover(u: str = Query(..., min_length=10, max_length=1000)) -> Response:
+    """Local cache for remote cover images (see proxied_cover).
+
+    Disk hit -> 307 to /images/search/<file> so Caddy serves the bytes.
+    Miss -> download once, cache, serve. Failures stay a hard 404/502 so
+    the UI can fall back to a code placeholder instead of a broken image.
+    """
+    url = u.strip()
+    if not _valid_cover_source(url):
+        raise HTTPException(status_code=400, detail="unsupported cover source")
+    cached = _cached_cover(url)
+    if cached:
+        return RedirectResponse(
+            url=f"/images/search/{cached}", status_code=307, headers=_COVER_HEADERS
+        )
+
+    from scrapers.v2.fetchers import HttpxFetcher
+
+    try:
+        async with HttpxFetcher(timeout=20.0) as fetcher:
+            # The CDN enforces hotlink protection: a browser-like UA without
+            # `Referer: https://ijavtorrent.com/` gets 403 (which is exactly
+            # why hotlinked covers never rendered in the browser).
+            data = await fetcher.fetch_bytes(url, headers={"Referer": IJAV_BASE_URL + "/"})
+    except Exception as exc:
+        log.warning(f"cover fetch failed for {url}: {exc}")
+        raise HTTPException(status_code=502, detail="cover fetch failed") from None
+    if not data or len(data) > _COVER_MAX_BYTES:
+        raise HTTPException(status_code=502, detail="cover empty or too large")
+    media_type = _image_mime(data)
+    if not media_type:
+        raise HTTPException(status_code=502, detail="not an image")
+
+    name = f"{_cover_stem(url)}{_MIME_BY_EXT[media_type]}"
+    if await asyncio.to_thread(_store_cover, name, data):
+        return RedirectResponse(
+            url=f"/images/search/{name}", status_code=307, headers=_COVER_HEADERS
+        )
+    return Response(content=data, media_type=media_type, headers=_COVER_HEADERS)
 
 
 # Local actress directory index — offline fallback for the live
@@ -166,6 +307,33 @@ async def _ijav_actresses(fetcher, query: str) -> list[dict]:
     except Exception as exc:
         log.warning(f"actress directory search failed for {query!r}: {exc}")
         return []
+
+
+def _best_actress_match(matches: list[dict], query: str) -> dict | None:
+    """Directory results come in ijav's own order (fuzzy romaji); pick the
+    one that actually looks like the query: name prefix first, then substring,
+    then the busiest performer."""
+    q = query.strip().lower()
+    if not q or not matches:
+        return None
+
+    def rank(a: dict) -> tuple[int, int, int]:
+        name = (a.get("name") or "").lower()
+        return (
+            0 if name.startswith(q) else 1,
+            0 if q in name else 1,
+            -int(a.get("movies") or 0),
+        )
+
+    return min(matches, key=rank)
+
+
+async def _ijav_actress_titles(fetcher, actress_url: str) -> list[VideoItem]:
+    """First page of an actress's own ijavtorrent listing (covers + links)."""
+    html = await fetcher.fetch(actress_url)
+    if not html.rstrip().endswith("</html>"):
+        log.info(f"actress page truncated for {actress_url}")
+    return IJavTorrentExtractor().extract(html)
 
 
 async def _sukebei_exact(fetcher, query: str) -> list[VideoItem]:
@@ -234,6 +402,30 @@ async def _fetch_items(query: str) -> tuple[list[tuple[VideoItem, str]], list[di
                     continue
                 kept.append((it, "ijav"))
 
+            # A name query the fuzzy full-text search answers with almost
+            # nothing is best served by the matched actress's own page: her
+            # works carry covers and actress links (so a follow button is
+            # offered on every card). Only used when the directory matched,
+            # so plain keyword searches keep ijav's own ordering.
+            if len(kept) < 3 and actresses:
+                best = _best_actress_match(actresses, query)
+                try:
+                    extra = await _ijav_actress_titles(
+                        fetcher, (best or actresses[0])["url"]
+                    )
+                except Exception as exc:
+                    log.info(f"actress-page fallback failed for {query!r}: {exc}")
+                else:
+                    have = {it.code for it, _ in kept}
+                    for it in extra:
+                        if it.code in have or not it.magnets:
+                            continue
+                        own_names = [s.name for s in it.star_links]
+                        if hidden_reason(it, own_names=own_names, roster_names=roster_names):
+                            continue
+                        have.add(it.code)
+                        kept.append((it, "ijav"))
+
     _items_cache[key] = (time.time(), kept, actresses)
     return kept, actresses
 
@@ -252,6 +444,31 @@ def _library_codes(codes: list[str]) -> set[str]:
         conn.close()
 
 
+def _followed_index(config: dict) -> dict[str, str]:
+    """actress id -> library code for everyone already followed.
+
+    Compared by actress id, not by URL string: ijav links carry a trailing
+    slash and the slug changes when a performer is renamed.
+    """
+    index: dict[str, str] = {}
+    for star in config.get("stars", []):
+        parsed = normalize_actress_url(star.get("star_page_url", ""))
+        if parsed:
+            index[parsed[2]] = star.get("code", "")
+    return index
+
+
+def _star_ref(name: str, url: str, followed: dict[str, str]) -> SearchResultStar:
+    parsed = normalize_actress_url(url)
+    code = followed.get(parsed[2], "") if parsed else ""
+    return SearchResultStar(
+        name=name,
+        url=parsed[0] if parsed else url,
+        code=code,
+        followed=bool(code),
+    )
+
+
 @router.get("", response_model=SearchResponse)
 async def search_titles(q: str = Query(..., min_length=2, max_length=100)) -> SearchResponse:
     """Search the catalog by code or keyword (ijavtorrent, sukebei fallback)."""
@@ -264,7 +481,7 @@ async def search_titles(q: str = Query(..., min_length=2, max_length=100)) -> Se
         raise HTTPException(status_code=502, detail=f"检索失败: {exc}") from exc
 
     config = _load_config()
-    followed_urls = {s.get("star_page_url") for s in config.get("stars", [])}
+    followed = _followed_index(config)
     in_library = await db_read(_library_codes, [it.code for it, _ in items])
 
     results = []
@@ -282,15 +499,14 @@ async def search_titles(q: str = Query(..., min_length=2, max_length=100)) -> Se
                 release_date=it.release_date,
                 views=it.views,
                 likes=it.likes,
-                cover_url=it.cover_url,
+                cover_url=proxied_cover(it.cover_url),
                 resolution=best.resolution,
                 size=best.size,
                 seeds=best.seed,
                 in_library=it.code in in_library,
                 source=source,
                 stars=[
-                    SearchResultStar(name=s.name, url=s.url, followed=s.url in followed_urls)
-                    for s in it.star_links
+                    _star_ref(s.name, s.url, followed) for s in it.star_links
                 ],
                 magnets=[
                     SearchResultMagnet(
@@ -311,10 +527,8 @@ async def search_titles(q: str = Query(..., min_length=2, max_length=100)) -> Se
     matches = (directory or _actress_matches(query))[:12]
     actresses = [
         SearchResultActress(
-            name=a["name"],
-            url=a["url"],
-            image=a.get("image", ""),
-            followed=a["url"] in followed_urls,
+            **_star_ref(a["name"], a["url"], followed).model_dump(),
+            image=proxied_cover(a.get("image", "")) or "",
         )
         for a in matches
     ]

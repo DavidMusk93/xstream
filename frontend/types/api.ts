@@ -131,6 +131,8 @@ export interface Star {
 export interface SearchResultStar {
   name: string
   url: string
+  /** Library code when already followed — lets the UI jump to her shelf. */
+  code?: string
   followed: boolean
 }
 

@@ -127,7 +127,12 @@ def test_search_filters_and_enriches(client):
     solo1, solo2 = data["items"]
     assert solo1["in_library"] is True
     assert solo1["stars"] == [
-        {"name": "Test Star", "url": "https://ijavtorrent.com/actress/test-star-1", "followed": True}
+        {
+            "name": "Test Star",
+            "url": "https://ijavtorrent.com/actress/test-star-1",
+            "code": "SOLO-001",
+            "followed": True,
+        }
     ]
     assert solo2["in_library"] is False
     assert solo2["stars"][0]["followed"] is False
@@ -187,7 +192,7 @@ def test_search_ranks_magnets_by_sync_scoring(client, monkeypatch):
 
 _ACTRESS_PAGE = (
     "<html><body>"
-    '<a href="/actress/live-star-9/"><img src="https://img/live.jpg"/></a>'
+    '<a href="/actress/live-star-9/"><img src="https://images.ijavtorrent.com/data/actresses/9.jpg"/></a>'
     '<a href="/actress/live-star-9/">Live Star (7 movies)</a>'
     '<a href="/actress/imageless-10/"><div>placeholder</div></a>'
     '<a href="/actress/imageless-10/">Imageless Star (2 movies)</a>'
@@ -212,7 +217,10 @@ def test_search_matches_live_actress_directory(client, monkeypatch):
     actresses = res.json()["actresses"]
     assert [a["name"] for a in actresses] == ["Live Star", "Imageless Star"]
     assert actresses[0]["url"] == "https://ijavtorrent.com/actress/live-star-9"
-    assert actresses[0]["image"] == "https://img/live.jpg"
+    # Remote covers are proxied through the backend cache, never hotlinked
+    assert actresses[0]["image"] == (
+        "/api/search/cover?u=https%3A%2F%2Fimages.ijavtorrent.com%2Fdata%2Factresses%2F9.jpg"
+    )
     assert actresses[1]["image"] == ""
 
 
@@ -224,7 +232,7 @@ def test_search_matches_actress_directory(client, monkeypatch, tmp_path):
     index.write_text(json.dumps({
         "built_at": "2026-09-29",
         "actresses": [
-            {"name": "Test Star", "url": "https://ijavtorrent.com/actress/test-star-1", "image": "https://img/1.jpg"},
+            {"name": "Test Star", "url": "https://ijavtorrent.com/actress/test-star-1", "image": "https://images.ijavtorrent.com/data/actresses/1.jpg"},
             {"name": "Test Starlet", "url": "https://ijavtorrent.com/actress/test-starlet-2", "image": ""},
             {"name": "Other Person", "url": "https://ijavtorrent.com/actress/other-3", "image": ""},
         ],
@@ -238,8 +246,11 @@ def test_search_matches_actress_directory(client, monkeypatch, tmp_path):
     assert [a["name"] for a in actresses] == ["Test Star", "Test Starlet"]
     # Followed state resolved from config, same as per-card stars
     assert actresses[0]["followed"] is True
+    assert actresses[0]["code"] == "SOLO-001"
     assert actresses[1]["followed"] is False
-    assert actresses[0]["image"] == "https://img/1.jpg"
+    assert actresses[0]["image"] == (
+        "/api/search/cover?u=https%3A%2F%2Fimages.ijavtorrent.com%2Fdata%2Factresses%2F1.jpg"
+    )
 
 
 def test_search_code_query_keeps_exact_match_only(client):
@@ -328,3 +339,105 @@ def test_search_fetch_failure_returns_502(client, monkeypatch):
     )
     res = client.get("/api/search", params={"q": "anything"})
     assert res.status_code == 502
+
+
+_COVER_CARD = (
+    '<div class="video-item">'
+    '<a href="/movie/cover-006-12345" data-link="https://images.ijavtorrent.com/data/covers/6.jpg">'
+    '<img alt="COVER-006 sample title"/></a>'
+    '<div class="mb-2">Released 01/15/2026</div>'
+    '<div class="mb-1"><a href="/actress/test-star-1">Test Star</a></div><table>'
+    '<tr style="vertical-align: middle"><td>'
+    f'<a href="magnet:?xt=urn:btih:{"f" * 40}&dn=COVER-006">dl</a>'
+    '<i class="fa-weight-hanging"></i> 5.2 GB <strong>S:</strong> 10'
+    "</td></tr></table></div>"
+)
+
+
+def test_search_proxies_remote_covers(client, monkeypatch):
+    """Covers point at /api/search/cover, never at the remote CDN: hotlinking
+    images.ijavtorrent.com fails on networks where the CDN is unreachable and
+    every visit re-downloads the image."""
+    monkeypatch.setattr(
+        "scrapers.v2.fetchers.HttpxFetcher.fetch",
+        AsyncMock(return_value=f"<html><body>{_COVER_CARD}</body></html>"),
+    )
+    search_router._items_cache.clear()
+
+    res = client.get("/api/search", params={"q": "COVER-006"})
+    assert res.status_code == 200
+    (item,) = res.json()["items"]
+    assert item["cover_url"] == (
+        "/api/search/cover?u=https%3A%2F%2Fimages.ijavtorrent.com%2Fdata%2Fcovers%2F6.jpg"
+    )
+
+
+def test_cover_proxy_caches_to_disk(client, monkeypatch, tmp_path):
+    """First request downloads and caches; later requests are a 307 to the
+    static /images/search/<file> path served by Caddy."""
+    monkeypatch.setattr(search_router, "_COVER_DIR", tmp_path / "search")
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    fetch_bytes = AsyncMock(return_value=png)
+    monkeypatch.setattr("scrapers.v2.fetchers.HttpxFetcher.fetch_bytes", fetch_bytes)
+    url = "https://images.ijavtorrent.com/data/covers/6.jpg"
+
+    res = client.get("/api/search/cover", params={"u": url}, follow_redirects=False)
+    assert res.status_code == 307
+    assert res.headers["location"].startswith("/images/search/")
+    assert len(list((tmp_path / "search").iterdir())) == 1
+
+    res = client.get("/api/search/cover", params={"u": url}, follow_redirects=False)
+    assert res.status_code == 307
+    assert res.headers["location"].startswith("/images/search/")
+    assert fetch_bytes.await_count == 1  # second hit came from disk
+    # The CDN 403s browser-like requests without an ijavtorrent Referer
+    assert fetch_bytes.await_args.kwargs["headers"]["Referer"] == "https://ijavtorrent.com/"
+
+
+def test_cover_proxy_rejects_foreign_hosts(client, monkeypatch):
+    """The proxy only serves ijavtorrent images — never arbitrary URLs."""
+    fetch_bytes = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n")
+    monkeypatch.setattr("scrapers.v2.fetchers.HttpxFetcher.fetch_bytes", fetch_bytes)
+    for bad in ("https://evil.com/a.jpg", "http://ijavtorrent.com.evil.com/a.jpg", "file:///etc/passwd"):
+        res = client.get("/api/search/cover", params={"u": bad}, follow_redirects=False)
+        assert res.status_code == 400, bad
+    assert fetch_bytes.await_count == 0
+
+
+def test_search_name_falls_back_to_actress_page(client, monkeypatch):
+    """A name the fuzzy full-text search barely answers is served from the
+    matched actress's own page — her works carry covers and actress links, so
+    every card stays followable / jumpable."""
+    fetched: list[str] = []
+
+    async def _fetch(url: str) -> str:
+        fetched.append(url)
+        if "/actresses" in url:
+            # A decoy (fuzzy romaji match, no name prefix) ranks before the
+            # real match in ijav's directory order.
+            return (
+                "<html><body>"
+                '<a href="/actress/decoy-1/">Decoy Star (99 movies)</a>'
+                '<a href="/actress/live-star-9/">Live Star (7 movies)</a>'
+                "</body></html>"
+            )
+        if "/actress/" in url:
+            return (
+                "<html><body>"
+                + _card("HERO-010", [("Live Star", "live-star-9")])
+                + _card("HERO-011", [("Live Star", "live-star-9")])
+                + "</body></html>"
+            )
+        return "<html><body></body></html>"  # full-text search: no cards
+
+    monkeypatch.setattr("scrapers.v2.fetchers.HttpxFetcher.fetch", AsyncMock(side_effect=_fetch))
+    search_router._items_cache.clear()
+
+    res = client.get("/api/search", params={"q": "live star"})
+    assert res.status_code == 200
+    data = res.json()
+    assert [it["code"] for it in data["items"]] == ["HERO-010", "HERO-011"]
+    assert data["items"][0]["stars"][0]["url"] == "https://ijavtorrent.com/actress/live-star-9"
+    # The name-prefix match is preferred over the directory's first row
+    assert "https://ijavtorrent.com/actress/live-star-9" in fetched
+    assert "https://ijavtorrent.com/actress/decoy-1" not in fetched

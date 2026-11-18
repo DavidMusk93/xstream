@@ -37,7 +37,7 @@
         # serves it identity-encoded. SSE (/api/events, would buffer events)
         # and image bodies (/api/cover, /api/social/x/media — already-compressed
         # JPEGs) are excluded.
-        @compressible not path /api/events /api/cover/* /api/social/x/media/*
+        @compressible not path /api/events /api/cover/* /api/search/cover /api/social/x/media/*
         encode @compressible zstd gzip {
             minimum_length 1024
         }

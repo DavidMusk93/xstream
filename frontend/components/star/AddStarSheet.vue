@@ -4,9 +4,10 @@
       <input
         ref="inputRef"
         v-model="url"
-        type="url"
+        type="text"
         inputmode="url"
         autocomplete="off"
+        autocapitalize="off"
         spellcheck="false"
         placeholder="https://ijavtorrent.com/actress/…"
         class="field"
@@ -148,6 +149,11 @@ async function addStar() {
     saveRecent()
 
     emit('added', { code: addedCode, name: addedName, handle: res.handle as string | undefined })
+
+    // Close the sheet right away: the library behind it scrolls to the new
+    // shelf once her titles land, and keeping the sheet open made that
+    // scroll feel like the page was jumping around under the overlay.
+    setTimeout(() => { open.value = false }, 700)
   } catch (e: any) {
     const msg = e?.data?.detail || e?.message || 'Failed to add'
     error.value = msg

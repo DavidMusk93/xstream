@@ -246,13 +246,24 @@ const activeHash = ref('')
 const activeCode = ref('')
 const activeStarCode = ref('')
 
+/** Scroll the page to a star's shelf. Returns false when it is not mounted yet.
+ *
+ * Instant rather than smooth: off-screen sections reserve an estimated height
+ * (`content-visibility: auto`), so an animated scroll would chase a target
+ * that keeps moving while the shelves paint.
+ */
 function scrollToStar(code: string) {
   const el = document.getElementById(`star-${code.toLowerCase()}`)
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    return true
-  }
-  return false
+  if (!el) return false
+  const style = getComputedStyle(el)
+  const margin = parseFloat(style.scrollMarginTop || style.scrollMarginBlockStart || '0') || 0
+  const top = Math.max(0, el.getBoundingClientRect().top + window.scrollY - margin)
+  const root = document.documentElement
+  const prev = root.style.scrollBehavior
+  root.style.scrollBehavior = 'auto'
+  window.scrollTo(0, top)
+  root.style.scrollBehavior = prev
+  return true
 }
 
 const atTop = ref(true)
@@ -301,33 +312,53 @@ watch(displayStars, () => {
 function revealStar(code: string, scroll = false) {
   visibleCodes.value.add(code)
   if (!scroll) return
-  nextTick(() => {
-    requestAnimationFrame(() => {
-      if (!scrollToStar(code)) {
-        const stop = watch(
-          () => displayStars.value.some(s => s.code === code),
-          (ok) => {
-            if (!ok) return
-            nextTick(() => {
-              scrollToStar(code)
-              stop()
-            })
-          },
-          { immediate: true },
-        )
-      }
-    })
-  })
+  // The shelf may not be in the DOM yet (stars still loading, section not
+  // mounted, content-visibility estimate). Retry until it is; a single
+  // immediate attempt used to give up before the first paint.
+  let tries = 0
+  const attempt = () => {
+    if (scrollToStar(code)) {
+      // The estimate-driven shelf height changes while it paints, so one
+      // corrective scroll after layout settles keeps the target in view.
+      setTimeout(() => {
+        const el = document.getElementById(`star-${code.toLowerCase()}`)
+        if (el) scrollToStar(code)
+      }, 700)
+      return
+    }
+    if (++tries < 40) setTimeout(attempt, 100)
+  }
+  nextTick(() => requestAnimationFrame(attempt))
 }
 
 const scrollAfterRefreshCode = ref<string | null>(null)
+// A freshly followed star is scrolled to exactly once — when its titles are
+// ready. Scrolling on add and again on ready made the page visibly jump
+// behind the sheet (and every refresh re-sorted the shelves).
+function scheduleScrollToStar(code: string) {
+  scrollAfterRefreshCode.value = code
+}
 
 function onStarAdded(payload: { code: string; name: string; handle?: string }) {
   patchStarAdded(payload)
-  scrollAfterRefreshCode.value = payload.code
-  revealStar(payload.code, true)
+  scheduleScrollToStar(payload.code)
+  revealStar(payload.code, false)
   refreshLibrary().catch(() => {})
 }
+
+// Deep link from search: /?star=<code> opens that actress's shelf.
+const route = useRoute()
+async function consumeStarQuery() {
+  const code = route.query.star
+  if (typeof code !== 'string' || !code) return
+  // Clean the URL first: the replace-navigation resets the scroll position,
+  // so scrolling has to happen after it settles.
+  const { star: _star, ...rest } = route.query
+  await navigateTo({ path: '/', query: rest }, { replace: true })
+  revealStar(code, true)
+}
+onMounted(consumeStarQuery)
+watch(() => route.query.star, consumeStarQuery)
 
 function onStarDeleted(code: string) {
   deletedCodes.value.add(code)
@@ -494,7 +525,9 @@ async function handleStarAddedEvent(data: { code?: string; name?: string; handle
       name: data.name,
       handle: data.handle,
     })
-    revealStar(data.code, scrollAfterRefreshCode.value === data.code)
+    // This tab's POST already scheduled the scroll; an add pushed from
+    // another device just surfaces the new shelf where the reader is.
+    revealStar(data.code, false)
   }
   try {
     await refreshLibrary()
@@ -504,18 +537,17 @@ async function handleStarAddedEvent(data: { code?: string; name?: string; handle
 }
 
 async function handleStarReady(data?: { code?: string }) {
+  const code = data?.code
   try {
     await refreshLibrary()
   } catch {
+    if (code) revealStar(code, false)
     return
   }
-  const code = data?.code ?? scrollAfterRefreshCode.value
-  if (code) {
-    revealStar(code, scrollAfterRefreshCode.value === code)
-    if (scrollAfterRefreshCode.value === code) {
-      scrollAfterRefreshCode.value = null
-    }
-  }
+  if (!code) return
+  const shouldScroll = scrollAfterRefreshCode.value === code
+  if (shouldScroll) scrollAfterRefreshCode.value = null
+  revealStar(code, shouldScroll)
 }
 
 // SSE subscriptions
