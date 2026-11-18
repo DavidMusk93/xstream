@@ -40,7 +40,8 @@ systemctl reload caddy
 ## VNC Test Browser
 
 `vnc-testing.service` runs a shared `DISPLAY=:99` test browser session at
-1600×900. The source files are `scripts/run-vnc-session.sh` and
+1600×900 and starts Chromium with a persistent profile in
+`/root/.vnc/chrome-profile`. The source files are `scripts/run-vnc-session.sh` and
 `deploy/vnc-testing.service`; install and restart them with:
 
 ```bash

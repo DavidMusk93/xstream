@@ -24,6 +24,19 @@ xdpyinfo >/dev/null
 openbox &
 pids+=("$!")
 
+install -d -m 700 /root/.vnc/chrome-profile
+/root/.cache/ms-playwright/chromium-1148/chrome-linux/chrome \
+    --no-sandbox \
+    --disable-dev-shm-usage \
+    --disable-gpu \
+    --no-first-run \
+    --no-default-browser-check \
+    --disable-session-crashed-bubble \
+    --start-maximized \
+    --user-data-dir=/root/.vnc/chrome-profile \
+    about:blank &
+pids+=("$!")
+
 x11vnc \
     -display "$DISPLAY" \
     -rfbauth /root/.vnc/passwd \
