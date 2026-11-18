@@ -35,7 +35,40 @@ systemctl reload caddy
 | 443 | Caddy | HTTPS reverse proxy |
 | 3000 | Nuxt frontend | SSR rendering |
 | 8765 | FastAPI backend | BitTorrent + HTTP API |
-| 6080 | noVNC / websockify | Browser access to the test display |
+| 6080 | noVNC / websockify | Browser fallback for the test display |
+| 21118 | RustDesk direct IP | Preferred native remote desktop over Tailscale |
+
+## RustDesk Remote Desktop
+
+RustDesk 1.5.3 is the preferred remote desktop for the shared `DISPLAY=:99`
+session. It uses native video codecs and clipboard synchronization; noVNC is
+only a browser fallback. Connect a native RustDesk client to Tailscale address
+`100.90.17.5` (direct IP access, port 21118) and use the permanent password set
+with `rustdesk --password`.
+
+The server options live in `/root/.config/rustdesk/RustDesk2.toml`:
+
+```toml
+[options]
+direct-server = 'Y'
+direct-access-port = '21118'
+approve-mode = 'password'
+verification-method = 'use-permanent-password'
+image-quality = 'custom'
+custom-image-quality = '80.0'
+custom-fps = '60'
+codec-preference = 'auto'
+```
+
+Install the systemd drop-in, which orders RustDesk after the display and
+replaces the package's broad `pkill -f` stop command with cgroup cleanup:
+
+```bash
+install -d -m 755 /etc/systemd/system/rustdesk.service.d
+install -m 644 deploy/rustdesk-override.conf /etc/systemd/system/rustdesk.service.d/override.conf
+systemctl daemon-reload
+systemctl restart rustdesk
+```
 
 ## VNC Test Browser
 
