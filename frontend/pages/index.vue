@@ -139,7 +139,7 @@
       </div>
     </main>
 
-    <AddStarSheet v-model:open="addOpen" :stars="displayStars" @jump="scrollToStar" @added="onStarAdded" />
+    <AddStarSheet v-model:open="addOpen" :stars="displayStars" @jump="(code) => revealStar(code, true)" @added="onStarAdded" />
     <XSocialOverlay
       v-model:open="socialOpen"
       v-model:filter="socialFilter"
@@ -296,10 +296,27 @@ function onPageScroll() {
   })
 }
 
+let revealRetryTimer: ReturnType<typeof setTimeout> | null = null
+let revealDriftTimer: ReturnType<typeof setTimeout> | null = null
+
+function cancelPendingRevealScroll() {
+  if (revealRetryTimer) { clearTimeout(revealRetryTimer); revealRetryTimer = null }
+  if (revealDriftTimer) { clearTimeout(revealDriftTimer); revealDriftTimer = null }
+}
+
+function onUserManualScroll() {
+  // If the user is actively scrolling, never yank them back to a delayed
+  // star.ready scroll or a layout-drift correction.
+  scrollAfterRefreshCode.value = null
+  cancelPendingRevealScroll()
+}
+
 let scrollObserver: ResizeObserver | null = null
 onMounted(() => {
   measureScroll()
   window.addEventListener('scroll', onPageScroll, { passive: true })
+  window.addEventListener('wheel', onUserManualScroll, { passive: true })
+  window.addEventListener('touchmove', onUserManualScroll, { passive: true })
   scrollObserver = new ResizeObserver(onPageScroll)
   scrollObserver.observe(document.body)
 })
@@ -312,21 +329,28 @@ watch(displayStars, () => {
 function revealStar(code: string, scroll = false) {
   visibleCodes.value.add(code)
   if (!scroll) return
+  cancelPendingRevealScroll()
   // The shelf may not be in the DOM yet (stars still loading, section not
   // mounted, content-visibility estimate). Retry until it is; a single
   // immediate attempt used to give up before the first paint.
   let tries = 0
   const attempt = () => {
+    revealRetryTimer = null
     if (scrollToStar(code)) {
-      // The estimate-driven shelf height changes while it paints, so one
-      // corrective scroll after layout settles keeps the target in view.
-      setTimeout(() => {
+      // Only correct if off-screen content-visibility estimates shifted the
+      // target by > 24px AND the user hasn't scrolled manually in the meantime.
+      revealDriftTimer = setTimeout(() => {
+        revealDriftTimer = null
         const el = document.getElementById(`star-${code.toLowerCase()}`)
-        if (el) scrollToStar(code)
-      }, 700)
+        if (!el) return
+        const style = getComputedStyle(el)
+        const margin = parseFloat(style.scrollMarginTop || style.scrollMarginBlockStart || '0') || 0
+        const drift = Math.abs(el.getBoundingClientRect().top - margin)
+        if (drift > 24) scrollToStar(code)
+      }, 350)
       return
     }
-    if (++tries < 40) setTimeout(attempt, 100)
+    if (++tries < 40) revealRetryTimer = setTimeout(attempt, 100)
   }
   nextTick(() => requestAnimationFrame(attempt))
 }
@@ -536,7 +560,7 @@ async function handleStarAddedEvent(data: { code?: string; name?: string; handle
   }
 }
 
-async function handleStarReady(data?: { code?: string }) {
+async function handleStarReady(data?: { code?: string; name?: string; titles_count?: number }) {
   const code = data?.code
   try {
     await refreshLibrary()
@@ -545,6 +569,14 @@ async function handleStarReady(data?: { code?: string }) {
     return
   }
   if (!code) return
+  if (data?.name && !syncRunning.value) {
+    const count = data.titles_count ?? 0
+    finishToast(
+      `${data.name} is ready`,
+      `${count} title${count === 1 ? '' : 's'} synced`,
+      'success',
+    )
+  }
   const shouldScroll = scrollAfterRefreshCode.value === code
   if (shouldScroll) scrollAfterRefreshCode.value = null
   revealStar(code, shouldScroll)
@@ -630,9 +662,12 @@ const vObserve = {
 }
 
 onUnmounted(() => {
+  cancelPendingRevealScroll()
   observer?.disconnect()
   bandObserver?.disconnect()
   window.removeEventListener('scroll', onPageScroll)
+  window.removeEventListener('wheel', onUserManualScroll)
+  window.removeEventListener('touchmove', onUserManualScroll)
   scrollObserver?.disconnect()
   if (scrollRaf) cancelAnimationFrame(scrollRaf)
 })

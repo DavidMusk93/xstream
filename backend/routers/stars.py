@@ -333,7 +333,7 @@ async def add_star(request: AddStarRequest) -> AddStarResponse:
             detail="URL 必须是 ijavtorrent 演员页，例如 https://ijavtorrent.com/actress/julia-326",
         )
     url, slug, star_id = parsed
-    handle = slug.replace("-", "_")
+    handle = re.sub(r"[^a-z0-9]+", "_", slug.lower()).strip("_") or f"star_{star_id}"
 
     # Load config and deduplicate (by actress id — trailing slashes, http vs
     # https, www. hosts and slug renames all point at the same person)

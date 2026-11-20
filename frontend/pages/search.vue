@@ -91,22 +91,52 @@
                 class="surface shrink-0 w-[124px] p-2.5 flex flex-col gap-2.5"
               >
                 <!-- Natural aspect ratio, never cropped -->
-                <div class="rounded-xl overflow-hidden bg-fill relative">
-                  <img
-                    v-if="a.image && !failedCovers.has(a.url)"
-                    :src="a.image"
-                    :alt="a.name"
-                    referrerpolicy="no-referrer"
-                    loading="lazy"
-                    decoding="async"
-                    class="w-full h-auto block select-none"
-                    @error="failedCovers.add(a.url)"
-                  />
-                  <div v-else class="aspect-square flex items-center justify-center text-[24px] font-semibold text-foreground-muted/50">
-                    {{ a.name.charAt(0) }}
+                <NuxtLink
+                  v-if="followedCode(a.url)"
+                  :to="`/?star=${followedCode(a.url)}`"
+                  class="block group"
+                >
+                  <div class="rounded-xl overflow-hidden bg-fill relative">
+                    <img
+                      v-if="a.image && !failedCovers.has(a.url)"
+                      :src="a.image"
+                      :alt="a.name"
+                      referrerpolicy="no-referrer"
+                      loading="lazy"
+                      decoding="async"
+                      class="w-full h-auto block select-none transition-transform duration-300 group-hover:scale-[1.03]"
+                      @error="failedCovers.add(a.url)"
+                    />
+                    <div v-else class="aspect-square flex items-center justify-center text-[24px] font-semibold text-foreground-muted/50">
+                      {{ a.name.charAt(0) }}
+                    </div>
                   </div>
-                </div>
-                <p class="px-0.5 text-[13px] font-semibold text-foreground leading-tight line-clamp-2 min-h-[2.3em]">{{ a.name }}</p>
+                  <p class="mt-2.5 px-0.5 text-[13px] font-semibold text-foreground leading-tight line-clamp-2 min-h-[2.3em] group-hover:text-accent transition-colors">{{ a.name }}</p>
+                </NuxtLink>
+                <button
+                  v-else
+                  type="button"
+                  class="block text-left group"
+                  :title="`Search ${a.name}`"
+                  @click="searchFor(a.name)"
+                >
+                  <div class="rounded-xl overflow-hidden bg-fill relative">
+                    <img
+                      v-if="a.image && !failedCovers.has(a.url)"
+                      :src="a.image"
+                      :alt="a.name"
+                      referrerpolicy="no-referrer"
+                      loading="lazy"
+                      decoding="async"
+                      class="w-full h-auto block select-none transition-transform duration-300 group-hover:scale-[1.03]"
+                      @error="failedCovers.add(a.url)"
+                    />
+                    <div v-else class="aspect-square flex items-center justify-center text-[24px] font-semibold text-foreground-muted/50">
+                      {{ a.name.charAt(0) }}
+                    </div>
+                  </div>
+                  <p class="mt-2.5 px-0.5 text-[13px] font-semibold text-foreground leading-tight line-clamp-2 min-h-[2.3em] group-hover:text-accent transition-colors">{{ a.name }}</p>
+                </button>
                 <NuxtLink
                   v-if="followedCode(a.url)"
                   :to="`/?star=${followedCode(a.url)}`"
@@ -253,6 +283,8 @@ import type { SearchResponse, SearchResultActress, SearchResultItem, SearchResul
 import { decodeThumbImage } from '~/utils/thumbCover'
 
 const config = useRuntimeConfig()
+const route = useRoute()
+const router = useRouter()
 const { track } = useTrack()
 const { add: addLog } = useEventLog()
 
@@ -265,8 +297,10 @@ function isImgReady(key: string): boolean {
 async function onImgLoad(key: string, e: Event) {
   const img = e.target as HTMLImageElement
   const ok = await decodeThumbImage(img)
-  if (ok) {
+  if (ok || (img.complete && img.naturalWidth > 0)) {
     readyImages[key] = true
+  } else {
+    failedCovers.value.add(key)
   }
 }
 
@@ -274,7 +308,9 @@ function bindImgEl(key: string, el: HTMLImageElement | null) {
   if (!el?.complete || el.naturalWidth <= 0) return
   if (readyImages[key]) return
   void decodeThumbImage(el).then((ok) => {
-    if (ok) readyImages[key] = true
+    if (ok || (el.complete && el.naturalWidth > 0)) {
+      readyImages[key] = true
+    }
   })
 }
 
@@ -289,10 +325,26 @@ const inputRef = ref<HTMLInputElement>()
 
 function clearQuery() {
   query.value = ''
+  if (route.query.q) {
+    router.replace({ query: {} })
+  }
   inputRef.value?.focus()
 }
 
-onMounted(() => inputRef.value?.focus())
+function searchFor(term: string) {
+  query.value = term
+  search()
+}
+
+onMounted(() => {
+  const initial = typeof route.query.q === 'string' ? route.query.q.trim() : ''
+  if (initial.length >= 2) {
+    query.value = initial
+    search()
+  } else {
+    inputRef.value?.focus()
+  }
+})
 
 // Followed actresses, keyed by page URL -> library code. The code is what
 // lets a chip become a link into the library shelf ("关联跳转"), and is also
@@ -374,6 +426,9 @@ async function search() {
   loading.value = true
   errorMsg.value = ''
   failedCovers.value = new Set()
+  if (route.query.q !== q) {
+    router.replace({ query: { q } })
+  }
 
   try {
     const res = await $fetch<SearchResponse>('/api/search', {

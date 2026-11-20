@@ -184,12 +184,16 @@ def _image_mime(data: bytes) -> str:
 
 def _store_cover(name: str, data: bytes) -> bool:
     """Atomically write a cached cover, keeping the directory bounded."""
+    tmp = _COVER_DIR / f".{name}.{os.getpid()}.{time.monotonic_ns()}.tmp"
     try:
         _COVER_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = _COVER_DIR / f".{name}.tmp"
         tmp.write_bytes(data)
         os.replace(tmp, _COVER_DIR / name)
     except OSError as exc:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
         log.warning(f"cover cache write failed for {name}: {exc}")
         return False
     try:

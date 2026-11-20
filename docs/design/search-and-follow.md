@@ -47,18 +47,27 @@ browser  --/api/search-->  backend  --remote cover url-->  images.ijavtorrent.co
   `frontend/pages/index.vue` scrolls to that shelf (query consumed once,
   `replace: true`).
 - `scrapers/v2/extractors.py::normalize_actress_url` is the single parser:
-  returns `(canonical_url, slug, star_id)`. Dedupe and "already followed"
-  checks compare `star_id`, not the URL string (ijav renames slugs).
+  returns `(canonical_url, slug, star_id)` for trailing slashes, `/page/N`
+  pagination links, relative `/actress/...` paths, scheme-less / `http` /
+  `www.` / `m.` hosts, uppercase or non-ASCII / percent-encoded slugs,
+  query strings, and fragments. Dedupe and "already followed" checks
+  compare `star_id`, not the URL string (ijav renames slugs).
+- `/search` syncs the query into `?q=` so jumping to a followed actress
+  (`/?star=<code>`) and pressing browser Back restores the search results.
+  Workbox caches `/api/search/cover` in `image-cache` (`CacheFirst`).
 
 ## Follow UX (no page jumping)
 
 Adding a star used to scroll the library three times: immediately on the
 POST response, again on the SSE `star.added` event, and again on
-`star.ready`. Now the sheet closes on success and the library scrolls
-exactly once — when the new star's titles land (`star.ready`) — so the
-shelves no longer shuffle under an open overlay. The scroll itself is
-instant, not animated: off-screen shelves reserve an estimated height
-(`content-visibility: auto`), so a smooth scroll chases a moving target.
+`star.ready`. Now `refreshLibrary()` coalesces concurrent calls, the sheet
+closes on success, and the library scrolls at most once — when the new
+star's titles land (`star.ready`) — and cancels that pending scroll if the
+user manually scrolls away in the meantime. The scroll itself is instant,
+not animated: off-screen shelves reserve an estimated height
+(`content-visibility: auto`), so a smooth scroll chases a moving target;
+a single drift check at 350ms only corrects if the target shifted > 24px
+and the user has not scrolled.
 
 `/?star=<code>` (from a followed actress chip or an actress card in
 search) reveals and jumps to that shelf once; the query is consumed with a

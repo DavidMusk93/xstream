@@ -47,6 +47,17 @@ _CONFIG = {"stars": []}
         ("https://ijavtorrent.com/actress/julia-326#top", "https://ijavtorrent.com/actress/julia-326"),
         ("  https://ijavtorrent.com/actress/229scute-1575/  ", "https://ijavtorrent.com/actress/229scute-1575"),
         ("<https://ijavtorrent.com/actress/julia-326/>", "https://ijavtorrent.com/actress/julia-326"),
+        ("https://ijavtorrent.com/actress/julia-326/page/2/", "https://ijavtorrent.com/actress/julia-326"),
+        ("/actress/julia-326/", "https://ijavtorrent.com/actress/julia-326"),
+        ('"https://ijavtorrent.com/actress/julia-326/"', "https://ijavtorrent.com/actress/julia-326"),
+        (
+            "https://ijavtorrent.com/actress/ゆま-26855/",
+            "https://ijavtorrent.com/actress/%E3%82%86%E3%81%BE-26855",
+        ),
+        (
+            "https://ijavtorrent.com/actress/%E3%82%86%E3%81%BE-26855/",
+            "https://ijavtorrent.com/actress/%E3%82%86%E3%81%BE-26855",
+        ),
     ],
 )
 def test_normalize_actress_url_accepts_site_forms(raw, expected):
@@ -64,6 +75,7 @@ def test_normalize_actress_url_accepts_site_forms(raw, expected):
         "https://ijavtorrent.com/movie/julia-001-999",
         "https://evil.com/actress/julia-326",
         "https://ijavtorrent.com.evil.com/actress/julia-326",
+        "https://ijavtorrent.com/actress/-326",
     ],
 )
 def test_normalize_actress_url_rejects_non_actress_pages(raw):
@@ -132,3 +144,35 @@ def test_add_star_rejects_non_actress_url(client):
     )
     assert res.status_code == 400
     assert "actress" in res.json()["detail"]
+
+
+def test_add_star_non_ascii_slug_gets_clean_handle(client):
+    http, _ = client
+    res = http.post(
+        "/api/stars/add",
+        json={"star_page_url": "https://ijavtorrent.com/actress/ゆま-雲上-26855/"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["handle"] == "star_26855"
+    assert body["star_page_url"] == "https://ijavtorrent.com/actress/%E3%82%86%E3%81%BE-%E9%9B%B2%E4%B8%8A-26855"
+
+
+def test_parse_actress_directory_normalizes_non_ascii_and_uppercase():
+    from scrapers.v2.extractors import parse_actress_directory
+
+    html = (
+        '<a href="/actress/JULIA-326/"><img src="https://images.ijavtorrent.com/326.jpg"/></a>'
+        '<a href="/actress/JULIA-326/">JULIA (10 movies)</a>'
+        '<a href="/actress/ゆま-26855/"><img src="https://images.ijavtorrent.com/26855.jpg"/></a>'
+        '<a href="/actress/ゆま-26855/">ゆま (2 movies)</a>'
+    )
+    rows = parse_actress_directory(html)
+    assert [r["url"] for r in rows] == [
+        "https://ijavtorrent.com/actress/julia-326",
+        "https://ijavtorrent.com/actress/%E3%82%86%E3%81%BE-26855",
+    ]
+    assert [r["image"] for r in rows] == [
+        "https://images.ijavtorrent.com/326.jpg",
+        "https://images.ijavtorrent.com/26855.jpg",
+    ]

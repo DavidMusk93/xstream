@@ -297,17 +297,20 @@ class IJavTorrentExtractor:
 # first wraps the photo (imageless actresses get a name-placeholder div
 # instead — most of the directory), the second carries "Name (N movies)".
 _ACTRESS_IMG_RE = re.compile(
-    r'<a href="(/actress/[a-z0-9-]+-\d+/?)">\s*<img src="([^"]+)"', re.IGNORECASE
+    r'<a href="(/actress/[^"/?#]+-\d+/?)">\s*<img src="([^"]+)"', re.IGNORECASE
 )
 _ACTRESS_NAME_RE = re.compile(
-    r'<a href="(/actress/[a-z0-9-]+-\d+/?)">([^<]+?)\s*\((\d+) movies?\)</a>',
+    r'<a href="(/actress/[^"/?#]+-\d+/?)">([^<]+?)\s*\((\d+) movies?\)</a>',
     re.IGNORECASE,
 )
 
 
-# ijavtorrent actress page path: /actress/<slug>-<numeric id>, where the
-# slug may be renamed over time while the id stays stable (see verify.py).
-_ACTRESS_PATH_RE = re.compile(r"^/actress/([a-z0-9][a-z0-9-]*)-(\d+)$", re.IGNORECASE)
+# ijavtorrent actress page path: /actress/<slug>-<numeric id> (with optional
+# /page/<n> pagination). The slug may contain non-ASCII characters or be
+# renamed over time while the numeric id stays stable (see verify.py).
+_ACTRESS_PATH_RE = re.compile(
+    r"^/actress/([^/\s][^/]*)-(\d+)(?:/page/\d+)?$", re.IGNORECASE
+)
 
 
 def normalize_actress_url(raw: str) -> tuple[str, str, str] | None:
@@ -315,16 +318,19 @@ def normalize_actress_url(raw: str) -> tuple[str, str, str] | None:
 
     Accepts every shape a user can paste or the site can emit: the site's
     own `https://ijavtorrent.com/actress/julia-326/` (trailing slash),
+    pagination links (`/page/2/`), relative `/actress/...` paths,
     scheme-less `ijavtorrent.com/actress/julia-326`, `http://`, `www.`/`m.`
-    hosts, uppercase slugs, query strings and `#` fragments. Returns None
-    when the input is not an actress page URL (directory pages, movie
-    pages, other hosts).
+    hosts, uppercase or non-ASCII / percent-encoded slugs, query strings
+    and `#` fragments. Returns None when the input is not an actress page
+    URL (directory pages, movie pages, other hosts).
     """
-    text = (raw or "").strip().strip("<>").strip()
+    text = (raw or "").strip().strip("<>\"'").rstrip(",;").strip()
     if not text:
         return None
     text = text.split("#", 1)[0].split("?", 1)[0].strip()
-    if not re.match(r"^[a-z][a-z0-9+.-]*://", text, re.IGNORECASE):
+    if text.startswith("/actress/"):
+        text = IJAV_BASE_URL + text
+    elif not re.match(r"^[a-z][a-z0-9+.-]*://", text, re.IGNORECASE):
         text = "https://" + text.lstrip("/")
     try:
         parts = urllib.parse.urlsplit(text)
@@ -334,14 +340,18 @@ def normalize_actress_url(raw: str) -> tuple[str, str, str] | None:
     site = urllib.parse.urlsplit(IJAV_BASE_URL).hostname or "ijavtorrent.com"
     if host != site and not host.endswith("." + site):
         return None
-    path = re.sub(r"/{2,}", "/", parts.path or "")
+    path = urllib.parse.unquote(parts.path or "")
+    path = re.sub(r"/{2,}", "/", path)
     if len(path) > 1:
         path = path.rstrip("/")
     match = _ACTRESS_PATH_RE.match(path)
     if not match:
         return None
     slug, star_id = match.group(1).lower(), match.group(2)
-    return f"{IJAV_BASE_URL}/actress/{slug}-{star_id}", slug, star_id
+    if not slug.strip("-"):
+        return None
+    encoded_slug = urllib.parse.quote(slug, safe="-._~")
+    return f"{IJAV_BASE_URL}/actress/{encoded_slug}-{star_id}", slug, star_id
 
 
 def parse_actress_directory(html: str) -> list[dict]:
@@ -352,18 +362,25 @@ def parse_actress_directory(html: str) -> list[dict]:
     the directory's trailing-slash links match what POST /api/stars/add
     stores.
     """
-    images = {path.rstrip("/"): img for path, img in _ACTRESS_IMG_RE.findall(html)}
+    images: dict[str, str] = {}
+    for path, img in _ACTRESS_IMG_RE.findall(html):
+        parsed = normalize_actress_url(path)
+        if parsed:
+            images[parsed[0]] = img
     actresses: dict[str, dict] = {}
     for path, name, movies in _ACTRESS_NAME_RE.findall(html):
         name = name.strip()
         if not name:
             continue
-        url = f"{IJAV_BASE_URL}{path.rstrip('/')}"
+        parsed = normalize_actress_url(path)
+        if not parsed:
+            continue
+        url = parsed[0]
         entry = actresses.setdefault(
             url, {"name": name, "url": url, "image": "", "movies": int(movies)}
         )
         if not entry["image"]:
-            entry["image"] = images.get(path.rstrip("/"), "")
+            entry["image"] = images.get(url, "")
     return list(actresses.values())
 
 

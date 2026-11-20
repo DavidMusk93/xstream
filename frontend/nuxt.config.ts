@@ -75,8 +75,8 @@ export default defineNuxtConfig({
           // StaleWhileRevalidate, which refetches every render — on Safari the
           // SW cache is the only thing standing between a view switch and a
           // full white reload of every image).
-          // Entry budget must cover the whole library x (full + thumb).
-          urlPattern: /^\/(images|api\/cover|api\/social\/x\/media)\/.*/,
+          // Entry budget must cover the whole library x (full + thumb) + search covers.
+          urlPattern: /^\/(images\/|api\/cover\/|api\/social\/x\/media\/|api\/search\/cover)/,
           handler: 'CacheFirst',
           options: {
             cacheName: 'image-cache',

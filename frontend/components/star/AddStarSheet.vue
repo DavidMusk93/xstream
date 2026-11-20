@@ -82,6 +82,14 @@ const adding = ref(false)
 const error = ref('')
 const success = ref('')
 const recent = ref<RecentStar[]>([])
+let closeTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearCloseTimer() {
+  if (closeTimer) {
+    clearTimeout(closeTimer)
+    closeTimer = null
+  }
+}
 
 // Deleted stars drop out of the list; a just-added star shows up as soon
 // as the roster refetch lands.
@@ -112,6 +120,7 @@ function jump(code: string) {
 }
 
 watch(open, (isOpen) => {
+  clearCloseTimer()
   if (!isOpen) return
   loadRecent()
   error.value = ''
@@ -153,7 +162,11 @@ async function addStar() {
     // Close the sheet right away: the library behind it scrolls to the new
     // shelf once her titles land, and keeping the sheet open made that
     // scroll feel like the page was jumping around under the overlay.
-    setTimeout(() => { open.value = false }, 700)
+    clearCloseTimer()
+    closeTimer = setTimeout(() => {
+      closeTimer = null
+      open.value = false
+    }, 700)
   } catch (e: any) {
     const msg = e?.data?.detail || e?.message || 'Failed to add'
     error.value = msg
@@ -168,6 +181,9 @@ onMounted(() => {
   const off = onServerEvent('star.ready', (data: any) => {
     if (open.value) success.value = `${data.name} is ready — ${data.titles_count} titles.`
   })
-  onUnmounted(off)
+  onUnmounted(() => {
+    clearCloseTimer()
+    off()
+  })
 })
 </script>

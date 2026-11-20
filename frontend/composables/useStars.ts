@@ -26,6 +26,8 @@ export function emptyStarRow(payload: {
   }
 }
 
+let inflightRefresh: Promise<Star[]> | null = null
+
 export function useStars() {
   const config = useRuntimeConfig()
 
@@ -39,16 +41,23 @@ export function useStars() {
     server: false,
   })
 
-  /** Force a network reload (SW + 304-safe). Assigns into the shared stars ref. */
+  /** Force a network reload (SW + 304-safe). Coalesces concurrent calls so
+   *  back-to-back POST + SSE events don't trigger duplicate 2.5MB fetches. */
   async function refreshLibrary() {
-    await clearStarsServiceWorkerCache()
-    const bust = Date.now()
-    const rows = await $fetch<Star[]>(`/api/stars?_=${bust}`, {
-      baseURL: config.public.apiBase,
-      headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+    if (inflightRefresh) return inflightRefresh
+    inflightRefresh = (async () => {
+      await clearStarsServiceWorkerCache()
+      const bust = Date.now()
+      const rows = await $fetch<Star[]>(`/api/stars?_=${bust}`, {
+        baseURL: config.public.apiBase,
+        headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+      })
+      stars.value = rows
+      return rows
+    })().finally(() => {
+      inflightRefresh = null
     })
-    stars.value = rows
-    return rows
+    return inflightRefresh
   }
 
   /** Show the new star immediately; server list reconciles on refreshLibrary. */
