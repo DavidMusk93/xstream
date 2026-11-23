@@ -218,7 +218,7 @@ const { track } = useTrack()
 
 const videoRef = ref<HTMLVideoElement>()
 const containerRef = ref<HTMLDivElement>()
-const { status, loading, error, canplayFired, startPolling, stopPolling, waitForHeadReady, reportSeek, reportProgress, reportPause, reportResume, formatSpeed } = useVideoPlayer()
+const { status, loading, error, canplayFired, startPolling, stopPolling, waitForHeadReady, cancelWaitForHeadReady, reportSeek, reportProgress, reportPause, reportResume, formatSpeed } = useVideoPlayer()
 
 const buffering = ref(false)
 const errorMsg = ref('')
@@ -500,6 +500,7 @@ async function openPlayback(hash: string) {
 
   const openStart = Date.now()
   const ready = await waitForHeadReady(hash)
+  if (!isOpen.value || props.hash !== hash) return
   if (!ready) {
     errorMsg.value = error.value || 'Load failed'
     logError('player', `load failed hash=${hash.slice(0, 12)}: ${errorMsg.value}`)
@@ -556,6 +557,7 @@ watch(isOpen, (open) => {
       })
     }
     saveProgress()
+    cancelWaitForHeadReady()
     stopPolling()
     clearAllTimers()
     controlsHidden.value = false
@@ -915,6 +917,7 @@ onMounted(() => {
   }
 
   onUnmounted(() => {
+    cancelWaitForHeadReady()
     document.removeEventListener('fullscreenchange', handler)
     document.removeEventListener('webkitfullscreenchange', handler)
     if (v) {

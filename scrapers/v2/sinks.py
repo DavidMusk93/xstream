@@ -7,6 +7,7 @@ Cover blobs go to the separate title_covers table (1:1 with titles).
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Protocol
 
@@ -130,6 +131,7 @@ class TitleSyncSink:
                 "magnet": primary.magnet,
                 "magnet_hash": primary_hash,
                 "all_magnets": Jsonb(all_magnets) if all_magnets else None,
+                "_candidates": scored,
             })
 
         def _upsert(conn=None) -> dict[str, int]:
@@ -139,6 +141,70 @@ class TitleSyncSink:
                 # Pool connections are autocommit: wrap the multi-statement
                 # upsert in an explicit transaction so rows + covers land atomically.
                 with managed.transaction():
+                    # Preserve existing live magnet candidates when upserting so
+                    # an ijav-only phase-A pass (or stale concurrent write) can
+                    # never clobber an HD magnet already written by RSS/code
+                    # fallback. Dead rows are replaced cleanly.
+                    existing_rows = managed.execute(
+                        "SELECT code, all_magnets, magnet_status FROM titles"
+                        " WHERE star_id = %s AND code = ANY(%s)",
+                        (self.star_id, [v["code"] for v in values]),
+                    ).fetchall()
+                    existing_by_code = {
+                        code: (mags, status) for code, mags, status in existing_rows
+                    }
+                    for v in values:
+                        ex = existing_by_code.get(v["code"])
+                        if not ex or ex[1] == "dead" or not ex[0]:
+                            continue
+                        ex_mags = json.loads(ex[0]) if isinstance(ex[0], str) else ex[0]
+                        if not isinstance(ex_mags, list):
+                            continue
+                        incoming: list[MagnetCandidate] = list(v["_candidates"])
+                        seen_hashes = {
+                            _extract_hash(m.magnet) for m in incoming
+                        }
+                        added = False
+                        for entry in ex_mags:
+                            if not isinstance(entry, dict):
+                                continue
+                            mag_url = entry.get("magnet") or ""
+                            h = _extract_hash(mag_url)
+                            if not h or h in seen_hashes:
+                                continue
+                            seen_hashes.add(h)
+                            low_url = mag_url.lower()
+                            incoming.append(MagnetCandidate(
+                                magnet=mag_url,
+                                resolution=str(entry.get("resolution") or ""),
+                                size=str(entry.get("size") or ""),
+                                seed=int(entry.get("seed") or 0),
+                                leech=int(entry.get("leech") or 0),
+                                is_hhd800=("hhd800" in low_url or "%2b%2b%2b" in low_url or "+++" in low_url),
+                            ))
+                            added = True
+                        if added:
+                            merged_scored = sorted(
+                                incoming,
+                                key=lambda m: TitleSyncSink._score_magnet(m),
+                                reverse=True,
+                            )
+                            best = merged_scored[0]
+                            v["resolution"] = best.resolution
+                            v["magnet"] = best.magnet
+                            v["magnet_hash"] = _extract_hash(best.magnet)
+                            v["all_magnets"] = Jsonb([
+                                {
+                                    "hash": _extract_hash(m.magnet) or "",
+                                    "magnet": m.magnet,
+                                    "resolution": m.resolution,
+                                    "size": m.size,
+                                    "seed": m.seed,
+                                    "leech": m.leech,
+                                }
+                                for m in merged_scored
+                            ])
+
                     # INSERT ... ON CONFLICT DO UPDATE, RETURNING id+code for the
                     # cover upsert below (works for both inserted and updated rows).
                     placeholders = ", ".join([

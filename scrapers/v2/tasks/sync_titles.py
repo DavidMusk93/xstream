@@ -832,27 +832,33 @@ async def _rss_enrich_all(
         cover_sem = asyncio.Semaphore(COVER_DOWNLOAD_CONCURRENCY)
         for i, star in enumerate(stars, 1):
             star_id = star_id_map[star.code]
-            if star_id in suppressed:
-                await _emit("rss", star=star.name, done=i, total=len(stars),
-                            enriched=0, new=0, suppressed=True)
-                continue
-            try:
-                rss_items = await fetch_star_rss(fetcher, star, limiter)
-            except NoRssResultsError:
-                await db_write(db.record_rss_empty, star_id)
+            is_suppressed = star_id in suppressed
+            if is_suppressed:
+                # Name-based RSS is suppressed, but still let ijav items flow
+                # into exact-code weak-magnet enrichment below.
                 if not ijav_by_star.get(star.code):
-                    await _emit("rss", star=star.name, done=i, total=len(stars), enriched=0, new=0)
+                    await _emit("rss", star=star.name, done=i, total=len(stars),
+                                enriched=0, new=0, suppressed=True)
                     continue
                 rss_items = []
-            except Exception as e:
-                n_failed += 1
-                log.warning(f"phase B: rss failed for {star.name}: {type(e).__name__}: {e}")
-                await _emit("rss", star=star.name, done=i, total=len(stars),
-                            enriched=0, new=0, error=f"{type(e).__name__}: {e}"[:200])
-                continue
             else:
-                # The source answered with usable items — reset any empty streak.
-                await db_write(db.clear_rss_empty, star_id)
+                try:
+                    rss_items = await fetch_star_rss(fetcher, star, limiter)
+                except NoRssResultsError:
+                    await db_write(db.record_rss_empty, star_id)
+                    if not ijav_by_star.get(star.code):
+                        await _emit("rss", star=star.name, done=i, total=len(stars), enriched=0, new=0)
+                        continue
+                    rss_items = []
+                except Exception as e:
+                    n_failed += 1
+                    log.warning(f"phase B: rss failed for {star.name}: {type(e).__name__}: {e}")
+                    await _emit("rss", star=star.name, done=i, total=len(stars),
+                                enriched=0, new=0, error=f"{type(e).__name__}: {e}"[:200])
+                    continue
+                else:
+                    # The source answered with usable items — reset any empty streak.
+                    await db_write(db.clear_rss_empty, star_id)
 
             merged = _drop_hidden(
                 merge_sources(ijav_by_star.get(star.code, []), rss_items, star.name),
@@ -876,7 +882,8 @@ async def _rss_enrich_all(
             )
             enriched = len(backfill_items) + len(cover_fix_items)
             if not sync_items:
-                await _emit("rss", star=star.name, done=i, total=len(stars), enriched=0, new=0)
+                await _emit("rss", star=star.name, done=i, total=len(stars),
+                            enriched=0, new=0, **({"suppressed": True} if is_suppressed else {}))
                 continue
             await _enrich_weak_magnets_by_code(fetcher, sync_items, limiter)
 
@@ -894,7 +901,13 @@ async def _rss_enrich_all(
                     sem=cover_sem, fetcher=fetcher,
                 )
                 sink = TitleSyncSink(star_id=star_id, star_code=star.code, star_name=star.name)
-                await sink.write_batch(sync_items, {it.code for it in new_items}, cover_map)
+                # Codes phase A already wrote with a cover are enrichment updates,
+                # not coverless new inserts — keeping them in new_codes makes the
+                # sink skip them (empty cover_map) and blacklist them as no_cover.
+                phase_b_new_codes = {
+                    it.code for it in new_items if it.code not in already_covered
+                }
+                await sink.write_batch(sync_items, phase_b_new_codes, cover_map)
             except Exception as e:
                 n_failed += 1
                 log.error(f"phase B: write failed for {star.name}: {e}")

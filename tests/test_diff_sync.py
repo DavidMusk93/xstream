@@ -1551,3 +1551,151 @@ async def test_enrich_weak_magnets_by_code_tolerates_fetch_error():
     assert upgraded == 0
     assert weak_item.magnets == []
 
+
+@pytest.mark.asyncio
+async def test_phase_b_upgrades_phase_a_covered_new_title_without_blacklisting(
+    sink_db, monkeypatch
+):
+    """Phase B must not skip/blacklist new titles whose covers phase A already wrote."""
+    from scrapers.v2.tasks import sync_titles as st
+
+    async def _direct(fn, *a, **k):
+        return fn(*a, **k)
+
+    monkeypatch.setattr(st, "db_write", _direct)
+    monkeypatch.setattr(st, "db_read", _direct)
+    monkeypatch.setattr(st, "_drop_misattributed", AsyncMock(side_effect=lambda _f, _s, items, *_a: items))
+    monkeypatch.setattr(st, "download_covers_batch", AsyncMock(return_value={}))
+    monkeypatch.setattr(st, "fetch_star_rss", AsyncMock(side_effect=st.NoRssResultsError("empty")))
+
+    weak_mag = "magnet:?xt=urn:btih:" + "11" * 20
+    hd_hash = "22" * 20
+    sink_db.execute("INSERT INTO stars (id, name, code) VALUES (1, 'Hina Yukino', 'SNOS-524')")
+    sink_db.execute(
+        "INSERT INTO titles (star_id, star_code, star_name, code, title, magnet, magnet_hash, all_magnets, cover_w, cover_h)"
+        " VALUES (1, 'SNOS-524', 'Hina Yukino', 'SNOS-524', 'Debut', %s, %s, %s::jsonb, 800, 538)",
+        (weak_mag, "11" * 20, json.dumps([{"hash": "11" * 20, "magnet": weak_mag, "resolution": "", "size": "2.2gb", "seed": 20, "leech": 10}])),
+    )
+
+    rss_xml = _rss(_item("+++ [FHD] SNOS-524 雪野緋七", info_hash=hd_hash, seeders=200, size="9.4 GiB"))
+
+    class _FakeFetcher:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+        async def fetch(self, url):
+            return rss_xml
+
+    monkeypatch.setattr(st, "HttpxFetcher", _FakeFetcher)
+
+    star = StarConfig(name="Hina Yukino", code="SNOS-524")
+    ijav_item = VideoItem(
+        code="SNOS-524", title="Debut",
+        magnets=[MagnetCandidate(magnet=weak_mag, resolution="", size="2.2gb", seed=20)],
+        all_magnet_urls=[weak_mag],
+    )
+    # SNOS-524 was new in phase A (not in pre-run existing_codes) and phase A
+    # already fetched its cover (present in phase_a_covers).
+    await st._rss_enrich_all(
+        [star], {"SNOS-524": [ijav_item]}, {"SNOS-524": 1},
+        set(), set(), set(), set(), [], {"SNOS-524": {"SNOS-524"}}, None,
+    )
+
+    row = sink_db.execute(
+        "SELECT resolution, magnet_hash FROM titles WHERE star_id = 1 AND code = 'SNOS-524'"
+    ).fetchone()
+    assert row == ("[FHD]", hd_hash)
+    bl = sink_db.execute(
+        "SELECT count(*) FROM title_blacklist WHERE star_id = 1 AND code = 'SNOS-524'"
+    ).fetchone()[0]
+    assert bl == 0
+
+
+@pytest.mark.asyncio
+async def test_rss_suppressed_star_still_runs_code_fallback_enrichment(
+    sink_db, monkeypatch
+):
+    """A star suppressed from name-based RSS still gets exact-code weak-magnet upgrades."""
+    from scrapers.v2.tasks import sync_titles as st
+
+    async def _direct(fn, *a, **k):
+        return fn(*a, **k)
+
+    monkeypatch.setattr(st, "db_write", _direct)
+    monkeypatch.setattr(st, "db_read", _direct)
+    monkeypatch.setattr(st, "_drop_misattributed", AsyncMock(side_effect=lambda _f, _s, items, *_a: items))
+    monkeypatch.setattr(st, "download_covers_batch", AsyncMock(return_value={}))
+
+    async def _boom(*a, **k):
+        raise AssertionError("suppressed star must not call fetch_star_rss")
+
+    monkeypatch.setattr(st, "fetch_star_rss", _boom)
+
+    weak_mag = "magnet:?xt=urn:btih:" + "33" * 20
+    hd_hash = "44" * 20
+    sink_db.execute("INSERT INTO stars (id, name, code) VALUES (1, 'Hina Yukino', 'SNOS-524')")
+    sink_db.execute("INSERT INTO star_rss_state (star_id, empty_streak, last_empty_at) VALUES (1, 3, now())")
+    sink_db.execute(
+        "INSERT INTO titles (star_id, star_code, star_name, code, title, magnet, magnet_hash, all_magnets, cover_w, cover_h)"
+        " VALUES (1, 'SNOS-524', 'Hina Yukino', 'SNOS-524', 'Debut', %s, %s, %s::jsonb, 800, 538)",
+        (weak_mag, "33" * 20, json.dumps([{"hash": "33" * 20, "magnet": weak_mag, "resolution": "", "size": "2.2gb", "seed": 20, "leech": 10}])),
+    )
+
+    rss_xml = _rss(_item("+++ [FHD] SNOS-524 雪野緋七", info_hash=hd_hash, seeders=200, size="9.4 GiB"))
+
+    class _FakeFetcher:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+        async def fetch(self, url):
+            return rss_xml
+
+    monkeypatch.setattr(st, "HttpxFetcher", _FakeFetcher)
+
+    star = StarConfig(name="Hina Yukino", code="SNOS-524")
+    ijav_item = VideoItem(
+        code="SNOS-524", title="Debut",
+        magnets=[MagnetCandidate(magnet=weak_mag, resolution="", size="2.2gb", seed=20)],
+        all_magnet_urls=[weak_mag],
+    )
+    await st._rss_enrich_all(
+        [star], {"SNOS-524": [ijav_item]}, {"SNOS-524": 1},
+        {(1, "SNOS-524")}, {(1, "SNOS-524")}, set(), set(), [], {}, None,
+    )
+
+    row = sink_db.execute(
+        "SELECT resolution, magnet_hash FROM titles WHERE star_id = 1 AND code = 'SNOS-524'"
+    ).fetchone()
+    assert row == ("[FHD]", hd_hash)
+
+
+@pytest.mark.asyncio
+async def test_sink_upsert_preserves_existing_hd_magnet_against_weaker_write(sink_db):
+    """A weaker upsert (e.g. concurrent ijav-only phase A) must not clobber an existing HD magnet."""
+    from scrapers.v2 import sinks
+
+    weak_mag = "magnet:?xt=urn:btih:" + "55" * 20
+    hd_mag = "magnet:?xt=urn:btih:" + "66" * 20 + "&dn=%2B%2B%2B%20%5BFHD%5D%20SNOS-524"
+    sink_db.execute("INSERT INTO stars (id, name, code) VALUES (1, 'Hina Yukino', 'SNOS-524')")
+    sink_db.execute(
+        "INSERT INTO titles (star_id, star_code, star_name, code, title, resolution, magnet, magnet_hash, all_magnets, cover_w, cover_h)"
+        " VALUES (1, 'SNOS-524', 'Hina Yukino', 'SNOS-524', 'Debut', '[FHD]', %s, %s, %s::jsonb, 800, 538)",
+        (hd_mag, "66" * 20, json.dumps([{"hash": "66" * 20, "magnet": hd_mag, "resolution": "[FHD]", "size": "9.4GB", "seed": 200, "leech": 50}])),
+    )
+
+    sink = sinks.TitleSyncSink(star_id=1, star_code="SNOS-524", star_name="Hina Yukino")
+    weak_item = VideoItem(
+        code="SNOS-524", title="Debut",
+        magnets=[MagnetCandidate(magnet=weak_mag, resolution="", size="2.2gb", seed=20)],
+        all_magnet_urls=[weak_mag],
+    )
+    await sink.write_batch([weak_item], set(), {})
+
+    row = sink_db.execute(
+        "SELECT resolution, magnet_hash, jsonb_array_length(all_magnets) FROM titles WHERE star_id = 1 AND code = 'SNOS-524'"
+    ).fetchone()
+    assert row == ("[FHD]", "66" * 20, 2)
+
+

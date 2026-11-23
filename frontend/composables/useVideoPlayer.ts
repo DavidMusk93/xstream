@@ -118,10 +118,24 @@ export function useVideoPlayer() {
     _currentHash = ''
   }
 
+  let cancelActiveWait: (() => void) | null = null
+
+  function cancelWaitForHeadReady() {
+    if (cancelActiveWait) {
+      cancelActiveWait()
+      cancelActiveWait = null
+    }
+    loading.value = false
+  }
+
   async function waitForHeadReady(hash: string, timeoutSec = 180): Promise<boolean> {
+    cancelWaitForHeadReady()
     loading.value = true
     error.value = ''
     const start = Date.now()
+    let cancelled = false
+    const onCancel = () => { cancelled = true }
+    cancelActiveWait = onCancel
     logInfo('player', `waitForHeadReady ${hash.slice(0, 12)} start`)
 
     // Ensure torrent is added once before waiting.
@@ -136,6 +150,7 @@ export function useVideoPlayer() {
     } catch {
       // already added or other error
     }
+    if (cancelled) return false
 
     // Trigger head+tail download so head_ready can be detected.
     try {
@@ -148,46 +163,59 @@ export function useVideoPlayer() {
     } catch {
       // ignore
     }
+    if (cancelled) return false
 
     if (await checkHeadReady(hash)) {
+      if (cancelActiveWait === onCancel) cancelActiveWait = null
       loading.value = false
       logInfo('player', `waitForHeadReady ${hash.slice(0, 12)} success immediately`)
       return true
     }
+    if (cancelled) return false
 
     // Event-driven wait: resolve on SSE, no polling loop.
-    const ready = await new Promise<boolean>((resolve) => {
+    const outcome = await new Promise<'ready' | 'timeout' | 'cancelled'>((resolve) => {
       const { onServerEvent } = useEventSource()
       let settled = false
       let timer: ReturnType<typeof setTimeout>
-      const done = (ok: boolean) => {
+      const done = (res: 'ready' | 'timeout' | 'cancelled') => {
         if (settled) return
         settled = true
+        if (cancelActiveWait === cancelNow) cancelActiveWait = null
         unsubs.forEach((fn) => fn())
         clearTimeout(timer)
-        resolve(ok)
+        resolve(res)
       }
+      const cancelNow = () => {
+        cancelled = true
+        done('cancelled')
+      }
+      cancelActiveWait = cancelNow
       const unsubs = [
         onServerEvent('torrent.head_ready', (d: any) => {
-          if (d.hash === hash) done(true)
+          if (d.hash === hash) done('ready')
         }),
         onServerEvent('torrent.progress', (d: any) => {
           if (d.hash !== hash) return
           // Keep the loading overlay progress/speed live while waiting.
           mergeStatus(d)
-          if (d.head_ready) done(true)
+          if (d.head_ready) done('ready')
         }),
         onServerEvent('sync.resync_required', () => {
-          checkHeadReady(hash).then((ok) => { if (ok) done(true) }).catch(() => {})
+          checkHeadReady(hash).then((ok) => { if (ok) done('ready') }).catch(() => {})
         }),
       ]
-      timer = setTimeout(() => done(false), timeoutSec * 1000)
+      timer = setTimeout(() => done('timeout'), timeoutSec * 1000)
     })
 
     loading.value = false
-    if (ready) {
+    if (outcome === 'ready') {
       logInfo('player', `waitForHeadReady ${hash.slice(0, 12)} success in ${((Date.now() - start) / 1000).toFixed(1)}s`)
       return true
+    }
+    if (outcome === 'cancelled') {
+      logInfo('player', `waitForHeadReady ${hash.slice(0, 12)} cancelled after ${((Date.now() - start) / 1000).toFixed(1)}s`)
+      return false
     }
     error.value = 'Load timeout, please check file integrity'
     logError('player', `waitForHeadReady ${hash.slice(0, 12)} timeout after ${timeoutSec}s`)
@@ -270,6 +298,7 @@ export function useVideoPlayer() {
     startPolling,
     stopPolling,
     waitForHeadReady,
+    cancelWaitForHeadReady,
     reportSeek,
     reportProgress,
     reportPause,
