@@ -3,6 +3,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+use crate::event_bus::{EventBus, SubscriberId};
 use crate::extractors;
 use crate::filters::{self, FilterInput};
 use crate::piece_tracker::{PieceLayout, PieceStateStore};
@@ -231,10 +232,64 @@ fn py_parse_sukebei_rss(rss_xml: &str, star_names: Vec<String>) -> PyResult<Vec<
         .collect())
 }
 
+/// Python-visible wrapper around [`EventBus`].
+#[pyclass(name = "EventBus")]
+#[derive(Debug)]
+struct PyEventBus {
+    inner: EventBus,
+}
+
+#[pymethods]
+impl PyEventBus {
+    #[new]
+    #[pyo3(signature = (capacity = 256))]
+    fn new(capacity: usize) -> Self {
+        Self {
+            inner: EventBus::with_capacity(capacity),
+        }
+    }
+
+    fn subscribe(&self) -> u64 {
+        self.inner.subscribe().as_u64()
+    }
+
+    fn unsubscribe(&self, sub_id: u64) -> bool {
+        self.inner.unsubscribe(SubscriberId::from_u64(sub_id))
+    }
+
+    fn subscriber_count(&self) -> usize {
+        self.inner.subscriber_count()
+    }
+
+    fn publish(&self, payload: &str, resync_marker: &str) -> (Vec<u64>, Vec<(u64, usize)>) {
+        let report = self.inner.publish(payload, resync_marker);
+        let notified = report
+            .notified
+            .into_iter()
+            .map(SubscriberId::as_u64)
+            .collect();
+        let coalesced = report
+            .coalesced
+            .into_iter()
+            .map(|(id, dropped)| (id.as_u64(), dropped))
+            .collect();
+        (notified, coalesced)
+    }
+
+    fn try_recv(&self, sub_id: u64) -> Option<String> {
+        self.inner.try_recv(SubscriberId::from_u64(sub_id))
+    }
+
+    fn drain(&self, sub_id: u64) -> Vec<String> {
+        self.inner.drain(SubscriberId::from_u64(sub_id))
+    }
+}
+
 /// Native Rust extension module for xstream.
 #[pymodule]
 fn xstream_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPieceStateStore>()?;
+    m.add_class::<PyEventBus>()?;
     m.add_function(wrap_pyfunction!(py_hidden_reason, m)?)?;
     m.add_function(wrap_pyfunction!(py_score_magnet, m)?)?;
     m.add_function(wrap_pyfunction!(py_unescape_magnet, m)?)?;

@@ -19,6 +19,7 @@
 | `scrapers/v2/sinks.py::TitleSyncSink._score_magnet` | `scoring::score_magnet(&MagnetMetrics) -> f64` |
 | `scrapers/v2/extractors.py::SukebeiRssExtractor.extract` | `extractors::parse_sukebei_rss(&str, &[&str]) -> Result<Vec<RssWork>, ParseRssError>` |
 | `scrapers/v2/extractors.py` magnet/size/resolution helpers | `extractors::{unescape_magnet, is_valid_magnet, is_ltx, is_hd_source, parse_resolution_tag, size_to_gb}` |
+| `core/events.py::EventBus` | `event_bus::EventBus` (`subscribe`, `unsubscribe`, `publish`, `try_recv`, `drain`) |
 
 ## Test Mapping
 

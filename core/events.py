@@ -1,7 +1,10 @@
-"""core/events.py — In-process event bus for SSE push
+"""core/events.py — In-process event bus for SSE push (Rust-backed)
 
-Single asyncio Queue per client. Publishers put events; the SSE endpoint
-drains the queue and streams JSON events to browsers.
+Subscriber registry, bounded per-client ring buffers, and slow-client
+``sync.resync_required`` coalescing live in ``xstream_core.EventBus`` (Rust).
+Each subscriber receives a thin async ``EventSubscription`` adapter with an
+``asyncio.Event`` wakeup so SSE endpoints await events without per-client OS
+threads.
 """
 
 from __future__ import annotations
@@ -11,68 +14,88 @@ import json
 import time
 from typing import Any
 
+import xstream_core
+
 from core.logger import get_logger
 
 log = get_logger("events")
 
 
+class EventSubscription:
+    """Async queue-compatible view over a single Rust ``EventBus`` subscriber."""
+
+    def __init__(self, bus: xstream_core.EventBus, sub_id: int) -> None:
+        self._bus = bus
+        self.sub_id = sub_id
+        self._wakeup = asyncio.Event()
+
+    def notify(self) -> None:
+        """Signal the awaiting SSE consumer that at least one payload is ready."""
+        self._wakeup.set()
+
+    async def get(self) -> str:
+        """Await and return the next JSON-encoded SSE payload."""
+        while True:
+            item = self._bus.try_recv(self.sub_id)
+            if item is not None:
+                return item
+            self._wakeup.clear()
+            # Re-check after clear to close the publish/clear race window.
+            item = self._bus.try_recv(self.sub_id)
+            if item is not None:
+                return item
+            await self._wakeup.wait()
+
+    def get_nowait(self) -> str:
+        """Return the next buffered payload or raise ``asyncio.QueueEmpty``."""
+        item = self._bus.try_recv(self.sub_id)
+        if item is None:
+            raise asyncio.QueueEmpty
+        return item
+
+
 class EventBus:
-    """Simple async pub/sub bus for in-process SSE."""
+    """Async pub/sub bus backed by thread-safe ``xstream_core.EventBus``."""
 
-    def __init__(self) -> None:
-        self._clients: list[asyncio.Queue] = []
-        self._lock = asyncio.Lock()
+    def __init__(self, capacity: int = 256) -> None:
+        self._rust_bus = xstream_core.EventBus(capacity)
+        self._subs: dict[int, EventSubscription] = {}
 
-    async def subscribe(self) -> asyncio.Queue:
-        """Create a new client queue and return it."""
-        q: asyncio.Queue = asyncio.Queue(maxsize=256)
-        async with self._lock:
-            self._clients.append(q)
-        log.debug(f"SSE client subscribed, total={len(self._clients)}")
-        return q
+    async def subscribe(self) -> EventSubscription:
+        """Register a new subscriber and return an async queue-like handle."""
+        sub_id = self._rust_bus.subscribe()
+        sub = EventSubscription(self._rust_bus, sub_id)
+        self._subs[sub_id] = sub
+        log.debug(f"SSE client subscribed, total={self._rust_bus.subscriber_count()}")
+        return sub
 
-    async def unsubscribe(self, q: asyncio.Queue) -> None:
-        """Remove a client queue."""
-        async with self._lock:
-            if q in self._clients:
-                self._clients.remove(q)
-        log.debug(f"SSE client unsubscribed, total={len(self._clients)}")
+    async def unsubscribe(self, sub: EventSubscription) -> None:
+        """Remove a subscriber and drop its buffered events."""
+        self._subs.pop(sub.sub_id, None)
+        self._rust_bus.unsubscribe(sub.sub_id)
+        log.debug(f"SSE client unsubscribed, total={self._rust_bus.subscriber_count()}")
 
     async def publish(self, event: str, data: dict[str, Any]) -> None:
         """Broadcast an event to all connected clients.
 
-        Slow-client policy (coalesce + resync, not disconnect): when a client
-        queue is full, drain it and enqueue a single ``sync.resync_required``
-        marker. The connection stays open and the frontend does one full
-        refetch on receipt, so no event stream is silently lost.
+        Slow-client policy (coalesce + resync, not disconnect): handled
+        atomically inside ``xstream_core.EventBus.publish``.
         """
-        payload = json.dumps({"event": event, "data": data, "ts": time.time()})
-        async with self._lock:
-            clients = list(self._clients)
-        for q in clients:
-            try:
-                q.put_nowait(payload)
-            except asyncio.QueueFull:
-                self._coalesce_slow_client(q)
-
-    def _coalesce_slow_client(self, q: asyncio.Queue) -> None:
-        """Drain a full client queue and mark it for resync."""
-        drained = 0
-        try:
-            while True:
-                q.get_nowait()
-                drained += 1
-        except asyncio.QueueEmpty:
-            pass
-        marker = json.dumps({"event": "sync.resync_required", "data": {}, "ts": time.time()})
-        try:
-            q.put_nowait(marker)
-        except asyncio.QueueFull:
-            pass
-        log.warning(
-            f"SSE slow client coalesced: dropped {drained} events, "
-            f"sent sync.resync_required (clients={len(self._clients)})"
-        )
+        now = time.time()
+        payload = json.dumps({"event": event, "data": data, "ts": now})
+        marker = json.dumps({"event": "sync.resync_required", "data": {}, "ts": now})
+        notified, coalesced = self._rust_bus.publish(payload, marker)
+        for sub_id in notified:
+            sub = self._subs.get(sub_id)
+            if sub is not None:
+                sub.notify()
+        if coalesced:
+            total_clients = self._rust_bus.subscriber_count()
+            for _, dropped in coalesced:
+                log.warning(
+                    f"SSE slow client coalesced: dropped {dropped} events, "
+                    f"sent sync.resync_required (clients={total_clients})"
+                )
 
 
 # Global singleton
