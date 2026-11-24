@@ -43,7 +43,10 @@ Phase 1 (Done)  : xstream_core (PyO3):
                   - [x] PieceStateTracker -> rust/xstream_core/src/piece_tracker.rs
                   - [x] scrapers/v2/filters.py + _score_magnet -> rust/xstream_core/src/{filters,scoring}.rs
                   - [x] scrapers/v2/extractors.py (Sukebei RSS + magnet helpers) -> rust/xstream_core/src/extractors.rs
-Phase 2 (axum)  : EventBus /api/events SSE hub + ostore_bridge + sync/magnet_checker worker (sqlx + PG advisory locks)
+Phase 2 (WIP)   : Concurrent I/O & PG hardening:
+                  - [x] Replace DuckDB-era serial DBWriteQueue with bounded-concurrency pool + PG `pg_advisory_xact_lock` per-star sync
+                  - [ ] EventBus /api/events SSE hub + ostore_bridge (Rust/axum `tokio::sync::broadcast`)
+                  - [ ] sync/magnet_checker worker (sqlx + PG advisory locks)
 Phase 3 (Eval)  : TorrentEngine + video_stream (keep libtorrent via C++ cxx FFI or evaluate librqbit against all 15+ BT tests)
 ```
 

@@ -1699,3 +1699,60 @@ async def test_sink_upsert_preserves_existing_hd_magnet_against_weaker_write(sin
     assert row == ("[FHD]", "66" * 20, 2)
 
 
+@pytest.mark.asyncio
+async def test_db_write_runs_concurrently_without_serial_head_of_line_blocking():
+    """DBWriteQueue executes independent writes concurrently instead of serializing."""
+    from core.db.write_queue import DBWriteQueue
+
+    q = DBWriteQueue(max_concurrency=4)
+    barrier = __import__("threading").Barrier(2, timeout=2.0)
+
+    def _work(val: int) -> int:
+        barrier.wait()
+        return val * 2
+
+    res = await asyncio.gather(q.enqueue(_work, 3), q.enqueue(_work, 5))
+    assert res == [6, 10]
+    await q.stop()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_star_upserts_preserve_hd_magnet_via_advisory_lock(sink_db):
+    """Concurrent HD and weak upserts for the same star serialize cleanly via pg_advisory_xact_lock."""
+    from scrapers.v2 import sinks
+
+    weak_mag = "magnet:?xt=urn:btih:" + "77" * 20
+    hd_mag = "magnet:?xt=urn:btih:" + "88" * 20 + "&dn=%2B%2B%2B%20%5BFHD%5D%20SNOS-524"
+    sink_db.execute("INSERT INTO stars (id, name, code) VALUES (1, 'Hina Yukino', 'SNOS-524')")
+
+    sink_a = sinks.TitleSyncSink(star_id=1, star_code="SNOS-524", star_name="Hina Yukino")
+    sink_b = sinks.TitleSyncSink(star_id=1, star_code="SNOS-524", star_name="Hina Yukino")
+    hd_item = VideoItem(
+        code="SNOS-524", title="Debut",
+        magnets=[MagnetCandidate(magnet=hd_mag, resolution="[FHD]", size="9.4GB", seed=200, is_hhd800=True)],
+        all_magnet_urls=[hd_mag],
+    )
+    weak_item = VideoItem(
+        code="SNOS-524", title="Debut",
+        magnets=[MagnetCandidate(magnet=weak_mag, resolution="", size="2.2gb", seed=20)],
+        all_magnet_urls=[weak_mag],
+    )
+    # Minimal valid 2x1 PNG cover (landscape so COVER_MAX_HW_RATIO passes)
+    import base64, io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (20, 10), (255, 0, 0)).save(buf, format="PNG")
+    cover_b64 = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    await asyncio.gather(
+        sink_a.write_batch([hd_item], {"SNOS-524"}, {"SNOS-524": cover_b64}),
+        sink_b.write_batch([weak_item], {"SNOS-524"}, {"SNOS-524": cover_b64}),
+    )
+
+    row = sink_db.execute(
+        "SELECT resolution, magnet_hash, jsonb_array_length(all_magnets) FROM titles WHERE star_id = 1 AND code = 'SNOS-524'"
+    ).fetchone()
+    assert row == ("[FHD]", "88" * 20, 2)
+
+
+

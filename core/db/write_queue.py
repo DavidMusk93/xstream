@@ -1,10 +1,13 @@
-"""core/db/write_queue.py — In-process serial DB write queue
+"""core/db/write_queue.py — Bounded-concurrency async DB executor.
 
-All write operations are serially executed by a single worker coroutine. This
-dates from the DuckDB single-writer era; PostgreSQL supports concurrent writers,
-but the queue API has many call sites, and serialization is harmless at this
-scale, so the API is kept unchanged. Internally each write now checks out a
-connection from the shared pool (core.db.connection).
+Previously serialized all writes through a single worker coroutine (a holdover
+from the DuckDB single-writer era). PostgreSQL handles concurrent row-level
+writes natively, so writes now execute concurrently in worker threads under a
+bounded semaphore (preserving pool headroom for reads), while per-star sync
+correctness is enforced in PostgreSQL via ``pg_advisory_xact_lock``.
+
+The public API (``DBWriteQueue``, ``get_queue``, ``db_write``, ``db_read``) is
+kept backwards-compatible for all call sites.
 """
 
 from __future__ import annotations
@@ -18,100 +21,71 @@ from core.logger import get_logger
 
 log = get_logger("db-write-queue")
 
+DEFAULT_MAX_CONCURRENT_WRITES = 8
+
 
 class DBWriteQueue:
-    """Serialize all DB write operations within the same process.
+    """Run synchronous DB write callables off the event loop with bounded concurrency.
 
-    Uses asyncio.Queue + single worker coroutine, all write requests are queued and executed,
-    returning results to the caller via Future.
-
-    The worker does not maintain a persistent connection; instead each called
-    function checks out a pooled connection (core.db.connection._conn).
-    Batch scenarios should reuse connections inside the function (e.g., TitleSyncSink.write_batch).
+    Each write checks out its own pooled connection from ``core.db.connection._conn``
+    and runs via ``asyncio.to_thread``. Bounding concurrency to less than half of
+    ``POOL_MAX_SIZE`` prevents write bursts from starving concurrent reads.
     """
 
-    def __init__(self, maxsize: int = 0):
-        self._queue: asyncio.Queue | None = None
-        self._worker_task: asyncio.Task | None = None
+    def __init__(self, maxsize: int = 0, max_concurrency: int = DEFAULT_MAX_CONCURRENT_WRITES):
         self._maxsize = maxsize
+        self._max_concurrency = max(1, max_concurrency)
+        self._sem: asyncio.Semaphore | None = None
+        self._sem_loop: asyncio.AbstractEventLoop | None = None
         self._started = False
+
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        loop = asyncio.get_running_loop()
+        if self._sem is None or self._sem_loop is not loop:
+            self._sem = asyncio.Semaphore(self._max_concurrency)
+            self._sem_loop = loop
+        return self._sem
 
     def start(self) -> None:
-        """Start worker in the event loop (idempotent)"""
-        if self._started and self._worker_task is not None and not self._worker_task.done():
-            return
+        """Initialize semaphore in the running event loop (idempotent)."""
         try:
-            loop = asyncio.get_running_loop()
+            self._get_semaphore()
         except RuntimeError as exc:
             raise RuntimeError("DB write queue must be started inside a running event loop") from exc
-        self._queue = asyncio.Queue(maxsize=self._maxsize)
-        self._worker_task = loop.create_task(self._worker())
-        self._worker_task.add_done_callback(self._on_worker_done)
-        self._started = True
-        log.info("DB write queue started")
+        if not self._started:
+            self._started = True
+            log.info(f"DB write executor ready (max_concurrency={self._max_concurrency})")
 
-    def _on_worker_done(self, task: asyncio.Task) -> None:
-        """Reset state if the worker exits unexpectedly."""
-        if not task.cancelled() and task.exception() is not None:
-            log.error("DB write queue worker died", exc_info=task.exception())
-        self._started = False
-        self._worker_task = None
-
-    async def _worker(self) -> None:
-        """Single worker: dequeue and execute write operations in a thread pool.
-
-        Uses loop.run_in_executor to offload synchronous DB I/O to an independent thread,
-        avoiding blocking the main event loop (especially during intensive libtorrent I/O).
-        """
-        loop = asyncio.get_running_loop()
-        while True:
-            item = await self._queue.get()
-            if item is None:  # poison pill
-                self._queue.task_done()
-                break
-            func, args, kwargs, future = item
+    async def enqueue(self, func: Callable, *args, **kwargs) -> Any:
+        """Execute a synchronous write callable in a worker thread under the concurrency cap."""
+        self.start()
+        sem = self._get_semaphore()
+        enqueue_ts = time.perf_counter()
+        async with sem:
             start = time.perf_counter()
             try:
                 if kwargs:
-                    bound_func = functools.partial(func, **kwargs)
-                    result = await loop.run_in_executor(None, bound_func, *args)
+                    bound = functools.partial(func, **kwargs)
+                    result = await asyncio.to_thread(bound, *args)
                 else:
-                    result = await loop.run_in_executor(None, func, *args)
+                    result = await asyncio.to_thread(func, *args)
                 elapsed = (time.perf_counter() - start) * 1000
                 log.debug(f"{func.__name__} -> ok ({elapsed:.1f}ms)")
-                future.set_result(result)
-            except asyncio.CancelledError:
-                future.cancel()
-                raise
             except Exception as exc:
                 elapsed = (time.perf_counter() - start) * 1000
                 log.error(f"{func.__name__} -> {type(exc).__name__}: {exc} ({elapsed:.1f}ms)")
-                future.set_exception(exc)
-            finally:
-                self._queue.task_done()
-
-    async def enqueue(self, func: Callable, *args, **kwargs) -> Any:
-        """Enqueue a write operation and return the result after execution completes"""
-        self.start()
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future = loop.create_future()
-        # Record queue waiting time
-        enqueue_ts = time.perf_counter()
-        await self._queue.put((func, args, kwargs, future))
-        result = await future
+                raise
         wait_ms = (time.perf_counter() - enqueue_ts) * 1000
         if wait_ms > 100:
-            log.warning(f"{func.__name__} total wait={wait_ms:.1f}ms (queue depth={self._queue.qsize()})")
+            log.warning(f"{func.__name__} total wait={wait_ms:.1f}ms")
         return result
 
     async def stop(self) -> None:
-        """Graceful shutdown"""
-        if self._worker_task and not self._worker_task.done():
-            await self._queue.put(None)
-            await self._worker_task
+        """Graceful shutdown (no persistent worker task to drain)."""
         self._started = False
-        self._worker_task = None
-        log.info("DB write queue stopped")
+        self._sem = None
+        self._sem_loop = None
+        log.info("DB write executor stopped")
 
 
 # Global singleton (process-level)
@@ -123,14 +97,10 @@ def get_queue() -> DBWriteQueue:
 
 
 async def db_write(func: Callable, *args, **kwargs) -> Any:
-    """Convenience function: enqueue a synchronous write operation and wait for the result"""
+    """Execute a synchronous DB write off the event loop with bounded concurrency."""
     return await _default_queue.enqueue(func, *args, **kwargs)
 
 
 async def db_read(func: Callable, *args, **kwargs) -> Any:
-    """Run a synchronous read in a worker thread, bypassing the write queue.
-
-    Reads must not queue behind writes: routing them through db_write made
-    GET /api/stars/sync wait up to seconds behind magnet-check writes.
-    """
+    """Run a synchronous read in a worker thread, bypassing the write semaphore."""
     return await asyncio.to_thread(func, *args, **kwargs)

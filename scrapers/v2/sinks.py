@@ -26,6 +26,9 @@ log = get_logger("title-sync-sink")
 # the aspect-ratio placeholders in list rendering. Normal covers are 0.6-0.8.
 COVER_MAX_HW_RATIO = 1.0
 
+# PostgreSQL two-key advisory lock namespace for per-star title upserts.
+_SYNC_STAR_LOCK_NS = 728_301
+
 
 class Sink(Protocol):
     """Sink protocol"""
@@ -142,6 +145,13 @@ class TitleSyncSink:
                 # Pool connections are autocommit: wrap the multi-statement
                 # upsert in an explicit transaction so rows + covers land atomically.
                 with managed.transaction():
+                    # Serialize concurrent upserts for the same star inside
+                    # PostgreSQL (e.g. sync_star vs scheduled full sync) while
+                    # allowing different stars to write in parallel.
+                    managed.execute(
+                        "SELECT pg_advisory_xact_lock(%s, %s)",
+                        (_SYNC_STAR_LOCK_NS, self.star_id),
+                    )
                     # Preserve existing live magnet candidates when upserting so
                     # an ijav-only phase-A pass (or stale concurrent write) can
                     # never clobber an HD magnet already written by RSS/code

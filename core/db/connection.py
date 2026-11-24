@@ -16,8 +16,8 @@ _log = get_logger("db-ops")
 _pool: ConnectionPool | None = None
 _pool_lock = threading.Lock()
 
-POOL_MIN_SIZE = 1
-POOL_MAX_SIZE = 10
+POOL_MIN_SIZE = 2
+POOL_MAX_SIZE = 20
 POOL_WAIT_WARN_MS = 50
 
 
