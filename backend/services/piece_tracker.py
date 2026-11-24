@@ -19,6 +19,7 @@ import threading
 from typing import Any
 
 import libtorrent as lt
+import xstream_core
 
 from core import get_logger
 
@@ -63,27 +64,14 @@ class PieceStateTracker:
         self.file_offset = fs.file_offset(video_idx)
         self.num_pieces = ti.num_pieces()
         self._lock = threading.Lock()
-        self.start_piece = self.file_offset // self.piece_length
-        self.end_piece = min(
-            self.num_pieces - 1,
-            (self.file_offset + self.video_size - 1) // self.piece_length,
+        self._store = xstream_core.PieceStateStore(
+            self.num_pieces,
+            self.piece_length,
+            self.file_offset,
+            self.video_size,
         )
-
-        # ── Bitmaps: 3 ints encode 4 states ─────────────────────
-        # bit p = 1 in _verified   → VERIFIED
-        # bit p = 1 in _corrupt    → CORRUPT
-        # bit p = 1 in _downloading → DOWNLOADING
-        # all 0 for a piece → NOT_DOWNLOADED
-        self._verified = 0
-        self._corrupt = 0
-        self._downloading = 0
-
-        # Pre-computed masks (set by set_moov_range / set_head_tail_counts)
-        self._moov_mask = 0          # moov-covered pieces
-        self._moov_pc = 0            # moov piece count
-        self._moov_vc = 0            # verified moov piece count
-        self._head_mask = 0          # head pieces (for reset_priorities)
-        self._tail_mask = 0          # tail pieces
+        self.start_piece = self._store.start_piece
+        self.end_piece = self._store.end_piece
 
         # Scan filesystem once to bootstrap verified pieces.
         # This is the ONLY truth source for disk state — libtorrent's have_piece()
@@ -100,57 +88,37 @@ class PieceStateTracker:
             },
         )
 
+    @property
+    def _moov_vc(self) -> int:
+        """Verified piece count inside the configured moov range (exposed for tests)."""
+        return self._store.moov_verified_count
+
     # ── Pre-computation ─────────────────────────────────────
 
     def set_moov_range(self, moov_start: int, moov_end: int) -> None:
         """Set moov range once after _on_metadata scan. Enables O(1) head_ready."""
-        with self._lock:
-            sp = (self.file_offset + moov_start) // self.piece_length
-            ep = (self.file_offset + moov_end - 1) // self.piece_length
-            self._moov_mask = ((1 << (ep - sp + 1)) - 1) << sp
-            self._moov_pc = ep - sp + 1
-            self._moov_vc = (self._verified & self._moov_mask).bit_count()
+        self._store.set_moov_range(max(0, moov_start), max(0, moov_end))
 
     def set_head_tail_counts(self, head_count: int, tail_count: int) -> None:
         """Pre-compute head/tail masks for fast reset_priorities."""
-        with self._lock:
-            head_end = min(self.start_piece + head_count - 1, self.end_piece)
-            tail_start = max(self.start_piece, self.end_piece - tail_count + 1)
-            self._head_mask = ((1 << (head_end - self.start_piece + 1)) - 1) << self.start_piece
-            self._tail_mask = ((1 << (self.end_piece - tail_start + 1)) - 1) << tail_start
+        self._store.set_head_tail_counts(max(0, head_count), max(0, tail_count))
 
     # ── Internal helpers ────────────────────────────────────
 
     def _set_verified(self, piece: int) -> None:
         """Mark a single piece as VERIFIED and update moov counter."""
-        bit = 1 << piece
-        if self._verified & bit:
-            return
-        self._verified |= bit
-        self._corrupt &= ~bit
-        self._downloading &= ~bit
-        if bit & self._moov_mask:
-            self._moov_vc += 1
+        if piece >= 0:
+            self._store.set_verified(piece)
 
     def _set_corrupt(self, piece: int) -> None:
         """Mark a single piece as CORRUPT."""
-        bit = 1 << piece
-        was_verified = bool(self._verified & bit)
-        self._corrupt |= bit
-        self._verified &= ~bit
-        self._downloading &= ~bit
-        if was_verified and (bit & self._moov_mask):
-            self._moov_vc -= 1
+        if piece >= 0:
+            self._store.set_corrupt(piece)
 
     def _set_downloading(self, piece: int) -> None:
         """Mark a single piece as DOWNLOADING."""
-        bit = 1 << piece
-        was_verified = bool(self._verified & bit)
-        self._downloading |= bit
-        self._verified &= ~bit
-        self._corrupt &= ~bit
-        if was_verified and (bit & self._moov_mask):
-            self._moov_vc -= 1
+        if piece >= 0:
+            self._store.set_downloading(piece)
 
     # ── Bootstrap ───────────────────────────────────────────
 
@@ -175,17 +143,12 @@ class PieceStateTracker:
             log.warning(f"bootstrap fsync failed for {self.path}: {exc}")
             return
 
-        with self._lock:
-            self._verified = 0
-            self._corrupt = 0
-            self._downloading = 0
-            self._moov_vc = 0
-
         try:
             fd = os.open(self.path, os.O_RDONLY)
         except OSError as exc:
             log.warning(f"bootstrap open failed for {self.path}: {exc}")
             return
+        verified_pieces: list[int] = []
         try:
             offset = self.file_offset
             file_end = self.file_offset + self.video_size
@@ -204,14 +167,12 @@ class PieceStateTracker:
                     break
 
                 if hole >= piece_end_in_file:
-                    with self._lock:
-                        self._verified |= (1 << piece)
+                    verified_pieces.append(piece)
 
                 offset = piece_end
         finally:
             os.close(fd)
-        with self._lock:
-            self._moov_vc = (self._verified & self._moov_mask).bit_count()
+        self._store.replace_verified_pieces(verified_pieces)
 
     def _piece_has_data_on_disk(self, piece: int) -> bool:
         """Check if a single piece has data on disk (SEEK_HOLE after fsync)."""
@@ -236,49 +197,35 @@ class PieceStateTracker:
 
     def on_piece_finished(self, piece: int) -> None:
         """Libtorrent confirmed piece hash is valid."""
-        with self._lock:
-            if self.start_piece <= piece <= self.end_piece:
-                self._set_verified(piece)
-                log.debug(
-                    "piece verified",
-                    extra={"piece": piece, "state": "verified"},
-                )
+        if piece >= 0 and self._store.on_piece_finished(piece):
+            log.debug(
+                "piece verified",
+                extra={"piece": piece, "state": "verified"},
+            )
 
     def on_hash_failed(self, piece: int) -> None:
         """Libtorrent hash check failed — data is corrupt."""
-        with self._lock:
-            if self.start_piece <= piece <= self.end_piece:
-                self._set_corrupt(piece)
-                log.warning(
-                    "piece corrupt",
-                    extra={"piece": piece},
-                )
+        if piece >= 0 and self._store.on_hash_failed(piece):
+            log.warning(
+                "piece corrupt",
+                extra={"piece": piece},
+            )
 
     # ── Queries ─────────────────────────────────────────────
 
     def is_verified(self, piece: int) -> bool:
-        if not (0 <= piece < self.num_pieces):
+        if piece < 0:
             return False
-        with self._lock:
-            return bool(self._verified & (1 << piece))
+        return self._store.is_verified(piece)
 
     def piece_state(self, piece: int) -> PieceState:
-        if not (0 <= piece < self.num_pieces):
+        if piece < 0:
             return PieceState.NOT_DOWNLOADED
-        with self._lock:
-            bit = 1 << piece
-            if self._verified & bit:
-                return PieceState.VERIFIED
-            if self._corrupt & bit:
-                return PieceState.CORRUPT
-            if self._downloading & bit:
-                return PieceState.DOWNLOADING
-            return PieceState.NOT_DOWNLOADED
+        return PieceState(self._store.piece_state(piece))
 
     def verified_count(self) -> int:
-        """O(1) via POPCNT (int.bit_count)."""
-        with self._lock:
-            return self._verified.bit_count()
+        """O(num_pieces / 64) via Rust u64::count_ones."""
+        return self._store.verified_count()
 
     def get_lane_segments(self, segments: int = 30) -> list[list[float, float, int]]:
         """Generate lane data: split piece range into segments, each returning [start_pct, end_pct, state].
@@ -286,89 +233,35 @@ class PieceStateTracker:
         state: 0=NOT_DOWNLOADED, 1=DOWNLOADING, 2=VERIFIED, 3=CORRUPT
         Each segment takes the most prevalent state.
         """
-        with self._lock:
-            total_pieces = self.end_piece - self.start_piece + 1
-            if total_pieces <= 0:
-                return []
-
-            result: list[list[float, float, int]] = []
-            seg_size = total_pieces / segments
-
-            for seg in range(segments):
-                seg_start_piece = self.start_piece + int(seg * seg_size)
-                seg_end_piece = self.start_piece + int((seg + 1) * seg_size) - 1
-                if seg == segments - 1:
-                    seg_end_piece = self.end_piece
-
-                counts = [0, 0, 0, 0]  # NOT_DOWNLOADED, DOWNLOADING, VERIFIED, CORRUPT
-                for p in range(seg_start_piece, seg_end_piece + 1):
-                    bit = 1 << p
-                    if self._verified & bit:
-                        counts[2] += 1
-                    elif self._corrupt & bit:
-                        counts[3] += 1
-                    elif self._downloading & bit:
-                        counts[1] += 1
-                    else:
-                        counts[0] += 1
-
-                # Take the most prevalent state (priority: VERIFIED > DOWNLOADING > CORRUPT > NOT_DOWNLOADED)
-                best_state = 0
-                best_count = counts[0]
-                for state_idx in (2, 1, 3):
-                    if counts[state_idx] >= best_count:
-                        best_count = counts[state_idx]
-                        best_state = state_idx
-
-                start_pct = seg / segments * 100
-                end_pct = (seg + 1) / segments * 100
-                result.append([round(start_pct, 2), round(end_pct, 2), best_state])
-
-            return result
+        if segments <= 0:
+            return []
+        return [
+            [start_pct, end_pct, state]
+            for start_pct, end_pct, state in self._store.lane_segments(segments)
+        ]
 
     def head_ready(self) -> bool:
-        """O(1) via pre-computed moov mask + POPCNT.
-
-        Requires set_moov_range() to have been called after _on_metadata.
-        If not set, falls back to False (conservative).
-        """
-        with self._lock:
-            if self._moov_pc == 0:
-                return False
-            return self._moov_vc == self._moov_pc
+        """O(1) via pre-computed moov range counters in Rust."""
+        return self._store.head_ready()
 
     # ── Actions ─────────────────────────────────────────────
 
     def request_pieces(self, start_piece: int, end_piece: int) -> int:
-        """Set urgency on pieces that are NOT_DOWNLOADED.
+        """Set urgency on pieces that are NOT_DOWNLOADED or CORRUPT.
 
         Returns number of pieces newly marked DOWNLOADING.
         """
         if not self.handle.is_valid():
             return 0
+        if end_piece < 0:
+            return 0
 
+        # Atomically claim non-verified, non-downloading pieces in Rust, then
+        # batch-apply libtorrent priorities under self._lock.
         with self._lock:
-            start = max(start_piece, self.start_piece)
-            end = min(end_piece, self.end_piece)
-            if start > end:
-                return 0
-
-            mask = ((1 << (end - start + 1)) - 1) << start
-            # CORRUPT pieces ARE re-requested (they need re-download)
-            unavailable = (self._verified | self._downloading) & mask
-            need = (mask & ~unavailable) >> start  # align LSB to piece 'start'
-
-            # Batch set priorities via prioritize_pieces — piece_priority() is
-            # unreliable in libtorrent Python bindings (often silently ignored).
-            pieces_to_set = []
-            p = start
-            temp = need
-            while temp:
-                if temp & 1:
-                    pieces_to_set.append(p)
-                temp >>= 1
-                p += 1
-
+            pieces_to_set = self._store.claim_pieces_for_download(
+                max(0, start_piece), end_piece
+            )
             if pieces_to_set:
                 prios = list(self.handle.piece_priorities())
                 for p in pieces_to_set:
@@ -376,19 +269,7 @@ class PieceStateTracker:
                     if prios[p] != 7:
                         prios[p] = 7
                 self.handle.prioritize_pieces(prios)
-
-            count = 0
-            p = start
-            while need:
-                if need & 1:
-                    # Do NOT trust have_piece() here — it can be false-positive
-                    # in finished state. Let _bootstrap_from_filesystem() or
-                    # piece_finished_alert set VERIFIED.
-                    self._set_downloading(p)
-                    count += 1
-                need >>= 1
-                p += 1
-            return count
+            return len(pieces_to_set)
 
     def request_head_tail(self, head_count: int = 30, tail_count: int = 30) -> int:
         """Request head + tail pieces (used when play starts)."""
@@ -419,4 +300,4 @@ class PieceStateTracker:
                     changed = True
             if changed:
                 self.handle.prioritize_pieces(prios)
-            self._downloading = 0
+            self._store.clear_downloading()

@@ -1,0 +1,21 @@
+[package]
+name = "xstream_core"
+version = "0.1.0"
+description = "Core state machines and native Rust extensions for xstream"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "xstream_core"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+python = ["dep:pyo3"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
+
+[lints]
+workspace = true

@@ -39,10 +39,17 @@ Never rewrite the whole backend in one shot. Use the **strangler-fig** pattern â
 
 ```text
 Phase 0 (Done)  : Vendor BeautifulRust skills (.agents/skills/rust-*) + lints (rust/clippy.toml, rust/lints.toml)
-Phase 1 (PyO3)  : PieceStateTracker + scrapers/v2/{filters,extractors,scoring}  [pure logic, high test coverage]
+Phase 1 (WIP)   : xstream_core (PyO3):
+                  - [x] PieceStateTracker -> rust/xstream_core/src/piece_tracker.rs
+                  - [ ] scrapers/v2/{filters,extractors,scoring}
 Phase 2 (axum)  : EventBus /api/events SSE hub + ostore_bridge + sync/magnet_checker worker (sqlx + PG advisory locks)
 Phase 3 (Eval)  : TorrentEngine + video_stream (keep libtorrent via C++ cxx FFI or evaluate librqbit against all 15+ BT tests)
 ```
+
+- **Build & install `xstream_core` into `.venv`**:
+  ```bash
+  VIRTUAL_ENV=/root/xstream/.venv uv run maturin develop --release --manifest-path rust/xstream_core/Cargo.toml
+  ```
 
 - **Phase 1 â€” Pure Core (`xstream_core` via PyO3)**:
   - `backend/services/piece_tracker.py` (3x bitmap state machine; locked by `tests/test_piece_tracker*.py`).
