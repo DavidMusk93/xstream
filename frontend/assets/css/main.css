@@ -422,20 +422,46 @@ textarea:focus-visible {
   }
 }
 
-/* Chromatic persona light field behind each star's hero stage */
+/* Chromatic persona light field behind each star's hero stage ("千人千面") */
 .star-aura-glow {
-  background: radial-gradient(
-    ellipse 76% 68% at 38% 52%,
-    rgba(var(--aura-rgb, 255, 55, 95), 0.16) 0%,
-    rgba(var(--aura-deep-rgb, 192, 0, 54), 0.06) 48%,
-    transparent 78%
-  );
-  transition: opacity 0.65s var(--ease-sensual), transform 0.8s var(--ease-sensual);
+  background:
+    radial-gradient(
+      ellipse 72% 66% at 32% 48%,
+      rgba(var(--aura-rgb, 255, 55, 95), 0.24) 0%,
+      rgba(var(--aura-shimmer-rgb, 255, 138, 160), 0.11) 42%,
+      transparent 74%
+    ),
+    radial-gradient(
+      ellipse 54% 52% at 78% 68%,
+      rgba(var(--aura-deep-rgb, 192, 0, 54), 0.14) 0%,
+      transparent 70%
+    );
+  transition: opacity 0.7s var(--ease-sensual), transform 0.9s var(--ease-sensual);
 }
 @media (hover: hover) and (min-width: 640px) {
   .group\/star:hover .star-aura-glow {
     opacity: 1;
-    transform: scale(1.04);
+    transform: scale(1.045);
+  }
+}
+
+/* Primary action button inside a star shelf takes her personal chromatic signature */
+.action-aura {
+  background: linear-gradient(
+    135deg,
+    rgb(var(--aura-rgb, 255, 55, 95)) 0%,
+    rgb(var(--aura-deep-rgb, 192, 0, 54)) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    0 10px 26px -8px rgba(var(--aura-rgb, 255, 55, 95), 0.58);
+}
+@media (hover: hover) {
+  .action-aura:hover:not(:disabled) {
+    filter: brightness(1.06) saturate(1.08);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.42),
+      0 16px 34px -8px rgba(var(--aura-rgb, 255, 55, 95), 0.68);
   }
 }
 
@@ -464,10 +490,93 @@ textarea:focus-visible {
 .hero-track {
   will-change: transform;
   backface-visibility: hidden;
-  transform: translate3d(calc(var(--track-base, 0px) + var(--drag-x, 0px)), 0, 0);
+  transform:
+    translate3d(calc(var(--track-base, 0px) + var(--drag-x, 0px)), 0, 0)
+    skewX(var(--drag-skew, 0deg));
 }
+/* Liquid flowing glide with soft underdamped spring rebound */
 .hero-track-anim {
-  transition: transform 0.42s var(--ease-out);
+  transition: transform 0.62s cubic-bezier(0.22, 1.08, 0.36, 1);
+}
+
+/* Liquid jelly settle wobble on cover arrival */
+@keyframes hero-jelly-settle {
+  0% { transform: scale3d(1.024, 0.982, 1); }
+  38% { transform: scale3d(0.991, 1.009, 1); }
+  70% { transform: scale3d(1.005, 0.996, 1); }
+  100% { transform: scale3d(1, 1, 1); }
+}
+.hero-jelly-active {
+  animation: hero-jelly-settle 0.64s var(--ease-out) both;
+}
+
+/* 波光粼粼 — Sunlit water caustics & shimmering specular glint */
+.water-glint {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 12;
+  opacity: 0;
+  mix-blend-mode: screen;
+  background:
+    radial-gradient(
+      420px circle at var(--glint-x, 50%) var(--glint-y, 45%),
+      rgba(255, 255, 255, 0.24) 0%,
+      rgba(var(--aura-shimmer-rgb, 255, 160, 180), 0.16) 28%,
+      transparent 68%
+    );
+  transition: opacity 0.45s var(--ease-sensual);
+}
+@media (hover: hover) and (min-width: 640px) {
+  .hero-stage:hover .water-glint {
+    opacity: 1;
+  }
+}
+
+@keyframes water-caustic-sweep {
+  0% {
+    opacity: 0;
+    transform: translate3d(-115%, 0, 0) skewX(-16deg);
+  }
+  22% {
+    opacity: 0.95;
+  }
+  65% {
+    opacity: 0.55;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(135%, 0, 0) skewX(-16deg);
+  }
+}
+.water-caustic-wave {
+  position: absolute;
+  inset: -12% -24%;
+  pointer-events: none;
+  z-index: 13;
+  opacity: 0;
+  mix-blend-mode: soft-light;
+  background:
+    linear-gradient(
+      108deg,
+      transparent 16%,
+      rgba(255, 255, 255, 0.08) 30%,
+      rgba(255, 255, 255, 0.52) 44%,
+      rgba(var(--aura-shimmer-rgb, 255, 160, 180), 0.42) 50%,
+      rgba(255, 255, 255, 0.36) 56%,
+      rgba(255, 255, 255, 0.06) 70%,
+      transparent 84%
+    ),
+    repeating-linear-gradient(
+      118deg,
+      transparent 0px,
+      transparent 18px,
+      rgba(255, 255, 255, 0.22) 22px,
+      transparent 28px
+    );
+}
+.water-caustic-wave.is-flowing {
+  animation: water-caustic-sweep 0.92s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 .hero-frame.hero-dragging-h {
   touch-action: none;
@@ -718,7 +827,9 @@ textarea:focus-visible {
   }
   .animate-sensual-pop,
   .animate-heart-sensual,
-  .thumb-shimmer {
+  .thumb-shimmer,
+  .hero-jelly-active,
+  .water-caustic-wave.is-flowing {
     animation: none !important;
   }
   .hero-stage:hover .hero-hi,

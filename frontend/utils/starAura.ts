@@ -1,9 +1,9 @@
 /**
- * starAura — Chromatic Persona & Desire Aura engine.
+ * starAura — Chromatic Persona & Desire Aura engine ("千人千面").
  *
- * Maps a star's real traits (age, height, silhouette/cup, career span, catalog depth)
- * plus an optional subtle live tint from the active cover into a refined Apple-grade
- * editorial color signature (`--aura-rgb`, `--aura-deep-rgb`).
+ * Maps each star's traits (age, height, silhouette/cup, career span, catalog depth)
+ * plus a deterministic personal harmonic across 10 curated luxury editorial palettes,
+ * blended smoothly with a live dominant tint sampled from the active cover.
  */
 
 import type { Star, StarProfile } from '~/types/api'
@@ -19,6 +19,8 @@ export interface StarAura {
   primary: Rgb
   /** Deeper shadow/velvet companion RGB. */
   deep: Rgb
+  /** Soft sunlit highlight RGB for water-caustic reflections. */
+  shimmer: Rgb
   /** Poetic mood archetype name. */
   label: string
   /** Short evocative descriptor connecting color to persona/desire. */
@@ -30,6 +32,27 @@ export interface StarAura {
   /** Derived age from `profile.birth_year` if present. */
   age: number | null
 }
+
+interface PaletteDef {
+  hue: number
+  sat: number
+  light: number
+  label: string
+  mood: string
+}
+
+const PALETTES: PaletteDef[] = [
+  { hue: 350, sat: 82, light: 50, label: 'Crimson Velvet', mood: 'Magnetic intensity & unmistakable desire' },
+  { hue: 326, sat: 68, light: 42, label: 'Velvet Wine', mood: 'Nocturnal depth & seasoned poise' },
+  { hue: 24, sat: 76, light: 48, label: 'Champagne Amber', mood: 'Statuesque golden-hour warmth' },
+  { hue: 342, sat: 80, light: 55, label: 'Blush Rose', mood: 'Fresh pulse & luminous skin warmth' },
+  { hue: 288, sat: 64, light: 48, label: 'Orchid Silk', mood: 'Silk tension & nocturnal allure' },
+  { hue: 8, sat: 80, light: 52, label: 'Coral Sunset', mood: 'Radiant warmth & sunlit magnetism' },
+  { hue: 214, sat: 72, light: 48, label: 'Sapphire Dusk', mood: 'Crystalline poise & cool mystery' },
+  { hue: 164, sat: 70, light: 38, label: 'Emerald Noir', mood: 'Rare jewel-toned elegance' },
+  { hue: 262, sat: 66, light: 50, label: 'Plum Mirage', mood: 'Amethyst depth & quiet seduction' },
+  { hue: 38, sat: 78, light: 46, label: 'Gilded Honey', mood: 'Sunlit nectar & effortless warmth' },
+]
 
 const CURRENT_YEAR = new Date().getFullYear()
 
@@ -112,7 +135,11 @@ function deriveDebutYear(star: Star): number | null {
 }
 
 /**
- * Compute a star's personal chromatic aura from her profile & career experience.
+ * Compute a star's unmistakable personal chromatic aura ("千人千面").
+ *
+ * Explicit profile traits (age, height, cup, debut) steer her into the matching
+ * emotional archetype; stars without explicit profiles spread organically across
+ * all 10 curated palettes weighted by career span & catalog energy.
  */
 export function computeStarAura(star: Star): StarAura {
   const profile: StarProfile = star.profile ?? {}
@@ -124,79 +151,54 @@ export function computeStarAura(star: Star): StarAura {
       : null
   const height = profile.height_cm ?? null
   const cupRank = parseCupRank(profile.cup)
-  const titleCount = star.titles?.length ?? 0
   const likedCount = (star.titles ?? []).filter((t) => t.user_liked).length
 
-  // Subtle deterministic harmonic per star (+/- 6 deg) so every shelf feels unique.
   const seed = hashString(`${star.code}:${star.name}`)
-  const jitter = (seed % 13) - 6
+  const jitter = (seed % 17) - 8
 
-  // Archetype selection from real traits (age, height, silhouette, career span)
-  let baseHue = 348
-  let sat = 74
-  let light = 50
-  let label = 'Rose Silk'
-  let mood = 'Delicate warmth & translucent allure'
-
-  if ((age !== null && age >= 28) || (careerYears !== null && careerYears >= 6)) {
-    // Veteran / Mature: Burgundy Wine
-    baseHue = 330
-    sat = 64
-    light = 43
-    label = 'Velvet Wine'
-    mood = 'Nocturnal depth & seasoned poise'
-  } else if (height !== null && height >= 166) {
-    // Statuesque / Tall: Champagne Amber
-    baseHue = 22
-    sat = 68
-    light = 48
-    label = 'Champagne Gold'
-    mood = 'Statuesque warmth & editorial glow'
-  } else if (cupRank >= 6 || (titleCount >= 45 && careerYears !== null && careerYears <= 5)) {
-    // Bold / Curvy / Iconic presence: Crimson Velvet
-    baseHue = 353
-    sat = 80
-    light = 49
-    label = 'Crimson Velvet'
-    mood = 'Magnetic intensity & unmistakable desire'
-  } else if ((age !== null && age <= 23) || (careerYears !== null && careerYears <= 2)) {
-    // Fresh debut / Youthful: Rose Blush
-    baseHue = 344
-    sat = 78
-    light = 54
-    label = 'Blush Rose'
-    mood = 'Fresh pulse & luminous skin warmth'
+  let chosen: PaletteDef
+  if (height !== null && height >= 166) {
+    // Tall / statuesque -> Champagne Amber or Gilded Honey
+    chosen = seed % 2 === 0 ? PALETTES[2] : PALETTES[9]
+  } else if (cupRank >= 6) {
+    // Curvy / high-presence -> Crimson Velvet or Coral Sunset
+    chosen = seed % 2 === 0 ? PALETTES[0] : PALETTES[5]
+  } else if (age !== null && age >= 28) {
+    // Mature -> Velvet Wine or Plum Mirage
+    chosen = seed % 2 === 0 ? PALETTES[1] : PALETTES[8]
+  } else if (age !== null && age <= 23) {
+    // Youthful -> Blush Rose or Coral Sunset
+    chosen = seed % 2 === 0 ? PALETTES[3] : PALETTES[5]
+  } else if (careerYears !== null && careerYears >= 6) {
+    // Veteran catalog -> Velvet Wine, Orchid Silk, Sapphire Dusk, Emerald Noir, Plum Mirage
+    const veteranPool = [PALETTES[1], PALETTES[4], PALETTES[6], PALETTES[7], PALETTES[8]]
+    chosen = veteranPool[seed % veteranPool.length]
+  } else if (careerYears !== null && careerYears <= 2) {
+    // New generation -> Blush Rose, Coral Sunset, Champagne Amber, Gilded Honey
+    const freshPool = [PALETTES[3], PALETTES[5], PALETTES[2], PALETTES[9]]
+    chosen = freshPool[seed % freshPool.length]
   } else {
-    // Mid-career muse: Orchid Dusk (or Rose Silk via harmonic)
-    if (seed % 2 === 0) {
-      baseHue = 312
-      sat = 58
-      light = 46
-      label = 'Orchid Dusk'
-      mood = 'Silk tension & quiet magnetism'
-    } else {
-      baseHue = 348
-      sat = 72
-      light = 50
-      label = 'Rose Silk'
-      mood = 'Effortless grace & warm allure'
-    }
+    // Full 10-palette editorial diversity
+    chosen = PALETTES[seed % PALETTES.length]
   }
 
-  // Fine-tune chroma & depth by silhouette, liked affinity, and stature.
-  if (cupRank >= 5) sat = clamp(sat + Math.min(10, (cupRank - 4) * 2), 45, 88)
-  if (likedCount > 0) sat = clamp(sat + Math.min(8, likedCount * 2), 45, 90)
-  if (height !== null && height >= 164) light = clamp(light + 2, 38, 56)
+  let sat = chosen.sat
+  let light = chosen.light
+  if (cupRank >= 5) sat = clamp(sat + Math.min(10, (cupRank - 4) * 2), 48, 90)
+  if (likedCount > 0) sat = clamp(sat + Math.min(8, likedCount * 2), 48, 92)
+  if (height !== null && height >= 164) light = clamp(light + 2, 36, 58)
 
-  const hue = baseHue + jitter
+  const hue = chosen.hue + jitter
   const primary = hslToRgb(hue, sat, light)
-  const deep = hslToRgb(hue - 8, clamp(sat - 6, 35, 85), clamp(light - 14, 24, 42))
+  const deep = hslToRgb(hue - 10, clamp(sat - 4, 38, 88), clamp(light - 14, 22, 42))
+  const shimmer = hslToRgb(hue + 14, clamp(sat + 6, 55, 96), clamp(light + 22, 66, 82))
 
   return {
     primary,
     deep,
-    label,
-    mood,
+    shimmer,
+    label: chosen.label,
+    mood: chosen.mood,
     careerYears,
     debutYear,
     age,
@@ -241,9 +243,8 @@ export function sampleCoverTint(code: string, img: HTMLImageElement): Rgb | null
       const min = Math.min(r, g, b)
       const chroma = max - min
       const lum = (max + min) / 2
-      // Skip near-white/near-black paper edges; weight saturated mid-tones higher
-      if (lum < 28 || lum > 235) continue
-      const weight = 0.25 + (chroma / 255) * 2.5
+      if (lum < 24 || lum > 238) continue
+      const weight = 0.2 + (chroma / 255) * 3.0
       rSum += r * weight
       gSum += g * weight
       bSum += b * weight
@@ -252,9 +253,9 @@ export function sampleCoverTint(code: string, img: HTMLImageElement): Rgb | null
 
     if (wSum <= 0) return null
     const rgb: Rgb = {
-      r: clamp(Math.round(rSum / wSum), 35, 225),
-      g: clamp(Math.round(gSum / wSum), 25, 200),
-      b: clamp(Math.round(bSum / wSum), 35, 215),
+      r: clamp(Math.round(rSum / wSum), 30, 232),
+      g: clamp(Math.round(gSum / wSum), 24, 210),
+      b: clamp(Math.round(bSum / wSum), 32, 224),
     }
     coverTintCache.set(code, rgb)
     return rgb

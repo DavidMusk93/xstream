@@ -1,5 +1,5 @@
 <template>
-  <section :id="id" class="group/star relative" :style="auraSectionStyle">
+  <section :id="id" class="group/star relative isolate" :style="auraSectionStyle">
     <!-- Section header: name sits on the page, the shelf below is one surface -->
     <div v-reveal class="flex items-end justify-between gap-4 mb-4 sm:mb-5 px-1">
       <div class="min-w-0">
@@ -136,20 +136,29 @@
     <div v-reveal="0.08" class="relative">
       <!-- Ambient chromatic light field driven by her persona aura + active cover tint -->
       <div
-        class="star-aura-glow pointer-events-none hidden sm:block absolute -inset-x-10 -top-8 -bottom-4 rounded-[48px] opacity-80 -z-10"
+        class="star-aura-glow pointer-events-none absolute -inset-x-6 sm:-inset-x-10 -top-6 sm:-top-8 -bottom-4 rounded-[48px] opacity-85 z-0"
         aria-hidden="true"
       />
       <!-- Stage: the cover is the protagonist; info reads like a caption -->
-      <div v-if="activeTitle" class="grid gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] lg:gap-12">
+      <div v-if="activeTitle" class="relative z-10 grid gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] lg:gap-12">
         <div
           ref="heroStageRef"
           class="hero-stage group/hero relative w-full max-w-[760px] rounded-[22px] overflow-hidden bg-fill shadow-[0_30px_60px_-34px_rgba(0,0,0,0.5)] touch-pan-y select-none outline-none"
-          :class="{ 'controls-shown': controlsShown }"
+          :class="{ 'controls-shown': controlsShown, 'hero-jelly-active': jellyActive }"
           tabindex="0"
           role="group"
           :aria-label="`${activeTitle.code} cover, swipe or use arrow keys to browse titles`"
           @keydown="onHeroKeydown"
+          @pointermove="onStageGlintMove"
         >
+          <!-- 波光粼粼 — sunlit water mirror glint + flowing caustic ripple on slide -->
+          <div class="water-glint" aria-hidden="true" />
+          <div
+            :key="waterWaveKey"
+            class="water-caustic-wave"
+            :class="{ 'is-flowing': waterWaveKey > 0 }"
+            aria-hidden="true"
+          />
           <div
             ref="heroFrameRef"
             class="hero-frame relative w-full aspect-[3/2] bg-fill overflow-hidden touch-pan-y select-none"
@@ -267,8 +276,8 @@
               <div class="flex items-center gap-3 mt-6 sm:mt-8">
                 <button
                   type="button"
-                  class="action text-white shadow-[0_6px_20px_-6px_rgba(255,55,95,0.6)] hover:-translate-y-1 hover:scale-[1.04]"
-                  :class="copied ? 'bg-success shadow-none animate-sensual-pop' : 'bg-accent hover:bg-accent-hover'"
+                  class="action text-white hover:-translate-y-1 hover:scale-[1.04]"
+                  :class="copied ? 'bg-success shadow-none animate-sensual-pop' : 'action-aura'"
                   :data-tip="copied ? 'Copied' : 'Copy magnet'"
                   :data-tip-show="copied || undefined"
                   aria-label="Copy magnet"
@@ -298,9 +307,10 @@
                   type="button"
                   class="action hover:-translate-y-1 hover:scale-[1.04]"
                   :class="[
-                    activeLiked ? 'bg-accent/10 text-accent hover:bg-accent/15' : 'bg-black/[0.05] text-foreground hover:bg-black/[0.08]',
-                    justLiked ? 'animate-heart-sensual ring-2 ring-accent/30' : ''
+                    activeLiked ? '' : 'bg-black/[0.05] text-foreground hover:bg-black/[0.08]',
+                    justLiked ? 'animate-heart-sensual' : ''
                   ]"
+                  :style="activeLiked ? { backgroundColor: `rgba(${auraRgb}, 0.14)`, color: `rgb(${auraRgb})` } : undefined"
                   :data-tip="activeLiked ? 'Liked' : 'Like'"
                   :aria-pressed="activeLiked"
                   :aria-label="activeLiked ? 'Unlike' : 'Like'"
@@ -446,14 +456,16 @@ const starAura = computed(() =>
 )
 const blendedPrimary = computed(() =>
   activeCoverTint.value
-    ? blendRgb(starAura.value.primary, activeCoverTint.value, 0.26)
+    ? blendRgb(starAura.value.primary, activeCoverTint.value, 0.36)
     : starAura.value.primary,
 )
 const auraRgb = computed(() => rgbCss(blendedPrimary.value))
 const auraDeepRgb = computed(() => rgbCss(starAura.value.deep))
+const auraShimmerRgb = computed(() => rgbCss(starAura.value.shimmer))
 const auraSectionStyle = computed(() => ({
   '--aura-rgb': auraRgb.value,
   '--aura-deep-rgb': auraDeepRgb.value,
+  '--aura-shimmer-rgb': auraShimmerRgb.value,
 }))
 const auraTraitBrief = computed(() => {
   const parts: string[] = []
@@ -563,14 +575,50 @@ const heroTrackStyle = computed(() => {
   return { '--track-base': `${base}px` }
 })
 
-/** Compositor-only offset while dragging — never touches reactive state per frame. */
+const waterWaveKey = ref(0)
+const jellyActive = ref(false)
+let jellyTimer: ReturnType<typeof setTimeout> | null = null
+let lastDragPx = 0
+
+function triggerWaterJelly() {
+  waterWaveKey.value++
+  jellyActive.value = false
+  if (jellyTimer) clearTimeout(jellyTimer)
+  requestAnimationFrame(() => {
+    jellyActive.value = true
+    jellyTimer = setTimeout(() => {
+      jellyActive.value = false
+      jellyTimer = null
+    }, 660)
+  })
+}
+
+function onStageGlintMove(e: PointerEvent) {
+  if (e.pointerType !== 'mouse') return
+  const el = heroStageRef.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  if (!rect.width || !rect.height) return
+  const x = ((e.clientX - rect.left) / rect.width) * 100
+  const y = ((e.clientY - rect.top) / rect.height) * 100
+  el.style.setProperty('--glint-x', `${x.toFixed(1)}%`)
+  el.style.setProperty('--glint-y', `${y.toFixed(1)}%`)
+}
+
+/** Compositor-only offset + liquid shear while dragging — never touches reactive state per frame. */
 function setHeroDragTranslate(px: number) {
   const el = heroTrackRef.value
   if (!el) return
   if (px) {
+    const vel = px - lastDragPx
+    lastDragPx = px
+    const skew = Math.max(-2.2, Math.min(2.2, -vel * 0.085))
     el.style.setProperty('--drag-x', `${px}px`)
+    el.style.setProperty('--drag-skew', `${skew.toFixed(2)}deg`)
   } else {
+    lastDragPx = 0
     el.style.removeProperty('--drag-x')
+    el.style.removeProperty('--drag-skew')
   }
 }
 
@@ -631,6 +679,7 @@ function goToIndex(
   activeIndex.value = idx
   setHeroDragTranslate(0)
   armStepLock(cacheHit)
+  triggerWaterJelly()
 
   if (!opts?.thumbAligned) {
     revealThumb(idx, opts?.smoothThumb !== false ? 'smooth' : 'auto')
