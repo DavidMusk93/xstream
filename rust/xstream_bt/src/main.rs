@@ -1,6 +1,6 @@
 //! Binary entrypoint for the `xstream_bt` `BitTorrent` streaming daemon.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use tokio::{net::TcpListener, signal};
 use tracing::{error, info};
@@ -19,6 +19,8 @@ async fn main() {
         bind = %config.bind_addr,
         cache_dir = %config.cache_dir.display(),
         bt_port = config.bt_listen_port,
+        max_cache_bytes = config.max_cache_bytes,
+        evict_interval_secs = config.evict_interval_secs,
         "starting xstream_bt"
     );
 
@@ -29,6 +31,27 @@ async fn main() {
             std::process::exit(1);
         }
     };
+
+    // Background disk-quota enforcer: keeps disk usage strictly within max_cache_bytes.
+    let evict_engine = Arc::clone(&engine);
+    let evict_interval = Duration::from_secs(config.evict_interval_secs);
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(evict_interval);
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            let res = evict_engine.enforce_quota().await;
+            if !res.evicted_hashes.is_empty() {
+                info!(
+                    evicted = res.evicted_hashes.len(),
+                    freed_bytes = res.freed_bytes,
+                    used_bytes = res.used_bytes,
+                    max_bytes = res.max_bytes,
+                    "quota sweep reclaimed cache space"
+                );
+            }
+        }
+    });
 
     let router = build_router(engine);
     let listener = match TcpListener::bind(config.bind_addr).await {

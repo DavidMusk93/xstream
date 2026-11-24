@@ -217,3 +217,74 @@ async def stream_video(request: Request, hash_str: str) -> Response:
         status_code=upstream.status_code,
         headers=out_headers,
     )
+
+
+async def cache_list() -> dict[str, Any]:
+    """Forward GET /api/cache to xstream_bt."""
+    base = get_base_url()
+    assert base is not None
+    try:
+        resp = await _get_client().get(f"{base}/api/cache", timeout=10.0)
+    except httpx.HTTPError as exc:
+        log.error(f"xstream_bt cache_list failed: {exc}")
+        raise HTTPException(status_code=503, detail="BitTorrent daemon unavailable")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+async def cache_metrics() -> dict[str, Any]:
+    """Forward GET /api/cache/metrics to xstream_bt."""
+    base = get_base_url()
+    assert base is not None
+    try:
+        resp = await _get_client().get(f"{base}/api/cache/metrics", timeout=10.0)
+    except httpx.HTTPError as exc:
+        log.error(f"xstream_bt cache_metrics failed: {exc}")
+        raise HTTPException(status_code=503, detail="BitTorrent daemon unavailable")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+async def cache_delete(hash_str: str) -> dict[str, Any]:
+    """Forward DELETE /api/cache/{hash} to xstream_bt."""
+    base = get_base_url()
+    assert base is not None
+    try:
+        resp = await _get_client().delete(f"{base}/api/cache/{hash_str}", timeout=15.0)
+    except httpx.HTTPError as exc:
+        log.error(f"xstream_bt cache_delete failed: {exc}")
+        raise HTTPException(status_code=503, detail="BitTorrent daemon unavailable")
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="Torrent not found")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    _stop_watch(hash_str)
+    return resp.json()
+
+
+async def cache_evict() -> dict[str, Any]:
+    """Forward POST /api/cache/evict to xstream_bt."""
+    base = get_base_url()
+    assert base is not None
+    try:
+        resp = await _get_client().post(f"{base}/api/cache/evict", timeout=30.0)
+    except httpx.HTTPError as exc:
+        log.error(f"xstream_bt cache_evict failed: {exc}")
+        raise HTTPException(status_code=503, detail="BitTorrent daemon unavailable")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+async def set_pin(hash_str: str, *, pinned: bool) -> None:
+    """Sync liked/pinned protection state for a torrent hash to xstream_bt (best-effort)."""
+    base = get_base_url()
+    if not base or not hash_str:
+        return
+    try:
+        method = "POST" if pinned else "DELETE"
+        await _get_client().request(method, f"{base}/api/cache/pin/{hash_str}", timeout=5.0)
+    except Exception as exc:
+        log.warning(f"xstream_bt pin sync failed for {hash_str[:12]}: {exc}")

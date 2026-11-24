@@ -4,6 +4,7 @@ use std::{
     collections::HashSet,
     fmt,
     net::{Ipv4Addr, SocketAddr},
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -16,6 +17,10 @@ use tokio::io::{AsyncRead, AsyncSeek};
 use tracing::{info, warn};
 
 use crate::{
+    cache::{
+        disk_usage_bytes, format_bytes, plan_eviction, unix_now_secs, ActiveStreamGuard,
+        CacheEntry, CacheTracker, EvictionPolicy,
+    },
     config::Config,
     error::BtError,
     video::{extract_info_hash, mime_for_path, normalize_hash, select_video_file, FileCandidate},
@@ -127,6 +132,54 @@ pub struct OpenVideoStream {
     pub total_size: u64,
     /// HTTP MIME type for `Content-Type`.
     pub mime: &'static str,
+    /// RAII guard preventing eviction while this stream is active.
+    pub guard: ActiveStreamGuard,
+}
+
+/// Summary metrics matching xstream's `/api/cache/metrics` contract.
+#[derive(Debug, Clone, Serialize)]
+pub struct CacheMetricsDto {
+    /// Total cached torrents with known video metadata.
+    pub total: usize,
+    /// Count of completed torrents (`progress >= 99.9`).
+    pub completed: usize,
+    /// Count of incomplete torrents.
+    pub downloading: usize,
+    /// Measured allocated disk bytes (`st_blocks * 512`).
+    pub used_bytes: u64,
+    /// Human-readable disk usage string.
+    pub used_human: String,
+    /// Configured disk quota in bytes.
+    pub max_bytes: u64,
+    /// Human-readable disk quota string.
+    pub max_human: String,
+}
+
+/// Listing payload matching xstream's `/api/cache` contract.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheListDto {
+    /// Measured allocated disk bytes (`st_blocks * 512`).
+    pub total_size: u64,
+    /// Configured disk quota in bytes.
+    pub max_size: u64,
+    /// Number of items in `items`.
+    pub item_count: usize,
+    /// Per-torrent status entries.
+    pub items: Vec<TorrentStatusDto>,
+}
+
+/// Result of a quota enforcement sweep.
+#[derive(Debug, Clone, Serialize)]
+pub struct EvictResultDto {
+    /// Hashes evicted during this sweep.
+    pub evicted_hashes: Vec<String>,
+    /// Approximate bytes freed.
+    pub freed_bytes: u64,
+    /// Disk usage measured after eviction.
+    pub used_bytes: u64,
+    /// Configured disk quota in bytes.
+    pub max_bytes: u64,
 }
 
 impl fmt::Debug for OpenVideoStream {
@@ -141,6 +194,9 @@ impl fmt::Debug for OpenVideoStream {
 /// Core `BitTorrent` streaming engine wrapping a `librqbit::Session`.
 pub struct BtEngine {
     session: Arc<Session>,
+    cache_dir: PathBuf,
+    policy: EvictionPolicy,
+    tracker: CacheTracker,
 }
 
 impl fmt::Debug for BtEngine {
@@ -190,13 +246,30 @@ impl BtEngine {
             .await
             .map_err(|err| BtError::Internal(format!("librqbit session init failed: {err}")))?;
 
+        let policy = EvictionPolicy::from_max_bytes(config.max_cache_bytes);
+        let tracker = CacheTracker::new();
+
+        // Seed LRU timestamps for any persisted torrents restored by librqbit.
+        session.with_torrents(|iter| {
+            for (_, handle) in iter {
+                let h = handle.info_hash().as_string();
+                tracker.touch(&h);
+            }
+        });
+
         info!(
             cache_dir = %config.cache_dir.display(),
             listen_port = config.bt_listen_port,
+            max_cache_bytes = config.max_cache_bytes,
             "librqbit session initialized"
         );
 
-        Ok(Self { session })
+        Ok(Self {
+            session,
+            cache_dir: config.cache_dir.clone(),
+            policy,
+            tracker,
+        })
     }
 
     /// Number of torrents currently managed by the session.
@@ -214,6 +287,7 @@ impl BtEngine {
     pub async fn add_magnet(&self, magnet: &str, mode: StartMode) -> Result<AddOutcome, BtError> {
         let hash = extract_info_hash(magnet)
             .ok_or_else(|| BtError::InvalidInput("invalid magnet or info-hash".to_string()))?;
+        self.tracker.touch(&hash);
         let id = parse_torrent_id(&hash)?;
 
         if let Some(existing) = self.session.get(id) {
@@ -332,7 +406,8 @@ impl BtEngine {
     /// # Errors
     /// Returns [`BtError::NotFound`] or [`BtError::Internal`].
     pub async fn resume(&self, raw_hash: &str) -> Result<(), BtError> {
-        let (_, handle) = self.lookup_handle(raw_hash)?;
+        let (hash, handle) = self.lookup_handle(raw_hash)?;
+        self.tracker.touch(&hash);
         self.restrict_to_video_file(&handle).await;
         self.session
             .unpause(&handle)
@@ -352,7 +427,129 @@ impl BtEngine {
         self.session
             .delete(id, remove_disk)
             .await
-            .map_err(|err| BtError::Internal(format!("delete failed: {err}")))
+            .map_err(|err| BtError::Internal(format!("delete failed: {err}")))?;
+        self.tracker.forget(&hash);
+        Ok(())
+    }
+
+    /// Pin a torrent hash so automatic quota eviction never deletes it (e.g. user-liked title).
+    ///
+    /// # Errors
+    /// Returns [`BtError::InvalidInput`] if `raw_hash` is not a valid 40-char hex hash.
+    pub fn pin(&self, raw_hash: &str) -> Result<(), BtError> {
+        let hash = normalize_hash(raw_hash)
+            .ok_or_else(|| BtError::InvalidInput("invalid info-hash".to_string()))?;
+        self.tracker.pin(&hash);
+        Ok(())
+    }
+
+    /// Remove pin protection from a torrent hash.
+    ///
+    /// # Errors
+    /// Returns [`BtError::InvalidInput`] if `raw_hash` is not a valid 40-char hex hash.
+    pub fn unpin(&self, raw_hash: &str) -> Result<(), BtError> {
+        let hash = normalize_hash(raw_hash)
+            .ok_or_else(|| BtError::InvalidInput("invalid info-hash".to_string()))?;
+        self.tracker.unpin(&hash);
+        Ok(())
+    }
+
+    /// List all cached torrents with known video metadata alongside real disk usage.
+    pub async fn cache_list(&self) -> CacheListDto {
+        let items: Vec<TorrentStatusDto> = self.session.with_torrents(|iter| {
+            iter.filter_map(|(_, handle)| {
+                let h = handle.info_hash().as_string();
+                let st = build_status(&h, handle);
+                (st.video_size > 0).then_some(st)
+            })
+            .collect()
+        });
+        let cache_dir = self.cache_dir.clone();
+        let total_size = tokio::task::spawn_blocking(move || disk_usage_bytes(&cache_dir))
+            .await
+            .unwrap_or(0);
+        CacheListDto {
+            total_size,
+            max_size: self.policy.max_bytes,
+            item_count: items.len(),
+            items,
+        }
+    }
+
+    /// Return cache metrics summary matching xstream's `/api/cache/metrics` contract.
+    pub async fn cache_metrics(&self) -> CacheMetricsDto {
+        let list = self.cache_list().await;
+        let completed = list.items.iter().filter(|i| i.progress >= 99.9).count();
+        let total = list.items.len();
+        CacheMetricsDto {
+            total,
+            completed,
+            downloading: total.saturating_sub(completed),
+            used_bytes: list.total_size,
+            used_human: format_bytes(list.total_size),
+            max_bytes: list.max_size,
+            max_human: format_bytes(list.max_size),
+        }
+    }
+
+    /// Enforce the configured disk cache quota using [`plan_eviction`].
+    ///
+    /// Measures real allocated disk blocks on disk (Invariant I1), plans deterministic
+    /// LRU eviction respecting active streams and pins (Invariants I1-I5), and deletes
+    /// evicted torrents including their on-disk payloads.
+    pub async fn enforce_quota(&self) -> EvictResultDto {
+        let cache_dir = self.cache_dir.clone();
+        let total_disk = tokio::task::spawn_blocking(move || disk_usage_bytes(&cache_dir))
+            .await
+            .unwrap_or(0);
+
+        if self.policy.max_bytes == 0 || total_disk <= self.policy.max_bytes {
+            return EvictResultDto {
+                evicted_hashes: Vec::new(),
+                freed_bytes: 0,
+                used_bytes: total_disk,
+                max_bytes: self.policy.max_bytes,
+            };
+        }
+
+        let entries: Vec<CacheEntry> = self.session.with_torrents(|iter| {
+            iter.map(|(_, handle)| {
+                let h = handle.info_hash().as_string();
+                let stats = handle.stats();
+                self.tracker.snapshot_entry(&h, stats.progress_bytes)
+            })
+            .collect()
+        });
+
+        let plan = plan_eviction(&entries, total_disk, self.policy, unix_now_secs());
+        let mut evicted_hashes = Vec::with_capacity(plan.evict_hashes.len());
+
+        for hash in &plan.evict_hashes {
+            if let Ok(id) = parse_torrent_id(hash) {
+                match self.session.delete(id, true).await {
+                    Ok(()) => {
+                        self.tracker.forget(hash);
+                        evicted_hashes.push(hash.clone());
+                        info!(hash = %hash, "evicted cached torrent to satisfy disk quota");
+                    }
+                    Err(err) => {
+                        warn!(hash = %hash, error = %err, "failed to delete evicted torrent");
+                    }
+                }
+            }
+        }
+
+        let cache_dir_after = self.cache_dir.clone();
+        let used_after = tokio::task::spawn_blocking(move || disk_usage_bytes(&cache_dir_after))
+            .await
+            .unwrap_or(plan.remaining_bytes);
+
+        EvictResultDto {
+            evicted_hashes,
+            freed_bytes: total_disk.saturating_sub(used_after),
+            used_bytes: used_after,
+            max_bytes: self.policy.max_bytes,
+        }
     }
 
     /// Open a native async `FileStream` for the torrent's primary video file.
@@ -384,6 +581,7 @@ impl BtEngine {
             }
         }
 
+        let guard = self.tracker.acquire_stream(&hash);
         let stream = Arc::clone(&handle)
             .stream(video.id)
             .await
@@ -393,6 +591,7 @@ impl BtEngine {
             stream: Box::new(stream),
             total_size: video.len,
             mime: video.mime,
+            guard,
         })
     }
 

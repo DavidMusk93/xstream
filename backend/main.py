@@ -111,9 +111,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             rows = conn.execute(
                 "SELECT magnet_hash FROM titles WHERE user_liked = 1 AND magnet_hash IS NOT NULL"
             ).fetchall()
+            from backend.services import bt_client
             for (h,) in rows:
                 if h:
                     engine.set_liked(h, True)
+                    if bt_client.is_enabled():
+                        await bt_client.set_pin(h, pinned=True)
             log.info(f"Loaded {len(rows)} liked torrents into cache protection set")
         finally:
             conn.close()

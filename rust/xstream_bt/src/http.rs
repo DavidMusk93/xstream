@@ -1,6 +1,11 @@
 //! Axum HTTP router for `BitTorrent` control and HTTP Range video streaming.
 
-use std::{io::SeekFrom, sync::Arc};
+use std::{
+    io::SeekFrom,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use axum::{
     body::Body,
@@ -11,12 +16,16 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, ReadBuf};
 use tokio_util::io::ReaderStream;
 use tracing::debug;
 
 use crate::{
-    engine::{AddOutcome, BtEngine, DeleteFiles, StartMode, StreamCheckDto, TorrentStatusDto},
+    cache::ActiveStreamGuard,
+    engine::{
+        AddOutcome, BtEngine, CacheListDto, CacheMetricsDto, DeleteFiles, EvictResultDto,
+        StartMode, StreamCheckDto, TorrentStatusDto,
+    },
     error::BtError,
     range::parse_byte_range,
 };
@@ -44,8 +53,54 @@ pub fn build_router(engine: Arc<BtEngine>) -> Router {
         .route("/torrent/progress", post(progress_noop))
         .route("/torrent/{hash}", delete(delete_torrent))
         .route("/api/check/{hash}", get(check_stream))
+        .route("/api/cache", get(cache_list))
+        .route("/api/cache/metrics", get(cache_metrics))
+        .route("/api/cache/{hash}", delete(cache_delete))
+        .route("/api/cache/pin/{hash}", post(cache_pin).delete(cache_unpin))
+        .route("/api/cache/evict", post(cache_evict))
         .route("/stream/{hash}", get(stream_video))
         .with_state(state)
+}
+
+async fn cache_list(State(state): State<AppState>) -> Json<CacheListDto> {
+    Json(state.engine.cache_list().await)
+}
+
+async fn cache_metrics(State(state): State<AppState>) -> Json<CacheMetricsDto> {
+    Json(state.engine.cache_metrics().await)
+}
+
+#[derive(Serialize)]
+struct DeletedResponse {
+    deleted: bool,
+}
+
+async fn cache_delete(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Result<Json<DeletedResponse>, BtError> {
+    state.engine.remove(&hash, DeleteFiles::Remove).await?;
+    Ok(Json(DeletedResponse { deleted: true }))
+}
+
+async fn cache_pin(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Result<Json<OkResponse>, BtError> {
+    state.engine.pin(&hash)?;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn cache_unpin(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Result<Json<OkResponse>, BtError> {
+    state.engine.unpin(&hash)?;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn cache_evict(State(state): State<AppState>) -> Json<EvictResultDto> {
+    Json(state.engine.enforce_quota().await)
 }
 
 #[derive(Serialize)]
@@ -159,6 +214,21 @@ async fn check_stream(
     Ok(res)
 }
 
+struct GuardedReader {
+    inner: Box<dyn AsyncRead + Send + Unpin>,
+    _guard: ActiveStreamGuard,
+}
+
+impl AsyncRead for GuardedReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut *self.inner).poll_read(cx, buf)
+    }
+}
+
 async fn stream_video(
     State(state): State<AppState>,
     Path(hash): Path<String>,
@@ -167,6 +237,7 @@ async fn stream_video(
     let opened = state.engine.open_stream(&hash).await?;
     let total_size = opened.total_size;
     let mime = opened.mime;
+    let guard = opened.guard;
     let mut stream = opened.stream;
 
     let range_header = req_headers.get(header::RANGE).and_then(|v| v.to_str().ok());
@@ -206,6 +277,10 @@ async fn stream_video(
             (StatusCode::OK, Box::new(stream))
         };
 
-    let body_stream = ReaderStream::with_capacity(reader, STREAM_BUF_BYTES);
+    let guarded = GuardedReader {
+        inner: reader,
+        _guard: guard,
+    };
+    let body_stream = ReaderStream::with_capacity(guarded, STREAM_BUF_BYTES);
     Ok((status, out_headers, Body::from_stream(body_stream)).into_response())
 }

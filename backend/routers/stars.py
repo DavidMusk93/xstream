@@ -534,38 +534,53 @@ async def like_title(request: LikeRequest, req: Request) -> LikeResponse:
     invalidate_stars_cache(reset_covers=False)
 
     engine = req.app.state.engine
+    from backend.services import bt_client
     if magnet_hash:
-        try:
-            await asyncio.to_thread(engine.set_liked, magnet_hash, liked)
-        except Exception as exc:
-            log.warning(f"like_title: set_liked failed for {code}: {exc}")
+        if bt_client.is_enabled():
+            await bt_client.set_pin(magnet_hash, pinned=liked)
+        else:
+            try:
+                await asyncio.to_thread(engine.set_liked, magnet_hash, liked)
+            except Exception as exc:
+                log.warning(f"like_title: set_liked failed for {code}: {exc}")
 
     downloaded = False
     if liked and magnet:
         try:
             from backend.routers.torrents import _resolve_magnet
             resolved = await db_read(_resolve_magnet, magnet)
-            info = await asyncio.to_thread(engine.add_torrent, resolved, prefetch=False)
-            if info:
-                hash_str = info["hash"]
-                # Start downloading head+moov immediately for liked titles.
-                # add_torrent now adds paused; resume_download(0, 0) queues a resume
-                # (or applies it directly once metadata is ready) so pieces start
-                # fetching instead of staying paused forever.
-                await asyncio.to_thread(engine.resume_download, hash_str, 0.0, 0.0)
-                downloaded = True
-                log.info(f"like_title: auto-download {code} -> {hash_str[:12]}...")
+            if bt_client.is_enabled():
+                res = await bt_client.add_torrent(resolved, prefetch=False)
+                if res and res.get("hash"):
+                    await bt_client.set_pin(res["hash"], pinned=True)
+                    downloaded = True
+                    log.info(f"like_title: auto-download via xstream_bt {code} -> {res['hash'][:12]}...")
             else:
-                log.warning(f"like_title: auto-download failed for {code}")
+                info = await asyncio.to_thread(engine.add_torrent, resolved, prefetch=False)
+                if info:
+                    hash_str = info["hash"]
+                    await asyncio.to_thread(engine.resume_download, hash_str, 0.0, 0.0)
+                    downloaded = True
+                    log.info(f"like_title: auto-download {code} -> {hash_str[:12]}...")
+                else:
+                    log.warning(f"like_title: auto-download failed for {code}")
         except Exception as exc:
             log.warning(f"like_title: auto-download error for {code}: {exc}")
 
     # When unliking, immediately clean up downloaded cache
     if not liked and magnet_hash:
         try:
-            removed = await asyncio.to_thread(engine.remove_torrent, magnet_hash)
-            if removed:
-                log.info(f"like_title: auto-remove {code} -> {magnet_hash[:12]}...")
+            if bt_client.is_enabled():
+                try:
+                    await bt_client.cache_delete(magnet_hash)
+                    log.info(f"like_title: auto-remove via xstream_bt {code} -> {magnet_hash[:12]}...")
+                except HTTPException as exc:
+                    if exc.status_code != 404:
+                        raise
+            else:
+                removed = await asyncio.to_thread(engine.remove_torrent, magnet_hash)
+                if removed:
+                    log.info(f"like_title: auto-remove {code} -> {magnet_hash[:12]}...")
         except Exception as exc:
             log.warning(f"like_title: auto-remove error for {code}: {exc}")
 

@@ -6,6 +6,7 @@ from typing import Any
 
 from backend.models import CacheMetrics
 from backend.routers.auth import require_auth
+from backend.services import bt_client
 from backend.services.torrent_engine import format_size
 from core.events import publish_event
 
@@ -26,6 +27,8 @@ async def get_cache(engine: Any = Depends(get_engine)):
     torrents that had metadata but no downloaded data yet. Show everything
     with a known video file so the manager is useful immediately.
     """
+    if bt_client.is_enabled():
+        return await bt_client.cache_list()
     all_items = await asyncio.to_thread(engine.get_all_status)
     items = [i for i in all_items if i and i.get("video_size", 0) > 0]
     total_disk = await asyncio.to_thread(engine._get_cache_size)
@@ -43,6 +46,10 @@ async def delete_cache(
     engine: Any = Depends(get_engine),
 ):
     """Remove a torrent from cache."""
+    if bt_client.is_enabled():
+        res = await bt_client.cache_delete(hash_str)
+        await publish_event("cache.update", {"action": "delete", "hash": hash_str})
+        return res
     success = await asyncio.to_thread(engine.remove_torrent, hash_str)
     if not success:
         raise HTTPException(status_code=404, detail="Torrent not found")
@@ -52,7 +59,12 @@ async def delete_cache(
 
 @router.post("/gc-orphans")
 async def gc_orphans(engine: Any = Depends(get_engine)):
-    """Manually trigger orphan torrent GC: clean up torrents that exist on disk but have no corresponding record in the database."""
+    """Manually trigger orphan torrent GC / quota eviction."""
+    if bt_client.is_enabled():
+        res = await bt_client.cache_evict()
+        removed = len(res.get("evicted_hashes", []))
+        await publish_event("cache.update", {"action": "gc", "removed": removed})
+        return {"removed": removed, **res}
     removed = await asyncio.to_thread(engine.gc_orphaned_torrents)
     await publish_event("cache.update", {"action": "gc", "removed": removed})
     return {"removed": removed}
@@ -61,6 +73,8 @@ async def gc_orphans(engine: Any = Depends(get_engine)):
 @router.get("/metrics", response_model=CacheMetrics)
 async def get_metrics(engine: Any = Depends(get_engine)):
     """Get cache metrics summary."""
+    if bt_client.is_enabled():
+        return CacheMetrics(**(await bt_client.cache_metrics()))
     all_items = await asyncio.to_thread(engine.get_all_status)
     items = [i for i in all_items if i and i.get("video_size", 0) > 0]
     total_disk = await asyncio.to_thread(engine._get_cache_size)

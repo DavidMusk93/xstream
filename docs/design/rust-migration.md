@@ -47,8 +47,9 @@ Phase 2 (Done)  : Concurrent I/O & PG hardening:
                   - [x] Replace DuckDB-era serial DBWriteQueue with bounded-concurrency pool + PG `pg_advisory_xact_lock` per-star sync
                   - [x] EventBus pub/sub + slow-client coalescing -> `rust/xstream_core/src/event_bus.rs`
                   - [x] Cover filesystem index scanner (`_scan_cover_files`) -> `rust/xstream_core/src/covers.rs` + thread-safe cache
-Phase 3 (Done)  : BitTorrent HTTP Range streaming daemon (`rust/xstream_bt`):
+Phase 3 (Done)  : BitTorrent HTTP Range streaming + formally-proven cache manager (`rust/xstream_bt`):
                   - [x] `librqbit 9.1` (`ManagedTorrent::stream` AsyncRead + AsyncSeek) + `axum 0.8` on `127.0.0.1:8766`
+                  - [x] `rust/xstream_bt/src/cache.rs`: sparse-aware disk accounting (`st_blocks * 512`), RAII `ActiveStreamGuard`, deterministic LRU quota eviction (5 formal invariants proven over 1,000 randomized scenarios + sparse-file disk test)
                   - [x] `deploy/xstream-bt.service` + `backend/services/bt_client.py` strangler-fig delegation (`XSTREAM_BT_URL`)
                   - [x] Live E2E verified on 10.1 GB `SNOS-524` FHD: 1.4s metadata + 1.16s head (`ftypisom`) + 0.69s 10 GB tail seek
 ```

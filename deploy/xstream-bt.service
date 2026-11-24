@@ -10,6 +10,8 @@ Environment=RUST_LOG=xstream_bt=info,librqbit=warn
 Environment=XSTREAM_BT_BIND=127.0.0.1:8766
 Environment=XSTREAM_BT_CACHE_DIR=/root/xstream/cache/rqbit
 Environment=XSTREAM_BT_LISTEN_PORT=6882
+Environment=XSTREAM_BT_MAX_CACHE_GB=20
+Environment=XSTREAM_BT_EVICT_INTERVAL_SECS=30
 ExecStart=/root/xstream/rust/target/release/xstream_bt
 Restart=on-failure
 RestartSec=3s
