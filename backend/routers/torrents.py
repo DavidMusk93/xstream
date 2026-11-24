@@ -10,6 +10,7 @@ from typing import Any
 
 from backend.models import TorrentStatus, TorrentAddRequest, TorrentAddResponse, SeekRequest, ProgressRequest
 from backend.routers.auth import require_auth
+from backend.services import bt_client
 from core import get_logger
 from core.db.connection import _conn as _db_conn
 from core.db.write_queue import db_read
@@ -88,6 +89,8 @@ async def get_torrent_status(
     engine: Any = Depends(get_engine),
 ):
     """Get torrent download status."""
+    if bt_client.is_enabled():
+        return TorrentStatus(**(await bt_client.get_status(hash_str)))
     status = await asyncio.to_thread(engine.get_status, hash_str)
     if not status:
         raise HTTPException(status_code=404, detail="Not found")
@@ -101,6 +104,9 @@ async def add_torrent(req: TorrentAddRequest, engine: Any = Depends(get_engine))
         raise HTTPException(status_code=400, detail="Missing magnet")
 
     magnet = await db_read(_resolve_magnet, req.magnet)
+    if bt_client.is_enabled():
+        res = await bt_client.add_torrent(magnet, prefetch=req.prefetch)
+        return TorrentAddResponse(**res)
     # add_torrent does synchronous I/O (save metadata, scan filesystem).
     # Run in thread pool so the event loop stays responsive.
     try:
@@ -141,6 +147,8 @@ async def seek_torrent(req: SeekRequest, engine: Any = Depends(get_engine)):
     """Report current playback position so engine can prioritize pieces ahead of playhead."""
     if not re.fullmatch(HASH_PATTERN, req.hash, re.IGNORECASE):
         raise HTTPException(status_code=400, detail="Invalid hash")
+    if bt_client.is_enabled():
+        return await bt_client.control_action("seek", {"hash": req.hash})
     ok = await asyncio.to_thread(engine.apply_seek_priority, req.hash, req.time, req.duration)
     if not ok:
         raise HTTPException(status_code=404, detail="Torrent not found or not ready")
@@ -152,6 +160,8 @@ async def progress_torrent(req: ProgressRequest, engine: Any = Depends(get_engin
     """Periodically report playback progress; engine slides the download window (±30 pieces), stops downloading the rest."""
     if not re.fullmatch(HASH_PATTERN, req.hash, re.IGNORECASE):
         raise HTTPException(status_code=400, detail="Invalid hash")
+    if bt_client.is_enabled():
+        return await bt_client.control_action("progress", {"hash": req.hash})
     ok = await asyncio.to_thread(engine.update_play_progress, req.hash, req.time, req.duration)
     if not ok:
         raise HTTPException(status_code=404, detail="Torrent not found or not ready")
@@ -163,6 +173,8 @@ async def pause_torrent(req: ProgressRequest, engine: Any = Depends(get_engine))
     """Pause download: set all piece priorities to 0, keep completed pieces."""
     if not re.fullmatch(HASH_PATTERN, req.hash, re.IGNORECASE):
         raise HTTPException(status_code=400, detail="Invalid hash")
+    if bt_client.is_enabled():
+        return await bt_client.control_action("pause", {"hash": req.hash})
     ok = await asyncio.to_thread(engine.pause_download, req.hash)
     if not ok:
         raise HTTPException(status_code=404, detail="Torrent not found")
@@ -174,6 +186,8 @@ async def resume_torrent(req: ProgressRequest, engine: Any = Depends(get_engine)
     """Resume download: re-set head+tail+current playback window."""
     if not re.fullmatch(HASH_PATTERN, req.hash, re.IGNORECASE):
         raise HTTPException(status_code=400, detail="Invalid hash")
+    if bt_client.is_enabled():
+        return await bt_client.control_action("resume", {"hash": req.hash})
     ok = await asyncio.to_thread(engine.resume_download, req.hash, req.time, req.duration)
     if not ok:
         raise HTTPException(status_code=404, detail="Torrent not found or not ready")

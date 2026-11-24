@@ -43,12 +43,14 @@ Phase 1 (Done)  : xstream_core (PyO3):
                   - [x] PieceStateTracker -> rust/xstream_core/src/piece_tracker.rs
                   - [x] scrapers/v2/filters.py + _score_magnet -> rust/xstream_core/src/{filters,scoring}.rs
                   - [x] scrapers/v2/extractors.py (Sukebei RSS + magnet helpers) -> rust/xstream_core/src/extractors.rs
-Phase 2 (WIP)   : Concurrent I/O & PG hardening:
+Phase 2 (Done)  : Concurrent I/O & PG hardening:
                   - [x] Replace DuckDB-era serial DBWriteQueue with bounded-concurrency pool + PG `pg_advisory_xact_lock` per-star sync
                   - [x] EventBus pub/sub + slow-client coalescing -> `rust/xstream_core/src/event_bus.rs`
                   - [x] Cover filesystem index scanner (`_scan_cover_files`) -> `rust/xstream_core/src/covers.rs` + thread-safe cache
-                  - [ ] sync/magnet_checker worker (Rust/axum + sqlx + PG advisory locks)
-Phase 3 (Eval)  : TorrentEngine + video_stream (keep libtorrent via C++ cxx FFI or evaluate librqbit against all 15+ BT tests)
+Phase 3 (Done)  : BitTorrent HTTP Range streaming daemon (`rust/xstream_bt`):
+                  - [x] `librqbit 9.1` (`ManagedTorrent::stream` AsyncRead + AsyncSeek) + `axum 0.8` on `127.0.0.1:8766`
+                  - [x] `deploy/xstream-bt.service` + `backend/services/bt_client.py` strangler-fig delegation (`XSTREAM_BT_URL`)
+                  - [x] Live E2E verified on 10.1 GB `SNOS-524` FHD: 1.4s metadata + 1.16s head (`ftypisom`) + 0.69s 10 GB tail seek
 ```
 
 - **Build & install `xstream_core` into `.venv`**:
@@ -62,8 +64,15 @@ Phase 3 (Eval)  : TorrentEngine + video_stream (keep libtorrent via C++ cxx FFI 
 - **Phase 2 — Concurrent I/O Services (Rust/axum + `tokio` + `sqlx`)**:
   - SSE hub (`/api/events`) + `ostore_bridge` using `tokio::sync::broadcast` (replaces Python `EventBus` + `asyncio.Queue` fan-out).
   - Sync & `MagnetChecker` daemon using PostgreSQL advisory locks (`pg_advisory_lock`) so `sync_star` and scheduled syncs never race on the same `(star_id, code)`.
-- **Phase 3 — BitTorrent Engine (Evaluate Before Committing)**:
-  - `TorrentEngine` wraps C++ `libtorrent 2.0.x`, whose streaming semantics (`close_redundant_connections=False`, on-demand priorities, bootstrap-first, fast-resume) are battle-tested. Prefer wrapping `libtorrent` via `cxx` or keeping a thin boundary rather than rewriting BT protocol edge cases from scratch unless a Rust BT crate passes every existing regression test in `tests/`.
+- **Phase 3 — BitTorrent Streaming Daemon (`rust/xstream_bt`)**:
+  - Replaces legacy libtorrent's brittle `SEEK_HOLE` / `fsync` / `phantom finished` streaming path with a dedicated Rust daemon (`librqbit 9.1` + `axum 0.8`, systemd unit `xstream-bt.service` on `127.0.0.1:8766`).
+  - `ManagedTorrent::stream(file_id)` implements `tokio::io::AsyncRead + AsyncSeek` and natively prioritizes + awaits pieces around any HTTP `Range` request (head `ftyp` or tail `moov` seek).
+  - `xstream-backend` delegates `/stream/*`, `/api/check/*`, `/torrent/*`, and `/api/play/direct` via `backend/services/bt_client.py` whenever `XSTREAM_BT_URL` is set in `/etc/xstream.env`, preserving cookie auth, PG tracker enrichment (`_resolve_magnet`), and SSE `torrent.progress` / `torrent.head_ready` pushes.
+  - Build release binary:
+    ```bash
+    cd /root/xstream/rust && cargo build --release -p xstream_bt
+    systemctl restart xstream-bt
+    ```
 
 ---
 

@@ -8,6 +8,7 @@ from typing import Any
 
 import libtorrent as lt
 
+from backend.services import bt_client
 from backend.services.torrent_engine import find_video_state
 from backend.services.video_stream import read_video_range
 from backend.models import StreamCheckResponse
@@ -82,6 +83,9 @@ async def stream_video(
     Requests with a Range header return 206 Partial Content; if the requested range is entirely a hole, return 416.
     If the torrent is in checking_files state, return 503 to prevent reading inconsistent data.
     """
+    if bt_client.is_enabled():
+        return await bt_client.stream_video(request, hash_str)
+
     import time as _time
     t0 = _time.perf_counter()
 
@@ -209,6 +213,9 @@ async def check_stream(
     engine: Any = Depends(get_engine),
 ):
     """Check if video head is ready for playback."""
+    if bt_client.is_enabled():
+        return await bt_client.check_stream(hash_str)
+
     local_path, local_size, head_ready_fs, mime = await asyncio.to_thread(find_video_state, hash_str)
 
     # GC protection: any check request counts as active use

@@ -162,6 +162,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     log.info("Backend shutting down...")
+    from backend.services import bt_client
+    await bt_client.close_client()
     if bridge is not None:
         await bridge.stop()
     from backend.routers.magnets import shutdown_checker

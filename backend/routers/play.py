@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
 
 from backend.routers.auth import require_auth
+from backend.services import bt_client
 from backend.services.magnet_checker import extract_hash
 from backend.services.torrent_engine import ADHOC_MARKER
 from core import get_logger
@@ -42,6 +43,17 @@ async def play_direct(req: PlayDirectRequest, engine: Any = Depends(get_engine))
     hash_str = extract_hash(req.magnet)
     if not hash_str:
         raise HTTPException(status_code=400, detail="Invalid magnet")
+
+    if bt_client.is_enabled():
+        res = await bt_client.add_torrent(req.magnet, prefetch=False)
+        return {
+            "hash": res["hash"],
+            "name": _magnet_display_name(req.magnet),
+            "status": "added",
+            "ready": res.get("ready", False),
+            "peers": res.get("peers", 0),
+            "progress": res.get("progress", 0.0),
+        }
 
     # add_torrent does synchronous I/O (filesystem scan, libtorrent calls) and
     # already serializes same-hash adds, so re-adding is idempotent.

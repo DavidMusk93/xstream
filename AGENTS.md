@@ -50,7 +50,8 @@ detail: `docs/design/architecture-decisions.md`.
 
 | Component | File | Responsibility |
 |---|---|---|
-| `TorrentEngine` | `backend/services/torrent_engine.py` | libtorrent session, cache mgmt, tiered eviction, moov scan, orphan GC |
+| `xstream_bt` (Rust) | `rust/xstream_bt/` + `backend/services/bt_client.py` | Production BitTorrent HTTP Range streaming daemon (`librqbit 9.1` + `axum 0.8`, systemd `xstream-bt.service` on `:8766`, enabled via `XSTREAM_BT_URL`); native `AsyncRead + AsyncSeek` `FileStream` |
+| `TorrentEngine` | `backend/services/torrent_engine.py` | Legacy libtorrent session, cache mgmt, tiered eviction, orphan GC (fallback when `XSTREAM_BT_URL` unset) |
 | `PieceStateTracker` | `backend/services/piece_tracker.py` | 3×int bitmap piece state machine |
 | `video_stream` | `backend/services/video_stream.py` | Range streaming, hole detection, seek priority |
 | Routers | `backend/routers/` | `stream.py` (`/stream`, `/api/check`), `torrents.py`, `stars.py`, `cache.py`, `sync.py` (in-process sync + 4h scheduler), `track.py` (behavior 埋点), `auth.py`, `log.py`, `events.py` (SSE), `magnets.py`, `notify.py` (Telegram hooks), `search.py`, `social.py` (X inject), `test_helper.py` (debug, no auth) |
