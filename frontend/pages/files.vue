@@ -157,7 +157,7 @@
           <li
             v-for="entry in entries"
             :key="entry.path"
-            class="group/row flex items-center gap-3.5 pl-4 sm:pl-5 pr-2 py-3 min-w-0 border-b border-black/[0.05] last:border-0 cursor-pointer hover:bg-black/[0.025] transition-colors duration-200"
+            class="group/row list-row flex items-center gap-3.5 pl-4 sm:pl-5 pr-2 py-3 min-w-0 border-b border-black/[0.05] last:border-0 cursor-pointer"
             @click="openEntry(entry)"
           >
             <FileTile

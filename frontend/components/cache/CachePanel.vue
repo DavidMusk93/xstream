@@ -57,7 +57,7 @@
             v-for="item in enrichedItems"
             v-else
             :key="item.hash"
-            class="group/item px-3 py-3 mt-1 rounded-2xl hover:bg-black/[0.03] transition-colors"
+            class="group/item list-row px-3 py-3 mt-1 rounded-2xl"
           >
             <div class="flex items-center gap-2">
               <p class="text-[15px] font-semibold text-foreground truncate min-w-0">{{ item.displayCode }}</p>

@@ -44,7 +44,7 @@
             autocapitalize="off"
             spellcheck="false"
             placeholder="magnet:?xt=urn:btih:…"
-            class="w-full h-14 pl-[52px] pr-[108px] rounded-full bg-white shadow-card text-[16px] font-mono text-foreground placeholder:font-sans placeholder:text-foreground-muted/70 outline-none border border-transparent focus:border-accent/40 focus:shadow-[0_0_0_4px_rgba(255,55,95,0.10)] transition-[border-color,box-shadow] duration-200"
+            class="pill-field pl-[52px] pr-[108px] text-[16px] font-mono placeholder:font-sans"
             @input="errorMsg = ''"
           />
           <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
@@ -85,7 +85,7 @@
             <li
               v-for="item in recents"
               :key="item.hash"
-              class="group/row flex items-center gap-3.5 pl-4 sm:pl-5 pr-2 py-3 min-w-0 border-b border-black/[0.05] last:border-0 cursor-pointer transition-colors duration-200 hover:bg-black/[0.025]"
+              class="group/row list-row flex items-center gap-3.5 pl-4 sm:pl-5 pr-2 py-3 min-w-0 border-b border-black/[0.05] last:border-0 cursor-pointer"
               @click="reopen(item)"
             >
               <span class="shrink-0 w-10 h-10 rounded-[12px] bg-foreground text-white flex items-center justify-center">

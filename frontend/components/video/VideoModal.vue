@@ -84,7 +84,7 @@
           <div class="flex items-center justify-between mt-2.5 -mx-2">
             <div class="flex items-center gap-1">
               <button
-                class="w-11 h-11 rounded-full text-white flex items-center justify-center transition hover:bg-white/10 active:scale-[0.9]"
+                class="w-11 h-11 rounded-full text-white flex items-center justify-center transition-all duration-200 ease-spring hover:bg-white/[0.14] hover:scale-[1.06] active:scale-[0.90]"
                 :aria-label="isPlaying ? 'Pause' : 'Play'"
                 @click="togglePlay"
               >
@@ -98,7 +98,7 @@
               </button>
 
               <button
-                class="w-11 h-11 rounded-full text-white flex items-center justify-center transition hover:bg-white/10 active:scale-[0.9]"
+                class="w-11 h-11 rounded-full text-white flex items-center justify-center transition-all duration-200 ease-spring hover:bg-white/[0.14] hover:scale-[1.06] active:scale-[0.90]"
                 :aria-label="isMuted ? 'Unmute' : 'Mute'"
                 @click="toggleMute"
               >

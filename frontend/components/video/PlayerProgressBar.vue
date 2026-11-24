@@ -23,7 +23,7 @@
       class="absolute bottom-full mb-2 -translate-x-1/2 pointer-events-none z-10"
       :style="{ left: bubbleLeft + '%' }"
     >
-      <div class="flex items-center gap-1.5 bg-black/70 backdrop-blur-md rounded-full px-2.5 py-1 text-[12px] font-medium text-white tabular-nums whitespace-nowrap">
+      <div class="flex items-center gap-1.5 bg-black/75 backdrop-blur-xl ring-1 ring-white/[0.12] shadow-[0_8px_24px_-6px_rgba(0,0,0,0.65)] rounded-full px-2.5 py-1 text-[12px] font-medium text-white tabular-nums whitespace-nowrap">
         <span
           v-if="bubbleState !== null"
           class="w-1.5 h-1.5 rounded-full"
@@ -63,14 +63,16 @@
 
       <!-- Playhead fill -->
       <div
-        class="absolute h-full bg-accent rounded-full"
+        class="absolute h-full bg-accent rounded-full shadow-[0_0_12px_rgba(255,55,95,0.65)]"
         :style="{ width: displayPercent + '%' }"
       />
     </div>
     <!-- Thumb -->
     <div
-      class="absolute top-1/2 w-3.5 h-3.5 -mt-[7px] -ml-[7px] bg-white rounded-full shadow-[0_1px_4px_rgba(0,0,0,0.4)] transition-[opacity,transform] duration-200 ease-spring"
-      :class="scrubbing ? 'opacity-100 scale-125' : 'opacity-0 scale-50 group-hover:opacity-100 group-hover:scale-100'"
+      class="absolute top-1/2 w-3.5 h-3.5 -mt-[7px] -ml-[7px] bg-white rounded-full transition-[opacity,transform,box-shadow] duration-200 ease-spring"
+      :class="scrubbing
+        ? 'opacity-100 scale-125 shadow-[0_0_0_4px_rgba(255,55,95,0.32),0_2px_10px_rgba(0,0,0,0.55)]'
+        : 'opacity-0 scale-50 shadow-[0_1px_6px_rgba(0,0,0,0.45)] group-hover:opacity-100 group-hover:scale-100 group-hover:shadow-[0_0_0_3px_rgba(255,55,95,0.22),0_2px_8px_rgba(0,0,0,0.5)]'"
       :style="{ left: displayPercent + '%' }"
     />
     </div>

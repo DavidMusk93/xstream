@@ -6,12 +6,12 @@
         class="xs-root fixed inset-0 z-[95] flex items-end sm:items-center justify-center sm:p-6"
         @pointerdown.self="open = false"
       >
-        <div class="xs-scrim absolute inset-0 bg-black/25 pointer-events-none" />
+        <div class="xs-scrim absolute inset-0 bg-black/28 sm:backdrop-blur-[6px] pointer-events-none" />
         <div
           role="dialog"
           aria-modal="true"
           aria-label="X posts"
-          class="xs-panel relative w-full sm:max-w-[640px] h-[92dvh] sm:h-auto sm:max-h-[88dvh] flex flex-col bg-white rounded-t-[28px] sm:rounded-[28px] shadow-float pb-[env(safe-area-inset-bottom)]"
+          class="xs-panel sheet-surface relative w-full sm:max-w-[640px] h-[92dvh] sm:h-auto sm:max-h-[88dvh] flex flex-col rounded-t-[28px] sm:rounded-[28px] pb-[env(safe-area-inset-bottom)]"
         >
           <div class="sm:hidden flex justify-center pt-2.5 shrink-0">
             <span class="w-9 h-1 rounded-full bg-black/[0.12]" />

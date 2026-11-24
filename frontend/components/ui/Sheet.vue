@@ -6,12 +6,12 @@
         class="sheet-root fixed inset-0 z-[90] flex items-end sm:items-center justify-center sm:p-6"
         @pointerdown.self="open = false"
       >
-        <div class="sheet-scrim absolute inset-0 bg-black/25 pointer-events-none" />
+        <div class="sheet-scrim absolute inset-0 bg-black/28 sm:backdrop-blur-[6px] pointer-events-none" />
         <div
           role="dialog"
           aria-modal="true"
           :aria-label="title"
-          class="sheet-panel relative w-full sm:max-w-[520px] max-h-[88dvh] overflow-y-auto bg-white rounded-t-[28px] sm:rounded-[28px] shadow-float pb-[env(safe-area-inset-bottom)]"
+          class="sheet-panel sheet-surface relative w-full sm:max-w-[520px] max-h-[88dvh] overflow-y-auto rounded-t-[28px] sm:rounded-[28px] pb-[env(safe-area-inset-bottom)]"
         >
           <div class="sm:hidden flex justify-center pt-2.5">
             <span class="w-9 h-1 rounded-full bg-black/[0.12]" />
@@ -80,7 +80,7 @@ onUnmounted(() => {
 @media (min-width: 640px) {
   .sheet-enter-from .sheet-panel,
   .sheet-leave-to .sheet-panel {
-    transform: scale(0.95);
+    transform: translateY(12px) scale(0.96);
     opacity: 0;
   }
 }

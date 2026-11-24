@@ -1,8 +1,9 @@
 <template>
-  <div class="relative min-h-[100dvh] bg-void flex flex-col items-center justify-center px-6">
-    <div class="login-enter w-full max-w-[360px]">
+  <div class="relative min-h-[100dvh] bg-void flex flex-col items-center justify-center px-6 overflow-hidden">
+    <div class="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[62%] w-[460px] max-w-[110vw] h-[360px] rounded-full bg-[radial-gradient(closest-side,rgba(255,55,95,0.14),transparent)]" aria-hidden="true" />
+    <div class="login-enter relative w-full max-w-[360px]">
       <div class="flex flex-col items-center mb-10 text-center">
-        <img src="/logo.png" alt="xstream" class="w-[88px] h-[88px] mb-6 rounded-[22px] shadow-card" />
+        <img src="/logo.png" alt="xstream" class="w-[88px] h-[88px] mb-6 rounded-[22px] shadow-[0_20px_48px_-14px_rgba(255,55,95,0.38),0_8px_20px_-8px_rgba(0,0,0,0.28)] transition-transform duration-500 ease-spring hover:scale-[1.04]" />
         <h1 class="text-[34px] font-bold text-foreground leading-tight">xstream</h1>
         <p class="mt-1.5 text-[15px] text-foreground-muted">{{ randomGreeting }}</p>
       </div>

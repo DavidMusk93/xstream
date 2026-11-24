@@ -14,6 +14,8 @@
     <main class="pt-[calc(env(safe-area-inset-top)+88px)] pb-32">
       <div class="max-w-6xl mx-auto px-4 sm:px-6">
         <!-- Search field -->
+        <div class="relative">
+          <div class="pointer-events-none absolute -top-28 left-1/2 -translate-x-1/2 w-[560px] max-w-[110vw] h-[280px] rounded-full bg-[radial-gradient(closest-side,rgba(255,55,95,0.09),transparent)]" aria-hidden="true" />
         <form class="relative" role="search" @submit.prevent="search">
           <svg class="absolute left-5 top-1/2 -translate-y-1/2 text-foreground-muted pointer-events-none" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="7.5" />
@@ -27,7 +29,7 @@
             autocomplete="off"
             spellcheck="false"
             placeholder="Code, keyword, or actress"
-            class="w-full h-14 pl-[52px] pr-[120px] rounded-full bg-white shadow-card text-[17px] text-foreground placeholder:text-foreground-muted/70 outline-none border border-transparent focus:border-accent/40 focus:shadow-[0_0_0_4px_rgba(255,55,95,0.10)] transition-[border-color,box-shadow] duration-200 [&::-webkit-search-cancel-button]:hidden"
+            class="pill-field pl-[52px] pr-[120px] text-[17px] [&::-webkit-search-cancel-button]:hidden"
           />
           <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
             <button
@@ -47,6 +49,7 @@
             </button>
           </div>
         </form>
+        </div>
         <p v-if="errorMsg" class="mt-3 px-5 text-[14px] text-danger">{{ errorMsg }}</p>
 
         <!-- Idle -->

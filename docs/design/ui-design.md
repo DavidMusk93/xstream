@@ -100,6 +100,9 @@ Compose them instead of re-spelling utility strings per page.
 | `.action` | 48px round icon-only primary action (Copy / Play / Like); label lives in `data-tip` |
 | `.eyebrow` | 12px mono muted row: accent index `01`, count, hairline — section kicker |
 | `.field` | Text input, `h-12`, accent focus ring |
+| `.pill-field` | Unified 56px optical glass pill input (Search & Play) with specular rim and crimson focus halo |
+| `.sheet-surface` | Unified crystal modal material (`Sheet` & `XSocialOverlay`) with specular top rim and `sm:backdrop-blur-2xl` |
+| `.list-row` | Unified interactive row (`Files`, `Play`, `CachePanel`) with subtle hover tint and tactile press recoil |
 | `.chip` | 11px semibold badge (HD, Unavailable, sukebei, In Library) |
 | `.spinner` | `currentColor` ring spinner |
 

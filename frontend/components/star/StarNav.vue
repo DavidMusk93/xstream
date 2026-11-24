@@ -8,7 +8,7 @@
         :data-nav="star.code"
         class="shrink-0 h-8 px-3.5 inline-flex items-center rounded-full text-[14px] font-medium transition-all duration-300 ease-spring active:scale-[0.95] active:duration-100"
         :class="activeStar === star.code
-          ? 'bg-foreground text-white shadow-[0_2px_10px_rgba(0,0,0,0.18)] scale-[1.02]'
+          ? 'bg-foreground text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_4px_14px_-4px_rgba(0,0,0,0.28)] scale-[1.02]'
           : 'text-foreground-muted hover:text-foreground hover:bg-black/[0.05] hover:scale-[1.01]'"
         @click.prevent="scrollToStar(star.code)"
       >
