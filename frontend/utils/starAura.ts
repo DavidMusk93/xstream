@@ -1,12 +1,14 @@
 /**
- * starAura — Chromatic Persona & Desire Aura engine ("千人千面").
+ * starAura — Chromatic Persona & Per-Work Style Engine ("千人千面 · 千片千色").
  *
- * Maps each star's traits (age, height, silhouette/cup, career span, catalog depth)
- * plus a deterministic personal harmonic across 10 curated luxury editorial palettes,
- * blended smoothly with a live dominant tint sampled from the active cover.
+ * - 16 curated luxury editorial star palettes (auto-derived from age, height,
+ *   silhouette/cup, career span, or explicitly hand-picked via `profile.style`).
+ * - Per-work chromatic mood (`computeTitleMood`) derived from title keywords,
+ *   studio/series character, and live cover color sampling so sliding across
+ *   works of the same star shifts the entire gallery's atmosphere.
  */
 
-import type { Star, StarProfile } from '~/types/api'
+import type { Star, StarProfile, Title } from '~/types/api'
 
 export interface Rgb {
   r: number
@@ -14,7 +16,19 @@ export interface Rgb {
   b: number
 }
 
+export interface PalettePreset {
+  id: string
+  hue: number
+  sat: number
+  light: number
+  label: string
+  mood: string
+  swatch: string
+}
+
 export interface StarAura {
+  /** Selected palette preset id. */
+  id: string
   /** Primary chromatic signature RGB. */
   primary: Rgb
   /** Deeper shadow/velvet companion RGB. */
@@ -33,7 +47,14 @@ export interface StarAura {
   age: number | null
 }
 
-interface PaletteDef {
+export interface TitleMood {
+  label: string
+  rgb: Rgb
+  shimmer: Rgb
+}
+
+interface RawPalette {
+  id: string
   hue: number
   sat: number
   light: number
@@ -41,17 +62,26 @@ interface PaletteDef {
   mood: string
 }
 
-const PALETTES: PaletteDef[] = [
-  { hue: 350, sat: 82, light: 50, label: 'Crimson Velvet', mood: 'Magnetic intensity & unmistakable desire' },
-  { hue: 326, sat: 68, light: 42, label: 'Velvet Wine', mood: 'Nocturnal depth & seasoned poise' },
-  { hue: 24, sat: 76, light: 48, label: 'Champagne Amber', mood: 'Statuesque golden-hour warmth' },
-  { hue: 342, sat: 80, light: 55, label: 'Blush Rose', mood: 'Fresh pulse & luminous skin warmth' },
-  { hue: 288, sat: 64, light: 48, label: 'Orchid Silk', mood: 'Silk tension & nocturnal allure' },
-  { hue: 8, sat: 80, light: 52, label: 'Coral Sunset', mood: 'Radiant warmth & sunlit magnetism' },
-  { hue: 214, sat: 72, light: 48, label: 'Sapphire Dusk', mood: 'Crystalline poise & cool mystery' },
-  { hue: 164, sat: 70, light: 38, label: 'Emerald Noir', mood: 'Rare jewel-toned elegance' },
-  { hue: 262, sat: 66, light: 50, label: 'Plum Mirage', mood: 'Amethyst depth & quiet seduction' },
-  { hue: 38, sat: 78, light: 46, label: 'Gilded Honey', mood: 'Sunlit nectar & effortless warmth' },
+const RAW_PALETTES: RawPalette[] = [
+  // Desire & Warmth
+  { id: 'crimson-velvet', hue: 350, sat: 84, light: 49, label: 'Crimson Velvet', mood: 'Magnetic intensity & unmistakable desire' },
+  { id: 'ruby-silk', hue: 358, sat: 82, light: 45, label: 'Ruby Silk', mood: 'Deep scarlet sheen & breathless warmth' },
+  { id: 'rosewater-blush', hue: 340, sat: 80, light: 56, label: 'Blush Rose', mood: 'Fresh pulse & luminous skin warmth' },
+  { id: 'coral-sunset', hue: 10, sat: 82, light: 53, label: 'Coral Sunset', mood: 'Radiant warmth & sunlit magnetism' },
+  { id: 'peach-champagne', hue: 24, sat: 78, light: 50, label: 'Champagne Amber', mood: 'Statuesque golden-hour elegance' },
+  { id: 'gilded-honey', hue: 38, sat: 80, light: 46, label: 'Gilded Honey', mood: 'Sunlit nectar & effortless glow' },
+  // Nocturnal & Mature
+  { id: 'velvet-wine', hue: 326, sat: 68, light: 41, label: 'Velvet Wine', mood: 'Nocturnal depth & seasoned poise' },
+  { id: 'obsidian-rose', hue: 334, sat: 54, light: 36, label: 'Obsidian Rose', mood: 'Smoky silk & restrained tension' },
+  { id: 'orchid-silk', hue: 294, sat: 66, light: 48, label: 'Orchid Silk', mood: 'Lavender-rose mystique & allure' },
+  { id: 'plum-mirage', hue: 268, sat: 66, light: 49, label: 'Plum Mirage', mood: 'Amethyst depth & quiet seduction' },
+  { id: 'midnight-indigo', hue: 236, sat: 64, light: 46, label: 'Midnight Indigo', mood: 'Velvet midnight & enigmatic calm' },
+  // Crystalline & Editorial
+  { id: 'sapphire-dusk', hue: 212, sat: 74, light: 47, label: 'Sapphire Dusk', mood: 'Crystalline poise & cool mystery' },
+  { id: 'cerulean-mist', hue: 192, sat: 74, light: 43, label: 'Cerulean Mist', mood: 'Shoreline clarity & airy grace' },
+  { id: 'emerald-noir', hue: 162, sat: 72, light: 37, label: 'Emerald Noir', mood: 'Rare jewel-toned sophistication' },
+  { id: 'jade-silk', hue: 146, sat: 56, light: 40, label: 'Jade Silk', mood: 'Cool porcelain & serene elegance' },
+  { id: 'amber-terracotta', hue: 18, sat: 72, light: 44, label: 'Terracotta Silk', mood: 'Earthy heat & editorial sensuality' },
 ]
 
 const CURRENT_YEAR = new Date().getFullYear()
@@ -109,10 +139,21 @@ export function blendRgb(a: Rgb, b: Rgb, bWeight: number): Rgb {
   }
 }
 
+/** All 16 selectable star chromatic presets (used by the interactive Aura Popover). */
+export const STAR_PALETTES: PalettePreset[] = RAW_PALETTES.map((p) => {
+  const c = hslToRgb(p.hue, p.sat, p.light)
+  return {
+    ...p,
+    swatch: `rgb(${c.r}, ${c.g}, ${c.b})`,
+  }
+})
+
+const PALETTE_BY_ID = new Map(RAW_PALETTES.map((p) => [p.id, p]))
+
 function parseCupRank(cup?: string | null): number {
   if (!cup) return 0
   const ch = cup.trim().toUpperCase().charCodeAt(0)
-  if (ch >= 65 && ch <= 75) return ch - 64 // A=1 .. K=11
+  if (ch >= 65 && ch <= 75) return ch - 64
   return 0
 }
 
@@ -135,11 +176,7 @@ function deriveDebutYear(star: Star): number | null {
 }
 
 /**
- * Compute a star's unmistakable personal chromatic aura ("千人千面").
- *
- * Explicit profile traits (age, height, cup, debut) steer her into the matching
- * emotional archetype; stars without explicit profiles spread organically across
- * all 10 curated palettes weighted by career span & catalog energy.
+ * Compute a star's personal chromatic aura across 16 curated palettes.
  */
 export function computeStarAura(star: Star): StarAura {
   const profile: StarProfile = star.profile ?? {}
@@ -154,32 +191,39 @@ export function computeStarAura(star: Star): StarAura {
   const likedCount = (star.titles ?? []).filter((t) => t.user_liked).length
 
   const seed = hashString(`${star.code}:${star.name}`)
-  const jitter = (seed % 17) - 8
+  const jitter = (seed % 15) - 7
 
-  let chosen: PaletteDef
-  if (height !== null && height >= 166) {
-    // Tall / statuesque -> Champagne Amber or Gilded Honey
-    chosen = seed % 2 === 0 ? PALETTES[2] : PALETTES[9]
+  const explicit = profile.style ? PALETTE_BY_ID.get(profile.style.toLowerCase()) : undefined
+
+  let chosen: RawPalette
+  if (explicit) {
+    chosen = explicit
+  } else if (height !== null && height >= 166) {
+    const pool = [RAW_PALETTES[4], RAW_PALETTES[5], RAW_PALETTES[11], RAW_PALETTES[15]]
+    chosen = pool[seed % pool.length]
   } else if (cupRank >= 6) {
-    // Curvy / high-presence -> Crimson Velvet or Coral Sunset
-    chosen = seed % 2 === 0 ? PALETTES[0] : PALETTES[5]
+    const pool = [RAW_PALETTES[0], RAW_PALETTES[1], RAW_PALETTES[3], RAW_PALETTES[15]]
+    chosen = pool[seed % pool.length]
   } else if (age !== null && age >= 28) {
-    // Mature -> Velvet Wine or Plum Mirage
-    chosen = seed % 2 === 0 ? PALETTES[1] : PALETTES[8]
+    const pool = [RAW_PALETTES[6], RAW_PALETTES[7], RAW_PALETTES[9], RAW_PALETTES[10]]
+    chosen = pool[seed % pool.length]
   } else if (age !== null && age <= 23) {
-    // Youthful -> Blush Rose or Coral Sunset
-    chosen = seed % 2 === 0 ? PALETTES[3] : PALETTES[5]
+    const pool = [RAW_PALETTES[2], RAW_PALETTES[3], RAW_PALETTES[4], RAW_PALETTES[12]]
+    chosen = pool[seed % pool.length]
   } else if (careerYears !== null && careerYears >= 6) {
-    // Veteran catalog -> Velvet Wine, Orchid Silk, Sapphire Dusk, Emerald Noir, Plum Mirage
-    const veteranPool = [PALETTES[1], PALETTES[4], PALETTES[6], PALETTES[7], PALETTES[8]]
-    chosen = veteranPool[seed % veteranPool.length]
+    const pool = [
+      RAW_PALETTES[6], RAW_PALETTES[7], RAW_PALETTES[8], RAW_PALETTES[9],
+      RAW_PALETTES[10], RAW_PALETTES[11], RAW_PALETTES[13],
+    ]
+    chosen = pool[seed % pool.length]
   } else if (careerYears !== null && careerYears <= 2) {
-    // New generation -> Blush Rose, Coral Sunset, Champagne Amber, Gilded Honey
-    const freshPool = [PALETTES[3], PALETTES[5], PALETTES[2], PALETTES[9]]
-    chosen = freshPool[seed % freshPool.length]
+    const pool = [
+      RAW_PALETTES[2], RAW_PALETTES[3], RAW_PALETTES[4], RAW_PALETTES[5],
+      RAW_PALETTES[12], RAW_PALETTES[14],
+    ]
+    chosen = pool[seed % pool.length]
   } else {
-    // Full 10-palette editorial diversity
-    chosen = PALETTES[seed % PALETTES.length]
+    chosen = RAW_PALETTES[seed % RAW_PALETTES.length]
   }
 
   let sat = chosen.sat
@@ -188,12 +232,13 @@ export function computeStarAura(star: Star): StarAura {
   if (likedCount > 0) sat = clamp(sat + Math.min(8, likedCount * 2), 48, 92)
   if (height !== null && height >= 164) light = clamp(light + 2, 36, 58)
 
-  const hue = chosen.hue + jitter
+  const hue = explicit ? chosen.hue : chosen.hue + jitter
   const primary = hslToRgb(hue, sat, light)
   const deep = hslToRgb(hue - 10, clamp(sat - 4, 38, 88), clamp(light - 14, 22, 42))
   const shimmer = hslToRgb(hue + 14, clamp(sat + 6, 55, 96), clamp(light + 22, 66, 82))
 
   return {
+    id: chosen.id,
     primary,
     deep,
     shimmer,
@@ -202,6 +247,52 @@ export function computeStarAura(star: Star): StarAura {
     careerYears,
     debutYear,
     age,
+  }
+}
+
+interface TitleMoodRule {
+  pattern: RegExp
+  label: string
+  hue: number
+  sat: number
+  light: number
+}
+
+const TITLE_MOOD_RULES: TitleMoodRule[] = [
+  { pattern: /温泉|浴衣|旅館|混浴|湯|湯煙|onsen|yukata/i, label: 'Onsen Steam', hue: 26, sat: 76, light: 50 },
+  { pattern: /海|夏|水着|ビキニ|プール|南国|beach|summer|pool|resort/i, label: 'Sunlit Shore', hue: 194, sat: 78, light: 45 },
+  { pattern: /夜|ホテル|密室|深夜|不倫|人妻|禁断|NTR|寝取|affair|night|hotel/i, label: 'Nocturnal Velvet', hue: 324, sat: 70, light: 40 },
+  { pattern: /OL|オフィス|秘書|スーツ|黒スト|パンスト|上司|残業|office|suit/i, label: 'Glass & Silk', hue: 218, sat: 66, light: 46 },
+  { pattern: /純愛|初|デビュー|新人|恋人|甘|イチャ|彼女|debut|first|sweet/i, label: 'Blush Debut', hue: 342, sat: 82, light: 56 },
+  { pattern: /痴女|誘惑|濃密|絶頂|痙攣|汗だく|オイル|oil|passion|seduce/i, label: 'Crimson Heat', hue: 354, sat: 86, light: 48 },
+  { pattern: /制服|学園|家庭教師|先輩|school|uniform/i, label: 'Porcelain Blue', hue: 204, sat: 70, light: 48 },
+  { pattern: /ランジェリー|下着|レース|ドレス|lingerie|lace|silk/i, label: 'Lace Orchid', hue: 292, sat: 68, light: 48 },
+  { pattern: /拘束|調教|M男|女王|SM|bondage/i, label: 'Amethyst Tension', hue: 266, sat: 68, light: 46 },
+  { pattern: /4K|VR|高画質|BEST|ベスト|完全版/i, label: 'Crystal 4K', hue: 168, sat: 68, light: 40 },
+]
+
+/**
+ * Derive a distinct chromatic mood for an individual work from its title & code.
+ */
+export function computeTitleMood(title: Title | null | undefined): TitleMood | null {
+  if (!title) return null
+  const text = `${title.title ?? ''} ${title.resolution ?? ''}`
+  for (const rule of TITLE_MOOD_RULES) {
+    if (rule.pattern.test(text)) {
+      return {
+        label: rule.label,
+        rgb: hslToRgb(rule.hue, rule.sat, rule.light),
+        shimmer: hslToRgb(rule.hue + 14, clamp(rule.sat + 6, 55, 96), clamp(rule.light + 22, 66, 82)),
+      }
+    }
+  }
+  // Fallback: gentle work-specific harmonic from code so every work shifts subtly
+  const seed = hashString(title.code)
+  const fallbackPalette = RAW_PALETTES[seed % RAW_PALETTES.length]
+  return {
+    label: fallbackPalette.label,
+    rgb: hslToRgb(fallbackPalette.hue, fallbackPalette.sat, fallbackPalette.light),
+    shimmer: hslToRgb(fallbackPalette.hue + 14, clamp(fallbackPalette.sat + 6, 55, 96), clamp(fallbackPalette.light + 22, 66, 82)),
   }
 }
 

@@ -53,18 +53,48 @@ def _save_config(config: dict[str, Any]) -> None:
 
 # Every DB/config write path calls invalidate_stars_cache(); the TTL is only a
 # safety net for writes that bypass it (e.g. out-of-process scripts).
-_stars_cache: dict[str, Any] = {"body": None, "etag": None, "ts": 0.0, "gen": 0}
-CACHE_TTL = 300
+_stars_cache: dict[str, Any] = {"body": None, "etag": None, "ts": 0.0, "gen": 0, "dirty": True}
+CACHE_TTL = 1800
 _build_lock = asyncio.Lock()
+_refresh_task: asyncio.Task[None] | None = None
 
 
 def invalidate_stars_cache(*, reset_covers: bool = True) -> None:
     global _cover_file_index_ts
-    _stars_cache["body"] = None
+    _stars_cache["dirty"] = True
     _stars_cache["gen"] += 1
     if reset_covers:
         with _cover_file_index_lock:
             _cover_file_index_ts = 0.0
+    _schedule_background_refresh()
+
+
+def _schedule_background_refresh() -> None:
+    """Kick off a deduplicated background rebuild so the next GET /api/stars never blocks."""
+    global _refresh_task
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if _refresh_task is not None and not _refresh_task.done():
+        return
+
+    async def _bg() -> None:
+        try:
+            await _rebuild_stars_cache()
+        except Exception as exc:
+            log.warning(f"Background stars cache refresh failed: {exc}")
+
+    _refresh_task = loop.create_task(_bg())
+
+
+async def prewarm_stars_cache() -> None:
+    """Warm /api/stars cache on startup so the first visitor never pays a cold miss."""
+    try:
+        await _rebuild_stars_cache()
+        log.info("Stars API cache prewarmed")
+    except Exception as exc:
+        log.warning(f"Stars cache prewarm failed: {exc}")
 
 
 # ── Response builder ────────────────────────────────────────────────
@@ -265,23 +295,37 @@ def _encode_stars_response() -> tuple[bytes, str]:
 
 
 def _cache_fresh() -> bool:
-    return _stars_cache["body"] is not None and (time.time() - _stars_cache["ts"]) < CACHE_TTL
+    return (
+        _stars_cache["body"] is not None
+        and not _stars_cache["dirty"]
+        and (time.time() - _stars_cache["ts"]) < CACHE_TTL
+    )
 
 
-async def _get_stars_payload() -> tuple[bytes, str]:
-    """Return (body, etag), rebuilding off the event loop at most once at a time."""
-    if _cache_fresh():
-        return _stars_cache["body"], _stars_cache["etag"]
+async def _rebuild_stars_cache() -> tuple[bytes, str]:
     async with _build_lock:
         if _cache_fresh():
             return _stars_cache["body"], _stars_cache["etag"]
         gen = _stars_cache["gen"]
         body, etag = await asyncio.to_thread(_encode_stars_response)
-        # An invalidation during the build means this snapshot may be stale:
-        # serve it once, but do not cache it.
         if _stars_cache["gen"] == gen:
-            _stars_cache.update(body=body, etag=etag, ts=time.time())
+            _stars_cache.update(body=body, etag=etag, ts=time.time(), dirty=False)
+        else:
+            # Another write happened mid-build; store snapshot for SWR and queue a follow-up.
+            _stars_cache.update(body=body, etag=etag, ts=time.time(), dirty=True)
         return body, etag
+
+
+async def _get_stars_payload() -> tuple[bytes, str]:
+    """Return (body, etag) with Stale-While-Revalidate so TTL expiry never blocks users."""
+    if _cache_fresh():
+        return _stars_cache["body"], _stars_cache["etag"]
+    # Stale-While-Revalidate: if TTL expired (not an explicit write invalidation) and we
+    # already have a cached snapshot, serve it instantly (~1ms) and refresh in the background.
+    if _stars_cache["body"] is not None and not _stars_cache["dirty"]:
+        _schedule_background_refresh()
+        return _stars_cache["body"], _stars_cache["etag"]
+    return await _rebuild_stars_cache()
 
 
 @router.get("")
@@ -600,6 +644,7 @@ class StarProfileRequest(BaseModel):
     cup: str | None = None
     measurements: str | None = None
     debut_year: int | None = None
+    style: str | None = None
     bio: str | None = None
 
 
@@ -638,6 +683,8 @@ async def update_star_profile(star_code: str, req: StarProfileRequest) -> dict[s
         cleaned["measurements"] = req.measurements.strip()[:48]
     if req.debut_year is not None and 1995 <= req.debut_year <= 2035:
         cleaned["debut_year"] = req.debut_year
+    if req.style and req.style.strip():
+        cleaned["style"] = req.style.strip().lower()[:32]
     if req.bio and req.bio.strip():
         cleaned["bio"] = req.bio.strip()[:160]
 

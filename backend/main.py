@@ -161,6 +161,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if bridge is not None:
         bridge.start()
 
+    # Prewarm /api/stars cache in the background so the first page open hits RAM (~1ms)
+    asyncio.create_task(stars.prewarm_stars_cache())
+
     yield
 
     # Shutdown

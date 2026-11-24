@@ -120,6 +120,8 @@ export interface StarProfile {
   cup?: string | null
   measurements?: string | null
   debut_year?: number | null
+  /** Optional explicit palette id override (e.g. 'crimson-velvet', 'sapphire-dusk'). */
+  style?: string | null
   bio?: string | null
 }
 

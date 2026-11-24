@@ -52,7 +52,36 @@
                   </button>
                 </div>
 
-                <div v-if="!editingProfile" class="mt-3 grid grid-cols-2 gap-2 text-[12px]">
+                <div v-if="!editingProfile" class="mt-3 space-y-3 text-[12px]">
+                  <!-- 16-palette one-click chromatic style selector -->
+                  <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                      <span class="text-[10px] uppercase tracking-wider text-foreground-muted/70">Palette (16)</span>
+                      <button
+                        v-if="localProfile.style"
+                        type="button"
+                        class="text-[11px] text-foreground-muted hover:text-foreground transition-colors"
+                        @click="selectPalette(null)"
+                      >
+                        Reset Auto
+                      </button>
+                    </div>
+                    <div class="grid grid-cols-8 gap-1.5">
+                      <button
+                        v-for="p in STAR_PALETTES"
+                        :key="p.id"
+                        type="button"
+                        class="w-6 h-6 rounded-full transition-transform duration-200 ease-spring hover:scale-115 active:scale-95"
+                        :class="starAura.id === p.id ? 'ring-2 ring-offset-2 ring-foreground scale-110' : 'ring-1 ring-black/10'"
+                        :style="{ backgroundColor: p.swatch }"
+                        :title="`${p.label} — ${p.mood}`"
+                        :aria-label="p.label"
+                        @click="selectPalette(p.id)"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="grid grid-cols-2 gap-2">
                   <div class="rounded-xl bg-black/[0.03] px-2.5 py-2">
                     <p class="text-[10px] uppercase tracking-wider text-foreground-muted/70">Career</p>
                     <p class="mt-0.5 font-medium text-foreground tabular-nums">
@@ -76,6 +105,7 @@
                     <p class="mt-0.5 font-medium text-foreground tabular-nums truncate">
                       {{ [localProfile.cup ? `${localProfile.cup} cup` : '', localProfile.measurements || ''].filter(Boolean).join(' · ') || 'Not set' }}
                     </p>
+                  </div>
                   </div>
                 </div>
 
@@ -260,6 +290,17 @@
                   <div class="flex items-center flex-wrap gap-x-2 gap-y-1 text-[13px] font-medium text-foreground-muted tabular-nums">
                     <span v-if="activeTitle.date">{{ fmtDate(activeTitle.date) }}</span>
                     <span v-if="activeIsHd" class="chip bg-black/[0.06] text-foreground">HD</span>
+                    <span
+                      v-if="activeTitleMood"
+                      class="chip transition-colors duration-500"
+                      :style="{
+                        backgroundColor: `rgba(${auraRgb}, 0.11)`,
+                        color: `rgb(${auraDeepRgb})`,
+                      }"
+                    >
+                      <span class="w-1.5 h-1.5 rounded-full" :style="{ backgroundColor: `rgb(${auraRgb})` }" />
+                      {{ activeTitleMood.label }}
+                    </span>
                     <span v-if="activeTitle.magnet_status === 'dead'" class="chip bg-danger/10 text-danger">Unavailable</span>
                   </div>
                   <h3 class="mt-2 text-[34px] sm:text-[48px] lg:text-[56px] font-bold text-foreground leading-[1] tracking-[-0.03em]">
@@ -404,7 +445,16 @@
 <script setup lang="ts">
 import type { Star, StarProfile, Title } from '~/types/api'
 import { logError } from '~/composables/useLogger'
-import { blendRgb, computeStarAura, getCachedCoverTint, rgbCss, sampleCoverTint, type Rgb } from '~/utils/starAura'
+import {
+  STAR_PALETTES,
+  blendRgb,
+  computeStarAura,
+  computeTitleMood,
+  getCachedCoverTint,
+  rgbCss,
+  sampleCoverTint,
+  type Rgb,
+} from '~/utils/starAura'
 import {
   isThumbReady as isGlobalThumbReady,
   markThumbReady as markGlobalThumbReady,
@@ -454,14 +504,25 @@ watch(
 const starAura = computed(() =>
   computeStarAura({ ...props.star, profile: localProfile.value }),
 )
-const blendedPrimary = computed(() =>
-  activeCoverTint.value
-    ? blendRgb(starAura.value.primary, activeCoverTint.value, 0.36)
-    : starAura.value.primary,
+const activeTitleMood = computed(() =>
+  computeTitleMood(props.star.titles?.[activeIndex.value]),
 )
+const blendedPrimary = computed(() => {
+  // Blend Star Persona + Work Style Mood + Live Cover Tint ("千人千面 · 千片千色")
+  const base = activeTitleMood.value
+    ? blendRgb(starAura.value.primary, activeTitleMood.value.rgb, 0.34)
+    : starAura.value.primary
+  return activeCoverTint.value ? blendRgb(base, activeCoverTint.value, 0.32) : base
+})
 const auraRgb = computed(() => rgbCss(blendedPrimary.value))
 const auraDeepRgb = computed(() => rgbCss(starAura.value.deep))
-const auraShimmerRgb = computed(() => rgbCss(starAura.value.shimmer))
+const auraShimmerRgb = computed(() =>
+  rgbCss(
+    activeTitleMood.value
+      ? blendRgb(starAura.value.shimmer, activeTitleMood.value.shimmer, 0.45)
+      : starAura.value.shimmer,
+  ),
+)
 const auraSectionStyle = computed(() => ({
   '--aura-rgb': auraRgb.value,
   '--aura-deep-rgb': auraDeepRgb.value,
@@ -500,6 +561,21 @@ function toggleAuraPanel() {
   }
 }
 
+async function selectPalette(paletteId: string | null) {
+  const prev = localProfile.value.style ?? null
+  localProfile.value = { ...localProfile.value, style: paletteId }
+  try {
+    const res = await $fetch<{ code: string; profile: StarProfile }>(
+      `/api/stars/${encodeURIComponent(props.star.code)}/profile`,
+      { method: 'PATCH', body: { ...localProfile.value, style: paletteId } },
+    )
+    localProfile.value = { ...(res.profile ?? localProfile.value) }
+  } catch (e: any) {
+    localProfile.value = { ...localProfile.value, style: prev }
+    logError('star', `selectPalette ${props.star.code} failed: ${e?.message || e}`)
+  }
+}
+
 async function saveProfile() {
   if (savingProfile.value) return
   savingProfile.value = true
@@ -510,6 +586,7 @@ async function saveProfile() {
       cup: profileForm.cup?.trim().toUpperCase() || null,
       measurements: profileForm.measurements?.trim() || null,
       debut_year: profileForm.debut_year || null,
+      style: localProfile.value.style ?? null,
     }
     const res = await $fetch<{ code: string; profile: StarProfile }>(
       `/api/stars/${encodeURIComponent(props.star.code)}/profile`,
@@ -966,11 +1043,21 @@ async function onHeroSlideLoad(t: Title, e: Event) {
   }
   markHeroCoverReady(t.code)
   heroReadyTick.value++
-  const sampled = sampleCoverTint(t.code, img)
-  if (sampled && activeTitle.value?.code === t.code) {
-    activeCoverTint.value = sampled
+  if (activeTitle.value?.code === t.code) {
+    finishHeroPaint(t)
+    // Defer offscreen canvas color sampling until idle so it never blocks first paint.
+    const sample = () => {
+      const sampled = sampleCoverTint(t.code, img)
+      if (sampled && activeTitle.value?.code === t.code) {
+        activeCoverTint.value = sampled
+      }
+    }
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      ;(window as any).requestIdleCallback(sample, { timeout: 300 })
+    } else {
+      setTimeout(sample, 32)
+    }
   }
-  if (activeTitle.value?.code === t.code) finishHeroPaint(t)
 }
 
 function pickThumb(idx: number) {
