@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -17,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Request, Depends, Path
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from typing import Any
+import xstream_core
 
 from backend.routers.auth import require_auth
 from core import get_logger
@@ -56,11 +58,13 @@ CACHE_TTL = 300
 _build_lock = asyncio.Lock()
 
 
-def invalidate_stars_cache() -> None:
+def invalidate_stars_cache(*, reset_covers: bool = True) -> None:
     global _cover_file_index_ts
     _stars_cache["body"] = None
     _stars_cache["gen"] += 1
-    _cover_file_index_ts = 0.0
+    if reset_covers:
+        with _cover_file_index_lock:
+            _cover_file_index_ts = 0.0
 
 
 # ── Response builder ────────────────────────────────────────────────
@@ -86,43 +90,26 @@ def _rewrite_x_media_urls(x_profiles: dict[str, Any]) -> None:
 
 _cover_file_index: dict[str, tuple[bool, bool, bool]] = {}
 _cover_file_index_ts: float = 0.0
+_cover_file_index_lock = threading.Lock()
 COVER_FILE_INDEX_TTL = 120.0
 
 
 def _scan_cover_files(codes: set[str]) -> dict[str, tuple[bool, bool, bool]]:
     """Map each title code -> (has_full, has_thumb, has_mid) from images/titles/.
 
-    Lets /api/stars emit direct static cover URLs (served by Caddy with
-    long-lived cache headers) instead of forcing every client through the
-    /api/cover 307 redirect hop. One scandir pass is cached briefly so
-    repeated /api/stars rebuilds (ETag miss) do not list ~2k dirs each time.
+    Backed by ``xstream_core.py_scan_cover_files`` (Rust) and guarded by a lock
+    so concurrent rebuilds never race on the cached index.
     """
     global _cover_file_index, _cover_file_index_ts
     titles_dir = os.path.join(IMAGES_DIR, "titles")
     now = time.time()
-    if not _cover_file_index or now - _cover_file_index_ts >= COVER_FILE_INDEX_TTL:
-        index: dict[str, tuple[bool, bool, bool]] = {}
-        try:
-            with os.scandir(titles_dir) as it:
-                for entry in it:
-                    if not entry.is_dir():
-                        continue
-                    code_dir = entry.name
-                    try:
-                        files = {f.name for f in os.scandir(entry.path)}
-                    except OSError:
-                        continue
-                    index[code_dir.upper()] = (
-                        f"{code_dir}.jpg" in files,
-                        f"{code_dir}_thumb.jpg" in files,
-                        f"{code_dir}_mid.jpg" in files,
-                    )
-        except OSError:
-            index = {}
-        _cover_file_index = index
-        _cover_file_index_ts = now
+    with _cover_file_index_lock:
+        if not _cover_file_index or now - _cover_file_index_ts >= COVER_FILE_INDEX_TTL:
+            _cover_file_index = xstream_core.py_scan_cover_files(titles_dir)
+            _cover_file_index_ts = now
+        snapshot = _cover_file_index
     return {
-        c.upper(): _cover_file_index.get(c.upper(), (False, False, False))
+        c.upper(): snapshot.get(c.upper(), (False, False, False))
         for c in codes
     }
 
@@ -544,7 +531,7 @@ async def like_title(request: LikeRequest, req: Request) -> LikeResponse:
     magnet, magnet_hash = row
 
     await db_write(_set_title_liked, code, liked)
-    invalidate_stars_cache()
+    invalidate_stars_cache(reset_covers=False)
 
     engine = req.app.state.engine
     if magnet_hash:

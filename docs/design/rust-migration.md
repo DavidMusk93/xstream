@@ -46,6 +46,7 @@ Phase 1 (Done)  : xstream_core (PyO3):
 Phase 2 (WIP)   : Concurrent I/O & PG hardening:
                   - [x] Replace DuckDB-era serial DBWriteQueue with bounded-concurrency pool + PG `pg_advisory_xact_lock` per-star sync
                   - [x] EventBus pub/sub + slow-client coalescing -> `rust/xstream_core/src/event_bus.rs`
+                  - [x] Cover filesystem index scanner (`_scan_cover_files`) -> `rust/xstream_core/src/covers.rs` + thread-safe cache
                   - [ ] sync/magnet_checker worker (Rust/axum + sqlx + PG advisory locks)
 Phase 3 (Eval)  : TorrentEngine + video_stream (keep libtorrent via C++ cxx FFI or evaluate librqbit against all 15+ BT tests)
 ```

@@ -1,8 +1,12 @@
 //! Thin `PyO3` bindings exposing [`PieceStateStore`] to Python.
 
+use std::collections::HashMap;
+use std::path::Path;
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+use crate::covers;
 use crate::event_bus::{EventBus, SubscriberId};
 use crate::extractors;
 use crate::filters::{self, FilterInput};
@@ -285,6 +289,15 @@ impl PyEventBus {
     }
 }
 
+/// Scans `titles_dir` and returns `{UPPER_CODE: (has_full, has_thumb, has_mid)}`.
+#[pyfunction]
+fn py_scan_cover_files(titles_dir: &str) -> HashMap<String, (bool, bool, bool)> {
+    covers::scan_cover_files(Path::new(titles_dir))
+        .into_iter()
+        .map(|(code, p)| (code, (p.has_full, p.has_thumb, p.has_mid)))
+        .collect()
+}
+
 /// Native Rust extension module for xstream.
 #[pymodule]
 fn xstream_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -299,5 +312,6 @@ fn xstream_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_parse_resolution_tag, m)?)?;
     m.add_function(wrap_pyfunction!(py_size_to_gb, m)?)?;
     m.add_function(wrap_pyfunction!(py_parse_sukebei_rss, m)?)?;
+    m.add_function(wrap_pyfunction!(py_scan_cover_files, m)?)?;
     Ok(())
 }

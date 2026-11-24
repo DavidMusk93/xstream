@@ -20,6 +20,7 @@
 | `scrapers/v2/extractors.py::SukebeiRssExtractor.extract` | `extractors::parse_sukebei_rss(&str, &[&str]) -> Result<Vec<RssWork>, ParseRssError>` |
 | `scrapers/v2/extractors.py` magnet/size/resolution helpers | `extractors::{unescape_magnet, is_valid_magnet, is_ltx, is_hd_source, parse_resolution_tag, size_to_gb}` |
 | `core/events.py::EventBus` | `event_bus::EventBus` (`subscribe`, `unsubscribe`, `publish`, `try_recv`, `drain`) |
+| `backend/routers/stars.py::_scan_cover_files` | `covers::scan_cover_files(&Path) -> HashMap<String, CoverPresence>` |
 
 ## Test Mapping
 
