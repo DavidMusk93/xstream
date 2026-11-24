@@ -58,7 +58,10 @@
           <div
             ref="heroFrameRef"
             class="hero-frame relative w-full aspect-[3/2] bg-fill overflow-hidden touch-pan-y select-none"
-            :class="{ 'hero-dragging-h': dragging }"
+            :class="{
+              'hero-dragging-h': dragging,
+              'sm:cursor-grab sm:active:cursor-grabbing': total > 1,
+            }"
             @pointerdown="onHeroPointerDown"
             @pointermove="(e) => onPointerMove(e, clampDrag)"
             @pointerup="onPointerUp"
@@ -504,9 +507,7 @@ function showControlsBriefly() {
 }
 
 function clampDrag(dx: number): number {
-  if (activeIndex.value <= 0 && dx > 0) return 0
-  if (activeIndex.value >= total.value - 1 && dx < 0) return 0
-  return dx
+  return rubberBandDrag(dx, activeIndex.value <= 0, activeIndex.value >= total.value - 1)
 }
 
 const DRAG_PREFETCH_PX = 28
@@ -591,6 +592,7 @@ const {
   canStep: () => total.value > 1 && !stepAnimLock.value,
   canDrag: () => total.value > 1,
   stageWidth: () => heroStageRef.value?.clientWidth ?? 360,
+  clampDx: clampDrag,
   onStep: (delta) => step(delta),
   onShowControls: showControlsBriefly,
   setDragTranslate: setHeroDragTranslate,

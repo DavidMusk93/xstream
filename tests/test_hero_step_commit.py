@@ -30,14 +30,37 @@ const cases = [
   [5, 200, null],
   [-50, 300, 1],
   [80, 400, -1],
-  [22, 40, -1],  // fast flick, short travel
+  [22, 40, -1],   // fast flick, short travel
   [22, 400, null], // slow drift — jitter
+  [-360, 80, 1],  // fast long swipe must still commit strictly 1 slide
+  [360, 80, -1],  // fast long reverse swipe must still commit strictly -1 slide
 ];
 for (const [dx, dt, want] of cases) {
   const got = swipeCommitDirection(dx, dt, w);
   const ok = (got === want) || (got == null && want == null);
   if (!ok) { console.error(JSON.stringify({dx, dt, got, want})); process.exit(1); }
 }
+console.log('ok');
+""")
+    assert out == "ok"
+
+
+def test_wheel_inertia_lockout_and_rubber_band():
+    out = _run_ts(r"""
+import { isNewWheelGesture, rubberBandDrag } from './utils/heroStepCommit.ts';
+// Decaying macOS inertia tail in same direction must NOT unlock
+if (isNewWheelGesture(20, 30, true, 120)) process.exit(1);
+if (isNewWheelGesture(10, 15, true, 400)) process.exit(1);
+// Deliberate re-acceleration spike after cooldown DOES unlock
+if (!isNewWheelGesture(45, 8, true, 350)) process.exit(1);
+// Direction reversal after 160ms DOES unlock
+if (!isNewWheelGesture(12, 20, false, 180)) process.exit(1);
+// Tiny reverse jitter too soon does NOT unlock
+if (isNewWheelGesture(4, 20, false, 180)) process.exit(1);
+// Rubber-band damps at bounds, 1:1 in middle
+if (rubberBandDrag(100, false, false) !== 100) process.exit(1);
+const damped = rubberBandDrag(100, true, false);
+if (!(damped > 0 && damped < 25)) process.exit(1);
 console.log('ok');
 """)
     assert out == "ok"
