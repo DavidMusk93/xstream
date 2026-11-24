@@ -24,6 +24,7 @@ System architecture, module design, and algorithm specifications.
 | [ui-design.md](design/ui-design.md) | Frontend design spec |
 | [ostore-integration.md](design/ostore-integration.md) | ostore object storage (Rust) + play-direct: arbitrary magnet playback, /files network drive, .adhoc GC protection |
 | [file-vault.md](design/file-vault.md) | Client-side AES encryption for /files: password hash in PG, ciphertext on ostore |
+| [rust-migration.md](design/rust-migration.md) | Incremental Rust migration plan (strangler-fig phases, concurrency diagnosis, BeautifulRust workflow) |
 
 ## `docs/analysis/` — Root Cause Analysis & Investigations
 

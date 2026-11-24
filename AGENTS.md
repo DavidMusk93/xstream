@@ -121,6 +121,7 @@ production; the frontend needs `npm run build` + restart.
 ## 6. Code Style
 
 - **Every Python file starts with** `from __future__ import annotations`; 3.11+ annotation syntax (`str | None`).
+- **Rust code (incremental migration)**: follow the vendored [BeautifulRust](https://github.com/morganlinton/BeautifulRust) Agent Skills in `.agents/skills/rust-{best-practices,review,port}/` and enforce `rust/clippy.toml` + `rust/lints.toml` (`cargo clippy --all-targets --all-features -- -D warnings`). Always port original tests first (`rust-port`). See `docs/design/rust-migration.md`.
 - Names in English; **comments and docstrings in English**; f-strings.
 - SQL: **never** concatenate user input; `%s` placeholders; column identifiers whitelist-validated; JSONB via `psycopg.types.json.Jsonb`.
 - Match the surrounding file's conventions; no unsolicited comments/docs files.
@@ -172,6 +173,7 @@ Full index with summaries: `docs/README.md`. Most-used:
 | Search page + follow-a-star (cover proxy, URL parsing) | `docs/design/search-and-follow.md` |
 | SSE push architecture | `docs/design/sse-push-architecture.md` |
 | ostore + play-direct (arbitrary magnet, /files drive) | `docs/design/ostore-integration.md` |
+| Incremental Rust migration (BeautifulRust skills & lints) | `docs/design/rust-migration.md` |
 | UI design spec (apple-design) | `docs/design/ui-design.md` |
 | Ops runbook (Caddy, ports, logs, commands) | `docs/ops/runbook.md` |
 | Process lifecycle (systemd) | `docs/ops/process-lifecycle.md` |
