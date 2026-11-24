@@ -295,6 +295,7 @@
 
 <script setup lang="ts">
 import type { Star, Title } from '~/types/api'
+import { logError } from '~/composables/useLogger'
 import {
   isThumbReady as isGlobalThumbReady,
   markThumbReady as markGlobalThumbReady,
@@ -325,7 +326,6 @@ const emit = defineEmits<{
 const { track } = useTrack()
 const { add: addLog } = useEventLog()
 const { likeTitle, deleteStar } = useApi()
-const { error: logError } = useLogger()
 
 const id = computed(() => props.star.code.toLowerCase())
 const activeIndex = ref(0)
