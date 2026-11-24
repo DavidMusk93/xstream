@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 from typing import Protocol
 
 from selectolax.parser import HTMLParser
+import xstream_core
 
 from core import get_logger
 from scrapers.v2.schemas import VideoItem, MagnetCandidate, StarLink
@@ -55,24 +56,13 @@ _MAGNET_RE = re.compile(r"^magnet:\?xt=urn:btih:[0-9a-fA-F]{40}([?&]|$)")
 
 
 def _unescape_magnet(magnet_url: str) -> str:
-    """HTML-unescape a magnet URI, handling double-escaped sources.
-
-    ijavtorrent embeds magnets double-escaped (`&amp;amp;dn=`); a single
-    unescape pass leaves a broken `&amp;` that turns every parameter into
-    `amp;dn`/`amp;tr`, silently dropping the display name and all trackers.
-    Unescape until stable (bounded) so the URI is fully decoded.
-    """
-    for _ in range(3):
-        unescaped = htmlmod.unescape(magnet_url)
-        if unescaped == magnet_url:
-            break
-        magnet_url = unescaped
-    return magnet_url
+    """HTML-unescape a magnet URI, handling double-escaped sources (Rust-backed)."""
+    return xstream_core.py_unescape_magnet(magnet_url)
 
 
 def _is_valid_magnet(magnet_url: str) -> bool:
     """Sanity check: btih v1 magnet with a 40-hex-char hash, no entities left."""
-    return bool(_MAGNET_RE.match(magnet_url)) and "&amp;" not in magnet_url
+    return xstream_core.py_is_valid_magnet(magnet_url)
 
 
 def _extract_resolution(magnet_url: str) -> str:
@@ -98,16 +88,12 @@ _LTX_RE = re.compile(r"(?:\[LTX[^\]]*\]|\bLTX\b)", re.IGNORECASE)
 
 def _is_ltx(text: str) -> bool:
     """Return True if a magnet dn or torrent title is an LTX mosaic-removal release."""
-    return bool(text and _LTX_RE.search(text))
+    return xstream_core.py_is_ltx(text or "")
 
 
 def _is_hd_source(raw_text: str, dn_or_title: str = "") -> bool:
     """Return True if a magnet row or torrent title is from the HD release group."""
-    raw_l = raw_text.lower()
-    dn_l = dn_or_title.lstrip().lower()
-    if any(m in raw_l or m in dn_l for m in _HD_SOURCE_MARKERS):
-        return True
-    return dn_l.startswith(_HD_UPLOADER_PREFIXES)
+    return xstream_core.py_is_hd_source(raw_text or "", dn_or_title or "")
 
 
 class IJavTorrentExtractor:
@@ -417,40 +403,12 @@ def _build_magnet(info_hash: str, title: str) -> str:
 
 def _parse_resolution_tag(title: str) -> str:
     """Map resolution hints in a torrent title to the vocabulary _score_magnet knows."""
-    upper = title.upper()
-    # VR tags before plain 4K: "[4KVR]" contains "4K" as a substring
-    if "8KVR" in upper:
-        return "[8KVR]"
-    if "4KVR" in upper:
-        return "[4KVR]"
-    if "4K" in upper or "2160P" in upper:
-        return "[4K]"
-    if "[FHDC]" in upper:
-        return "[FHDC]"
-    if "[FHD]" in upper:
-        return "[FHD]"
-    if "1080P" in upper:
-        return "1080p"
-    if "[HD]" in upper:
-        return "[HD]"
-    if "720P" in upper:
-        return "720p"
-    return ""
+    return xstream_core.py_parse_resolution_tag(title or "")
 
 
 def _size_to_gb(size: str) -> str:
     """Convert nyaa size strings like '3.6 GiB' / '800.0 MiB' to 'X.XGB'."""
-    m = re.match(r"([0-9.]+)\s*(GiB|MiB|TiB|GB|MB)", size.strip(), re.I)
-    if not m:
-        return ""
-    value = float(m.group(1))
-    unit = m.group(2).lower()
-    if unit == "tib":
-        value *= 1024
-    elif unit == "mib":
-        value /= 1024
-    # GiB vs GB differ by ~7%; irrelevant for scoring, keep the nominal value
-    return f"{value:.1f}GB"
+    return xstream_core.py_size_to_gb(size or "")
 
 
 def _pubdate_to_release(pubdate: str) -> str | None:
@@ -474,69 +432,34 @@ class SukebeiRssExtractor:
     SKIP_CODE_PREFIXES = IJavTorrentExtractor.SKIP_CODE_PREFIXES
 
     def extract(self, rss_xml: str, star_names: set[str] | None = None) -> list[VideoItem]:
-        root = ET.fromstring(rss_xml)
-        names_ci = {n.lower() for n in (star_names or set()) if n}
-
-        grouped: dict[str, dict] = {}
-        for item in root.iter("item"):
-            title = item.findtext("title") or ""
-            if _is_ltx(title):
-                continue
-            title_lower = title.lower()
-            if names_ci and not any(n in title_lower for n in names_ci):
-                continue
-            m = _CODE_RE.search(title)
-            if not m:
-                continue
-            code = m.group(1).upper()
-            if code.startswith(self.SKIP_CODE_PREFIXES):
-                continue
-
-            info_hash = item.findtext(f"{{{NYAA_NS}}}infoHash") or ""
-            if not re.fullmatch(r"[0-9a-fA-F]{40}", info_hash):
-                continue
-
-            seed = int(item.findtext(f"{{{NYAA_NS}}}seeders") or 0)
-            leech = int(item.findtext(f"{{{NYAA_NS}}}leechers") or 0)
-            downloads = int(item.findtext(f"{{{NYAA_NS}}}downloads") or 0)
-            size = _size_to_gb(item.findtext(f"{{{NYAA_NS}}}size") or "")
-            resolution = _parse_resolution_tag(title)
-            release = _pubdate_to_release(item.findtext("pubDate") or "")
-            # Same HD-source rule as the ijavtorrent extractor: hhd800/4k688
-            # and "+++ [FHD]"/"+++ [FHDC]"/"+++ [LTX]" uploads on sukebei.
-            is_hhd800 = _is_hd_source(title, title)
-
-            candidate = MagnetCandidate(
-                magnet=_build_magnet(info_hash, title),
-                resolution=resolution,
-                size=size,
-                seed=seed,
-                leech=leech,
-                is_hhd800=is_hhd800,
+        try:
+            works = xstream_core.py_parse_sukebei_rss(
+                rss_xml, list(star_names or ())
             )
-
-            entry = grouped.setdefault(
-                code,
-                {"candidates": [], "downloads": 0, "release": None, "title": title},
-            )
-            entry["candidates"].append(candidate)
-            entry["downloads"] = max(entry["downloads"], downloads)
-            if release and (entry["release"] is None or release > entry["release"]):
-                entry["release"] = release
+        except ValueError as exc:
+            # Preserve ElementTree.ParseError semantics for callers/tests.
+            raise ET.ParseError(str(exc)) from exc
 
         items: list[VideoItem] = []
-        for code, entry in grouped.items():
-            candidates = entry["candidates"]
-            # Strip the code and leading [tag] prefixes for a readable work title
-            work_title = _CODE_RE.sub("", entry["title"], count=1).strip()
-            work_title = re.sub(r"^(\[[^\]]*\]\s*)+", "", work_title).strip()
+        for code, work_title, release_date, likes, raw_magnets in works:
+            candidates = [
+                MagnetCandidate(
+                    magnet=mag,
+                    resolution=res,
+                    size=size,
+                    seed=seed,
+                    leech=leech,
+                    is_hhd800=is_hhd800,
+                )
+                for mag, res, size, seed, leech, is_hhd800 in raw_magnets
+            ]
             items.append(
                 VideoItem(
                     code=code,
                     title=work_title,
-                    release_date=entry["release"],
+                    release_date=release_date,
                     views=None,
-                    likes=entry["downloads"] or None,
+                    likes=likes,
                     cover_url=None,
                     star_count=0,
                     magnets=candidates,

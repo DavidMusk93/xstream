@@ -39,10 +39,10 @@ Never rewrite the whole backend in one shot. Use the **strangler-fig** pattern â
 
 ```text
 Phase 0 (Done)  : Vendor BeautifulRust skills (.agents/skills/rust-*) + lints (rust/clippy.toml, rust/lints.toml)
-Phase 1 (WIP)   : xstream_core (PyO3):
+Phase 1 (Done)  : xstream_core (PyO3):
                   - [x] PieceStateTracker -> rust/xstream_core/src/piece_tracker.rs
                   - [x] scrapers/v2/filters.py + _score_magnet -> rust/xstream_core/src/{filters,scoring}.rs
-                  - [ ] scrapers/v2/extractors.py
+                  - [x] scrapers/v2/extractors.py (Sukebei RSS + magnet helpers) -> rust/xstream_core/src/extractors.rs
 Phase 2 (axum)  : EventBus /api/events SSE hub + ostore_bridge + sync/magnet_checker worker (sqlx + PG advisory locks)
 Phase 3 (Eval)  : TorrentEngine + video_stream (keep libtorrent via C++ cxx FFI or evaluate librqbit against all 15+ BT tests)
 ```

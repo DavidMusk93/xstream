@@ -3,6 +3,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+use crate::extractors;
 use crate::filters::{self, FilterInput};
 use crate::piece_tracker::{PieceLayout, PieceStateStore};
 use crate::scoring::{self, MagnetMetrics, MagnetSource};
@@ -161,11 +162,87 @@ fn py_score_magnet(resolution: &str, size: &str, seed: i64, is_hhd800: bool) -> 
     scoring::score_magnet(&metrics)
 }
 
+/// HTML-unescapes a magnet URI (up to 3 passes for double-escaped sources).
+#[pyfunction]
+fn py_unescape_magnet(magnet_url: &str) -> String {
+    extractors::unescape_magnet(magnet_url)
+}
+
+/// Validates a v1 `btih` magnet URI with a 40-hex hash and no leftover `&amp;`.
+#[pyfunction]
+fn py_is_valid_magnet(magnet_url: &str) -> bool {
+    extractors::is_valid_magnet(magnet_url)
+}
+
+/// Returns `true` if the magnet `dn` or torrent title is an LTX release.
+#[pyfunction]
+fn py_is_ltx(text: &str) -> bool {
+    extractors::is_ltx(text)
+}
+
+/// Returns `true` if a row or title comes from a curated HD release group.
+#[pyfunction]
+fn py_is_hd_source(raw_text: &str, dn_or_title: &str) -> bool {
+    extractors::is_hd_source(raw_text, dn_or_title)
+}
+
+/// Maps resolution hints in a torrent title to the standard vocabulary.
+#[pyfunction]
+fn py_parse_resolution_tag(title: &str) -> &'static str {
+    extractors::parse_resolution_tag(title)
+}
+
+/// Converts nyaa size strings like `"3.6 GiB"` to `"3.6GB"`.
+#[pyfunction]
+fn py_size_to_gb(size: &str) -> String {
+    extractors::size_to_gb(size)
+}
+
+/// Python-visible representation of one grouped work from Sukebei RSS.
+type PyRssMagnetTuple = (String, String, String, i64, i64, bool);
+type PyRssWorkTuple = (
+    String,
+    String,
+    Option<String>,
+    Option<i64>,
+    Vec<PyRssMagnetTuple>,
+);
+
+/// Parses a Sukebei RSS XML document into grouped work tuples.
+#[pyfunction]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "PyO3 FromPyObject extracts Python lists into owned Vec<String>"
+)]
+fn py_parse_sukebei_rss(rss_xml: &str, star_names: Vec<String>) -> PyResult<Vec<PyRssWorkTuple>> {
+    let refs: Vec<&str> = star_names.iter().map(String::as_str).collect();
+    let works = extractors::parse_sukebei_rss(rss_xml, &refs)
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+    Ok(works
+        .into_iter()
+        .map(|w| {
+            let mags = w
+                .magnets
+                .into_iter()
+                .map(|m| (m.magnet, m.resolution, m.size, m.seed, m.leech, m.is_hhd800))
+                .collect();
+            (w.code, w.title, w.release_date, w.likes, mags)
+        })
+        .collect())
+}
+
 /// Native Rust extension module for xstream.
 #[pymodule]
 fn xstream_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPieceStateStore>()?;
     m.add_function(wrap_pyfunction!(py_hidden_reason, m)?)?;
     m.add_function(wrap_pyfunction!(py_score_magnet, m)?)?;
+    m.add_function(wrap_pyfunction!(py_unescape_magnet, m)?)?;
+    m.add_function(wrap_pyfunction!(py_is_valid_magnet, m)?)?;
+    m.add_function(wrap_pyfunction!(py_is_ltx, m)?)?;
+    m.add_function(wrap_pyfunction!(py_is_hd_source, m)?)?;
+    m.add_function(wrap_pyfunction!(py_parse_resolution_tag, m)?)?;
+    m.add_function(wrap_pyfunction!(py_size_to_gb, m)?)?;
+    m.add_function(wrap_pyfunction!(py_parse_sukebei_rss, m)?)?;
     Ok(())
 }
