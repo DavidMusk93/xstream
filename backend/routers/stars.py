@@ -166,14 +166,15 @@ def _build_stars_response() -> list[dict[str, Any]]:
             )
             FILTER (WHERE r.code IS NOT NULL), '[]'::jsonb) AS titles,
             MAX(r.created_at) AS max_title_created_at,
-            MAX(r.release_date_sort) AS max_release_date_sort
+            MAX(r.release_date_sort) AS max_release_date_sort,
+            s.profile
         FROM stars s
         LEFT JOIN titles r ON r.star_id = s.id
             AND (
                 COALESCE(r.user_liked, 0) = 1
                 OR (COALESCE(r.magnet_status, '') <> 'dead' AND COALESCE(r.magnet, '') <> '')
             )
-        GROUP BY s.id, s.code, s.name
+        GROUP BY s.id, s.code, s.name, s.profile
         ORDER BY s.name
         """).fetchall()
 
@@ -184,6 +185,7 @@ def _build_stars_response() -> list[dict[str, Any]]:
                 "added_at": _iso_utc(row[1]),
                 "max_disc_ts": _iso_utc(row[3]),
                 "max_release": row[4] or "",
+                "profile": row[5] if isinstance(row[5], dict) else None,
             }
 
         from core import db
@@ -225,6 +227,7 @@ def _build_stars_response() -> list[dict[str, Any]]:
                 "note": a.get("note", ""),
                 "titles": titles,
                 "added_at": data.get("added_at"),
+                "profile": data.get("profile"),
                 "x": x_profiles.get(code),
             })
 
@@ -589,3 +592,57 @@ async def like_title(request: LikeRequest, req: Request) -> LikeResponse:
         liked=liked,
         downloaded=downloaded,
     )
+
+
+class StarProfileRequest(BaseModel):
+    birth_year: int | None = None
+    height_cm: int | None = None
+    cup: str | None = None
+    measurements: str | None = None
+    debut_year: int | None = None
+    bio: str | None = None
+
+
+def _update_star_profile(code: str, profile: dict[str, Any]) -> dict[str, Any] | None:
+    from psycopg.types.json import Jsonb
+    conn = _db_conn()
+    try:
+        row = conn.execute(
+            """
+            UPDATE stars
+            SET profile = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE UPPER(code) = %s
+            RETURNING code, profile
+            """,
+            [Jsonb(profile), code.upper()],
+        ).fetchone()
+        conn.commit()
+        if not row:
+            return None
+        return row[1] if isinstance(row[1], dict) else profile
+    finally:
+        conn.close()
+
+
+@router.patch("/{star_code}/profile")
+async def update_star_profile(star_code: str, req: StarProfileRequest) -> dict[str, Any]:
+    """Update a star's optional persona metadata (age, height, body, debut, bio) for chromatic aura."""
+    cleaned: dict[str, Any] = {}
+    if req.birth_year is not None and 1965 <= req.birth_year <= 2015:
+        cleaned["birth_year"] = req.birth_year
+    if req.height_cm is not None and 130 <= req.height_cm <= 210:
+        cleaned["height_cm"] = req.height_cm
+    if req.cup and req.cup.strip():
+        cleaned["cup"] = req.cup.strip().upper()[:2]
+    if req.measurements and req.measurements.strip():
+        cleaned["measurements"] = req.measurements.strip()[:48]
+    if req.debut_year is not None and 1995 <= req.debut_year <= 2035:
+        cleaned["debut_year"] = req.debut_year
+    if req.bio and req.bio.strip():
+        cleaned["bio"] = req.bio.strip()[:160]
+
+    saved = await db_write(_update_star_profile, star_code, cleaned)
+    if saved is None:
+        raise HTTPException(status_code=404, detail="Star not found")
+    invalidate_stars_cache(reset_covers=False)
+    return {"code": star_code.upper(), "profile": saved}

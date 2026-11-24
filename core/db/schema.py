@@ -65,6 +65,7 @@ def init_schema(conn=None):
                 UNIQUE(star_id, code)
             )
         """)
+        conn.execute("ALTER TABLE stars ADD COLUMN IF NOT EXISTS profile JSONB")
         # Append columns to existing tables (backward compatibility)
         for col in [
             ("release_date_sort", "TEXT"),

@@ -274,7 +274,7 @@ textarea:focus-visible {
   }
   @media (hover: hover) {
     .action:hover:not(:disabled) {
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.36), 0 14px 28px -10px rgba(255, 55, 95, 0.36);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.36), 0 14px 28px -10px rgba(var(--aura-rgb, 255, 55, 95), 0.42);
     }
   }
 
@@ -411,14 +411,31 @@ textarea:focus-visible {
 @media (hover: hover) and (min-width: 640px) {
   .hero-stage:hover {
     box-shadow:
-      0 38px 86px -26px rgba(0, 0, 0, 0.58),
-      0 0 68px -16px rgba(255, 55, 95, 0.24);
+      0 38px 86px -26px rgba(0, 0, 0, 0.56),
+      0 0 76px -14px rgba(var(--aura-rgb, 255, 55, 95), 0.32);
   }
   .hero-stage .hero-hi {
     transition: opacity 0.35s var(--ease-out), transform 0.75s var(--ease-sensual);
   }
   .hero-stage:hover .hero-frame:not(.hero-dragging-h) .hero-hi {
     transform: scale(1.018);
+  }
+}
+
+/* Chromatic persona light field behind each star's hero stage */
+.star-aura-glow {
+  background: radial-gradient(
+    ellipse 76% 68% at 38% 52%,
+    rgba(var(--aura-rgb, 255, 55, 95), 0.16) 0%,
+    rgba(var(--aura-deep-rgb, 192, 0, 54), 0.06) 48%,
+    transparent 78%
+  );
+  transition: opacity 0.65s var(--ease-sensual), transform 0.8s var(--ease-sensual);
+}
+@media (hover: hover) and (min-width: 640px) {
+  .group\/star:hover .star-aura-glow {
+    opacity: 1;
+    transform: scale(1.04);
   }
 }
 
@@ -477,7 +494,7 @@ textarea:focus-visible {
 .thumb-rail button[aria-current="true"] .thumb-cover {
   opacity: 1;
   transform: translateY(-2px);
-  box-shadow: 0 16px 36px -12px rgba(0, 0, 0, 0.35), 0 0 0 2px rgba(255, 55, 95, 0.5);
+  box-shadow: 0 16px 36px -12px rgba(0, 0, 0, 0.35), 0 0 0 2px rgba(var(--aura-rgb, 255, 55, 95), 0.58);
 }
 .thumb-rail .thumb-cover-dead {
   filter: grayscale(1);
@@ -499,10 +516,12 @@ textarea:focus-visible {
 .thumb-rail .thumb-dot {
   width: 0;
   opacity: 0;
-  box-shadow: 0 0 8px rgba(255, 55, 95, 0.6);
+  background-color: rgb(var(--aura-rgb, 255, 55, 95));
+  box-shadow: 0 0 10px rgba(var(--aura-rgb, 255, 55, 95), 0.65);
   transition:
     width 0.3s var(--ease-spring),
-    opacity 0.3s var(--ease-spring);
+    opacity 0.3s var(--ease-spring),
+    background-color 0.55s var(--ease-sensual);
 }
 .thumb-rail button[aria-current="true"] .thumb-dot {
   width: 0.375rem;

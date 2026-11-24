@@ -114,6 +114,15 @@ export interface XInjectResult {
   error?: string
 }
 
+export interface StarProfile {
+  birth_year?: number | null
+  height_cm?: number | null
+  cup?: string | null
+  measurements?: string | null
+  debut_year?: number | null
+  bio?: string | null
+}
+
 export interface Star {
   name: string
   jp?: string
@@ -125,6 +134,8 @@ export interface Star {
   titles: Title[]
   /** UTC ISO-8601. When this star was followed (`stars.created_at`). */
   added_at?: string | null
+  /** Optional persona metadata driving her chromatic aura (age, height, body, career). */
+  profile?: StarProfile | null
   x?: XProfile | null
 }
 

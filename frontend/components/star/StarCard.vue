@@ -1,11 +1,101 @@
 <template>
-  <section :id="id" class="group/star">
+  <section :id="id" class="group/star relative" :style="auraSectionStyle">
     <!-- Section header: name sits on the page, the shelf below is one surface -->
     <div v-reveal class="flex items-end justify-between gap-4 mb-4 sm:mb-5 px-1">
       <div class="min-w-0">
-        <p class="eyebrow">
-          <span class="text-accent">{{ String((index ?? 0) + 1).padStart(2, '0') }}</span>
+        <div class="eyebrow flex-wrap">
+          <span class="transition-colors duration-500" :style="{ color: `rgb(${auraRgb})` }">{{ String((index ?? 0) + 1).padStart(2, '0') }}</span>
           <span class="tabular-nums">{{ star.titles?.length ?? 0 }} titles</span>
+          <span v-if="starAura.careerYears" class="tabular-nums text-foreground-muted/80">{{ starAura.careerYears }}y</span>
+          <div ref="auraPopoverRoot" class="relative inline-flex items-center">
+            <button
+              type="button"
+              class="inline-flex items-center gap-1.5 px-2 py-0.5 -my-0.5 rounded-full text-[11px] font-medium text-foreground-muted hover:text-foreground hover:bg-black/[0.04] transition-all duration-200 active:scale-[0.95]"
+              :aria-expanded="auraOpen"
+              :title="`${starAura.label} — ${starAura.mood}`"
+              @click="toggleAuraPanel"
+            >
+              <span
+                class="w-2 h-2 rounded-full shrink-0 transition-all duration-500"
+                :style="{
+                  backgroundColor: `rgb(${auraRgb})`,
+                  boxShadow: `0 0 8px rgba(${auraRgb}, 0.55)`,
+                }"
+              />
+              <span>{{ starAura.label }}</span>
+              <span v-if="auraTraitBrief" class="hidden sm:inline text-foreground-muted/70">· {{ auraTraitBrief }}</span>
+            </button>
+
+            <Transition name="pop">
+              <div
+                v-if="auraOpen"
+                class="popover absolute left-0 top-full mt-2 w-[300px] sm:w-[320px] p-4 z-40 origin-top-left font-sans tracking-normal text-left"
+              >
+                <div
+                  class="h-2 w-full rounded-full mb-3 transition-all duration-500"
+                  :style="{
+                    background: `linear-gradient(90deg, rgb(${auraRgb}), rgb(${auraDeepRgb}))`,
+                    boxShadow: `0 4px 16px -4px rgba(${auraRgb}, 0.55)`,
+                  }"
+                />
+                <div class="flex items-start justify-between gap-2">
+                  <div>
+                    <p class="text-[14px] font-semibold text-foreground">{{ starAura.label }}</p>
+                    <p class="text-[12px] text-foreground-muted mt-0.5">{{ starAura.mood }}</p>
+                  </div>
+                  <button
+                    type="button"
+                    class="text-[12px] font-medium px-2.5 py-1 rounded-full bg-black/[0.05] text-foreground hover:bg-black/[0.09] transition"
+                    @click="editingProfile = !editingProfile"
+                  >
+                    {{ editingProfile ? 'Done' : 'Edit' }}
+                  </button>
+                </div>
+
+                <div v-if="!editingProfile" class="mt-3 grid grid-cols-2 gap-2 text-[12px]">
+                  <div class="rounded-xl bg-black/[0.03] px-2.5 py-2">
+                    <p class="text-[10px] uppercase tracking-wider text-foreground-muted/70">Career</p>
+                    <p class="mt-0.5 font-medium text-foreground tabular-nums">
+                      {{ starAura.debutYear ? `${starAura.debutYear} · ${starAura.careerYears} yrs` : '—' }}
+                    </p>
+                  </div>
+                  <div class="rounded-xl bg-black/[0.03] px-2.5 py-2">
+                    <p class="text-[10px] uppercase tracking-wider text-foreground-muted/70">Age</p>
+                    <p class="mt-0.5 font-medium text-foreground tabular-nums">
+                      {{ starAura.age ? `${starAura.age} (${localProfile.birth_year})` : 'Not set' }}
+                    </p>
+                  </div>
+                  <div class="rounded-xl bg-black/[0.03] px-2.5 py-2">
+                    <p class="text-[10px] uppercase tracking-wider text-foreground-muted/70">Height</p>
+                    <p class="mt-0.5 font-medium text-foreground tabular-nums">
+                      {{ localProfile.height_cm ? `${localProfile.height_cm} cm` : 'Not set' }}
+                    </p>
+                  </div>
+                  <div class="rounded-xl bg-black/[0.03] px-2.5 py-2">
+                    <p class="text-[10px] uppercase tracking-wider text-foreground-muted/70">Silhouette</p>
+                    <p class="mt-0.5 font-medium text-foreground tabular-nums truncate">
+                      {{ [localProfile.cup ? `${localProfile.cup} cup` : '', localProfile.measurements || ''].filter(Boolean).join(' · ') || 'Not set' }}
+                    </p>
+                  </div>
+                </div>
+
+                <form v-else class="mt-3 space-y-2 text-[12px]" @submit.prevent="saveProfile">
+                  <div class="grid grid-cols-2 gap-2">
+                    <input v-model.number="profileForm.birth_year" type="number" min="1970" max="2012" placeholder="Birth yr (e.g. 1999)" class="field !h-9 !px-3 !text-[12px] !rounded-xl" />
+                    <input v-model.number="profileForm.height_cm" type="number" min="135" max="200" placeholder="Height cm (e.g. 166)" class="field !h-9 !px-3 !text-[12px] !rounded-xl" />
+                  </div>
+                  <div class="grid grid-cols-2 gap-2">
+                    <input v-model="profileForm.cup" type="text" maxlength="2" placeholder="Cup (e.g. E)" class="field !h-9 !px-3 !text-[12px] !rounded-xl uppercase" />
+                    <input v-model.number="profileForm.debut_year" type="number" min="1998" max="2030" placeholder="Debut yr" class="field !h-9 !px-3 !text-[12px] !rounded-xl" />
+                  </div>
+                  <input v-model="profileForm.measurements" type="text" maxlength="48" placeholder="Measurements (e.g. B88 W58 H88)" class="field !h-9 !px-3 !text-[12px] !rounded-xl" />
+                  <button type="submit" class="btn btn-primary !h-9 w-full !text-[13px]" :disabled="savingProfile">
+                    {{ savingProfile ? 'Saving…' : 'Save & Tune Aura' }}
+                  </button>
+                </form>
+              </div>
+            </Transition>
+          </div>
           <a
             v-if="star.x?.handle && !star.x.posts?.length"
             :href="`https://x.com/${star.x.handle}`"
@@ -14,7 +104,7 @@
             class="hover:text-foreground transition-colors"
           >@{{ star.x.handle }}</a>
           <span class="h-px w-10 bg-black/10" />
-        </p>
+        </div>
         <h2 class="mt-2 text-[28px] sm:text-[36px] font-bold text-foreground leading-[1.1] truncate">
           {{ star.name }}
         </h2>
@@ -43,7 +133,12 @@
       </div>
     </div>
 
-    <div v-reveal="0.08">
+    <div v-reveal="0.08" class="relative">
+      <!-- Ambient chromatic light field driven by her persona aura + active cover tint -->
+      <div
+        class="star-aura-glow pointer-events-none hidden sm:block absolute -inset-x-10 -top-8 -bottom-4 rounded-[48px] opacity-80 -z-10"
+        aria-hidden="true"
+      />
       <!-- Stage: the cover is the protagonist; info reads like a caption -->
       <div v-if="activeTitle" class="grid gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] lg:gap-12">
         <div
@@ -285,7 +380,7 @@
             </div>
           </div>
           <div class="mt-2.5 flex items-center gap-1.5 px-0.5 whitespace-nowrap">
-            <span class="thumb-dot h-1.5 rounded-full bg-accent" aria-hidden="true" />
+            <span class="thumb-dot h-1.5 rounded-full" aria-hidden="true" />
             <span class="thumb-code text-[13px] font-semibold truncate">{{ title.code }}</span>
             <span class="ml-auto text-[12px] text-foreground-muted/70 tabular-nums">{{ shortDate(title.date) }}</span>
           </div>
@@ -297,8 +392,9 @@
 </template>
 
 <script setup lang="ts">
-import type { Star, Title } from '~/types/api'
+import type { Star, StarProfile, Title } from '~/types/api'
 import { logError } from '~/composables/useLogger'
+import { blendRgb, computeStarAura, getCachedCoverTint, rgbCss, sampleCoverTint, type Rgb } from '~/utils/starAura'
 import {
   isThumbReady as isGlobalThumbReady,
   markThumbReady as markGlobalThumbReady,
@@ -328,6 +424,93 @@ const emit = defineEmits<{
 
 const { track } = useTrack()
 const { add: addLog } = useEventLog()
+
+// ── Chromatic Persona & Desire Aura ─────────────────────────────────
+const localProfile = ref<StarProfile>({ ...(props.star.profile ?? {}) })
+watch(
+  () => props.star.profile,
+  (next) => {
+    localProfile.value = { ...(next ?? {}) }
+  },
+)
+
+const activeCoverTint = ref<Rgb | null>(null)
+watch(
+  () => props.star.titles?.[activeIndex.value]?.code,
+  (code) => {
+    activeCoverTint.value = code ? getCachedCoverTint(code) : null
+  },
+)
+const starAura = computed(() =>
+  computeStarAura({ ...props.star, profile: localProfile.value }),
+)
+const blendedPrimary = computed(() =>
+  activeCoverTint.value
+    ? blendRgb(starAura.value.primary, activeCoverTint.value, 0.26)
+    : starAura.value.primary,
+)
+const auraRgb = computed(() => rgbCss(blendedPrimary.value))
+const auraDeepRgb = computed(() => rgbCss(starAura.value.deep))
+const auraSectionStyle = computed(() => ({
+  '--aura-rgb': auraRgb.value,
+  '--aura-deep-rgb': auraDeepRgb.value,
+}))
+const auraTraitBrief = computed(() => {
+  const parts: string[] = []
+  if (localProfile.value.height_cm) parts.push(`${localProfile.value.height_cm}cm`)
+  if (localProfile.value.cup) parts.push(`${localProfile.value.cup}`)
+  return parts.join(' · ')
+})
+
+const auraOpen = ref(false)
+const auraPopoverRoot = ref<HTMLElement | null>(null)
+const editingProfile = ref(false)
+const savingProfile = ref(false)
+const profileForm = reactive<StarProfile>({
+  birth_year: null,
+  height_cm: null,
+  cup: '',
+  measurements: '',
+  debut_year: null,
+})
+
+useDismiss(auraOpen, auraPopoverRoot)
+
+function toggleAuraPanel() {
+  auraOpen.value = !auraOpen.value
+  if (auraOpen.value) {
+    editingProfile.value = false
+    profileForm.birth_year = localProfile.value.birth_year ?? null
+    profileForm.height_cm = localProfile.value.height_cm ?? null
+    profileForm.cup = localProfile.value.cup ?? ''
+    profileForm.measurements = localProfile.value.measurements ?? ''
+    profileForm.debut_year = localProfile.value.debut_year ?? starAura.value.debutYear ?? null
+  }
+}
+
+async function saveProfile() {
+  if (savingProfile.value) return
+  savingProfile.value = true
+  try {
+    const payload: StarProfile = {
+      birth_year: profileForm.birth_year || null,
+      height_cm: profileForm.height_cm || null,
+      cup: profileForm.cup?.trim().toUpperCase() || null,
+      measurements: profileForm.measurements?.trim() || null,
+      debut_year: profileForm.debut_year || null,
+    }
+    const res = await $fetch<{ code: string; profile: StarProfile }>(
+      `/api/stars/${encodeURIComponent(props.star.code)}/profile`,
+      { method: 'PATCH', body: payload },
+    )
+    localProfile.value = { ...(res.profile ?? payload) }
+    editingProfile.value = false
+  } catch (e: any) {
+    logError('star', `saveProfile ${props.star.code} failed: ${e?.message || e}`)
+  } finally {
+    savingProfile.value = false
+  }
+}
 const { likeTitle, deleteStar } = useApi()
 
 const id = computed(() => props.star.code.toLowerCase())
@@ -734,6 +917,10 @@ async function onHeroSlideLoad(t: Title, e: Event) {
   }
   markHeroCoverReady(t.code)
   heroReadyTick.value++
+  const sampled = sampleCoverTint(t.code, img)
+  if (sampled && activeTitle.value?.code === t.code) {
+    activeCoverTint.value = sampled
+  }
   if (activeTitle.value?.code === t.code) finishHeroPaint(t)
 }
 
