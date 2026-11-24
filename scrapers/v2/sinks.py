@@ -12,6 +12,7 @@ import re
 from typing import Protocol
 
 from psycopg.types.json import Jsonb
+import xstream_core
 
 from core import db
 from core.db.write_queue import db_write
@@ -372,35 +373,13 @@ class TitleSyncSink:
 
     @staticmethod
     def _score_magnet(m: MagnetCandidate) -> float:
-        """MagnetCandidate scoring"""
-        res_score = 0
-        res = m.resolution
-        # VR tags first: "[4KVR]" contains "4k" as a substring
-        if "[8KVR]" in res:
-            res_score = 700
-        elif "[4KVR]" in res:
-            res_score = 650
-        elif "[4K]" in res or "4k" in res.lower():
-            res_score = 600
-        elif "[FHDC]" in res:
-            res_score = 500
-        elif "[FHD]" in res:
-            res_score = 400
-        elif "1080p" in res:
-            res_score = 300
-        elif "[HD]" in res:
-            res_score = 200
-        elif "720p" in res:
-            res_score = 100
-        size_mb = 0.0
-        if m.size:
-            try:
-                size_mb = float(m.size.lower().replace("gb", "").strip()) * 1024
-            except ValueError:
-                pass
-        # hhd800 HD source gets extra points to ensure priority at same resolution
-        hhd800_bonus = 1000 if m.is_hhd800 else 0
-        return res_score + hhd800_bonus + m.seed + size_mb / 100
+        """MagnetCandidate scoring (delegated to Rust xstream_core)."""
+        return xstream_core.py_score_magnet(
+            m.resolution or "",
+            m.size or "",
+            int(m.seed or 0),
+            bool(m.is_hhd800),
+        )
 
 
 class StdoutSink:

@@ -15,6 +15,8 @@
 | `request_pieces` bitmap planning | `claim_pieces_for_download(usize, usize) -> Vec<usize>` |
 | `reset_priorities` downloading clear | `clear_downloading()` |
 | `_bootstrap_from_filesystem` bitmap reset + set | `replace_verified_pieces(IntoIterator<Item = usize>)` |
+| `scrapers/v2/filters.py::hidden_reason` | `filters::hidden_reason(&FilterInput, &[&str], &[&str]) -> Option<HiddenReason>` |
+| `scrapers/v2/sinks.py::TitleSyncSink._score_magnet` | `scoring::score_magnet(&MagnetMetrics) -> f64` |
 
 ## Test Mapping
 

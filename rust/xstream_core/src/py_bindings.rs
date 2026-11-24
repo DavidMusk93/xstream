@@ -3,7 +3,9 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+use crate::filters::{self, FilterInput};
 use crate::piece_tracker::{PieceLayout, PieceStateStore};
+use crate::scoring::{self, MagnetMetrics, MagnetSource};
 
 /// Python-visible wrapper around [`PieceStateStore`].
 #[pyclass(name = "PieceStateStore")]
@@ -112,9 +114,58 @@ impl PyPieceStateStore {
     }
 }
 
+/// Returns the hidden-reason tag for a title, or `None` to keep it.
+#[pyfunction]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "PyO3 FromPyObject extracts Python lists into owned Vec<String>"
+)]
+fn py_hidden_reason(
+    code: &str,
+    title: &str,
+    star_count: usize,
+    magnet_resolutions: Vec<String>,
+    own_names: Vec<String>,
+    roster_names: Vec<String>,
+) -> Option<&'static str> {
+    let res_refs: Vec<&str> = magnet_resolutions.iter().map(String::as_str).collect();
+    let own_refs: Vec<&str> = own_names.iter().map(String::as_str).collect();
+    let roster_refs: Vec<&str> = roster_names.iter().map(String::as_str).collect();
+    let input = FilterInput {
+        code,
+        title,
+        star_count,
+        magnet_resolutions: &res_refs,
+    };
+    filters::hidden_reason(&input, &own_refs, &roster_refs).map(filters::HiddenReason::as_str)
+}
+
+/// Computes the deterministic ranking score for a magnet candidate.
+#[pyfunction]
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "PyO3 boundary matches Python MagnetCandidate.is_hhd800 boolean attribute"
+)]
+fn py_score_magnet(resolution: &str, size: &str, seed: i64, is_hhd800: bool) -> f64 {
+    let source = if is_hhd800 {
+        MagnetSource::Hhd800
+    } else {
+        MagnetSource::Standard
+    };
+    let metrics = MagnetMetrics {
+        resolution,
+        size,
+        seed,
+        source,
+    };
+    scoring::score_magnet(&metrics)
+}
+
 /// Native Rust extension module for xstream.
 #[pymodule]
 fn xstream_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPieceStateStore>()?;
+    m.add_function(wrap_pyfunction!(py_hidden_reason, m)?)?;
+    m.add_function(wrap_pyfunction!(py_score_magnet, m)?)?;
     Ok(())
 }

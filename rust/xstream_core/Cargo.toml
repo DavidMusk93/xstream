@@ -16,6 +16,7 @@ python = ["dep:pyo3"]
 
 [dependencies]
 pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
+regex = "1"
 
 [lints]
 workspace = true

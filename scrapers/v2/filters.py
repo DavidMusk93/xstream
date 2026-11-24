@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import re
 
+import xstream_core
+
 from scrapers.v2.schemas import VideoItem
 
 VR_TITLE_RE = re.compile(r"(【VR】|\[VR\])", re.IGNORECASE)
@@ -58,29 +60,14 @@ def hidden_reason(
     if item.star_count > 1:
         return "star_count"
 
-    text = item.title.strip()
-    if text and VR_TITLE_RE.search(text):
-        return "vr"
-    if VR_CODE_RE.match(item.code):
-        return "vr"
-    if any("vr" in m.resolution.lower() for m in item.magnets):
-        return "vr"
-    if not text:
-        return None
-
-    if MULTI_KEYWORD_RE.search(text):
-        return "keyword"
-
-    lower = text.lower()
-    own = {n.strip().lower() for n in (own_names or [])}
-    for name in roster_names or []:
-        nl = name.strip().lower()
-        if len(nl) >= MIN_NAME_LEN and nl not in own and nl in lower:
-            return "roster"
-
-    if COLON_CAST_RE.search(text) or WHOLE_CAST_RE.search(text) or JP_CAST_RE.search(text):
-        return "cast"
-    return None
+    return xstream_core.py_hidden_reason(
+        item.code,
+        item.title,
+        max(0, item.star_count),
+        [m.resolution for m in item.magnets],
+        list(own_names or ()),
+        list(roster_names or ()),
+    )
 
 
 def drop_hidden(
