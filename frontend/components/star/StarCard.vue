@@ -168,6 +168,7 @@
                    real primary action (49 copies vs 1 play in early tracking) -->
               <div class="flex items-center gap-3 mt-6 sm:mt-8">
                 <button
+                  type="button"
                   class="action text-white shadow-[0_6px_20px_-6px_rgba(255,55,95,0.6)] hover:-translate-y-1 hover:scale-[1.04]"
                   :class="copied ? 'bg-success shadow-none animate-sensual-pop' : 'bg-accent hover:bg-accent-hover'"
                   :data-tip="copied ? 'Copied' : 'Copy magnet'"
@@ -185,6 +186,7 @@
                 </button>
 
                 <button
+                  type="button"
                   class="action bg-foreground text-white hover:bg-black hover:-translate-y-1 hover:scale-[1.04]"
                   data-tip="Play"
                   aria-label="Play"
@@ -195,6 +197,7 @@
                 </button>
 
                 <button
+                  type="button"
                   class="action hover:-translate-y-1 hover:scale-[1.04]"
                   :class="[
                     activeLiked ? 'bg-accent/10 text-accent hover:bg-accent/15' : 'bg-black/[0.05] text-foreground hover:bg-black/[0.08]',
@@ -321,6 +324,8 @@ const emit = defineEmits<{
 
 const { track } = useTrack()
 const { add: addLog } = useEventLog()
+const { likeTitle, deleteStar } = useApi()
+const { error: logError } = useLogger()
 
 const id = computed(() => props.star.code.toLowerCase())
 const activeIndex = ref(0)
@@ -929,23 +934,29 @@ const justLiked = ref(false)
 let likeAnimTimer: ReturnType<typeof setTimeout> | null = null
 
 async function toggleLike() {
-  if (liking.value || !activeTitle.value) return
+  const target = activeTitle.value
+  if (liking.value || !target) return
   liking.value = true
+  const prevVal = !!target.user_liked
+  const newVal = !prevVal
+  // Optimistic toggle so the heart responds immediately; roll back on error.
+  target.user_liked = newVal
+  if (newVal) {
+    justLiked.value = true
+    if (likeAnimTimer) clearTimeout(likeAnimTimer)
+    likeAnimTimer = setTimeout(() => { justLiked.value = false }, 600)
+  }
   try {
-    const { likeTitle } = useApi()
-    const newVal = !activeLiked.value
-    await likeTitle(activeTitle.value.code, newVal)
-    activeTitle.value.user_liked = newVal
-    if (newVal) {
-      justLiked.value = true
-      if (likeAnimTimer) clearTimeout(likeAnimTimer)
-      likeAnimTimer = setTimeout(() => { justLiked.value = false }, 600)
-    }
-    track(newVal ? 'like' : 'unlike', { code: activeTitle.value.code, star_code: props.star.code })
-    addLog({ kind: 'action', title: `${newVal ? 'Liked' : 'Unliked'} ${activeTitle.value.code}`, detail: props.star.name, state: 'success' })
+    await likeTitle(target.code, newVal)
+    track(newVal ? 'like' : 'unlike', { code: target.code, star_code: props.star.code })
+    addLog({ kind: 'action', title: `${newVal ? 'Liked' : 'Unliked'} ${target.code}`, detail: props.star.name, state: 'success' })
   } catch (e: any) {
+    target.user_liked = prevVal
+    justLiked.value = false
+    const msg = String(e?.data?.detail ?? e?.message ?? e)
     console.error('like failed:', e)
-    addLog({ kind: 'action', title: `Like failed: ${activeTitle.value?.code}`, detail: String(e?.message ?? e), state: 'error' })
+    logError('like', `toggleLike ${target.code} (${newVal}) failed: ${msg}`)
+    addLog({ kind: 'action', title: `Like failed: ${target.code}`, detail: msg, state: 'error' })
   } finally {
     liking.value = false
   }
@@ -971,7 +982,6 @@ async function onDelete() {
   }
   deleting.value = true
   try {
-    const { deleteStar } = useApi()
     await deleteStar(props.star.code)
     emit('deleted', props.star.code)
   } catch (e: any) {

@@ -548,31 +548,39 @@ async def like_title(request: LikeRequest, req: Request) -> LikeResponse:
 
     engine = req.app.state.engine
     if magnet_hash:
-        await asyncio.to_thread(engine.set_liked, magnet_hash, liked)
+        try:
+            await asyncio.to_thread(engine.set_liked, magnet_hash, liked)
+        except Exception as exc:
+            log.warning(f"like_title: set_liked failed for {code}: {exc}")
 
     downloaded = False
     if liked and magnet:
-        from backend.routers.torrents import _resolve_magnet
-        resolved = await db_read(_resolve_magnet, magnet)
-        info = await asyncio.to_thread(engine.add_torrent, resolved, prefetch=False)
-        if info:
-            hash_str = info["hash"]
-            # Start downloading head+moov immediately for liked titles.
-            # add_torrent now adds paused; resume_download(0, 0) queues a resume
-            # (or applies it directly once metadata is ready) so pieces start
-            # fetching instead of staying paused forever.
-            await asyncio.to_thread(engine.resume_download, hash_str, 0.0, 0.0)
-            downloaded = True
-            log.info(f"like_title: auto-download {code} -> {hash_str[:12]}...")
-        else:
-            log.warning(f"like_title: auto-download failed for {code}")
+        try:
+            from backend.routers.torrents import _resolve_magnet
+            resolved = await db_read(_resolve_magnet, magnet)
+            info = await asyncio.to_thread(engine.add_torrent, resolved, prefetch=False)
+            if info:
+                hash_str = info["hash"]
+                # Start downloading head+moov immediately for liked titles.
+                # add_torrent now adds paused; resume_download(0, 0) queues a resume
+                # (or applies it directly once metadata is ready) so pieces start
+                # fetching instead of staying paused forever.
+                await asyncio.to_thread(engine.resume_download, hash_str, 0.0, 0.0)
+                downloaded = True
+                log.info(f"like_title: auto-download {code} -> {hash_str[:12]}...")
+            else:
+                log.warning(f"like_title: auto-download failed for {code}")
+        except Exception as exc:
+            log.warning(f"like_title: auto-download error for {code}: {exc}")
 
     # When unliking, immediately clean up downloaded cache
-    removed = False
     if not liked and magnet_hash:
-        removed = await asyncio.to_thread(engine.remove_torrent, magnet_hash)
-        if removed:
-            log.info(f"like_title: auto-remove {code} -> {magnet_hash[:12]}...")
+        try:
+            removed = await asyncio.to_thread(engine.remove_torrent, magnet_hash)
+            if removed:
+                log.info(f"like_title: auto-remove {code} -> {magnet_hash[:12]}...")
+        except Exception as exc:
+            log.warning(f"like_title: auto-remove error for {code}: {exc}")
 
     return LikeResponse(
         code=code,
