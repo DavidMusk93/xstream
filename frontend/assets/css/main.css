@@ -494,20 +494,31 @@ textarea:focus-visible {
     translate3d(calc(var(--track-base, 0px) + var(--drag-x, 0px)), 0, 0)
     skewX(var(--drag-skew, 0deg));
 }
-/* Liquid flowing glide with soft underdamped spring rebound */
+/* Smooth horizontal glide — directional elastic recoil lives on .hero-stage */
 .hero-track-anim {
-  transition: transform 0.62s cubic-bezier(0.22, 1.08, 0.36, 1);
+  transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* Liquid jelly settle wobble on cover arrival */
-@keyframes hero-jelly-settle {
-  0% { transform: scale3d(1.024, 0.982, 1); }
-  38% { transform: scale3d(0.991, 1.009, 1); }
-  70% { transform: scale3d(1.005, 0.996, 1); }
-  100% { transform: scale3d(1, 1, 1); }
+/* Unidirectional horizontal recoil matching gesture direction (zero Y squash) */
+@keyframes hero-recoil-left {
+  0% { transform: translate3d(0, 0, 0); }
+  34% { transform: translate3d(-11px, 0, 0); }
+  66% { transform: translate3d(3px, 0, 0); }
+  85% { transform: translate3d(-1px, 0, 0); }
+  100% { transform: translate3d(0, 0, 0); }
 }
-.hero-jelly-active {
-  animation: hero-jelly-settle 0.64s var(--ease-out) both;
+@keyframes hero-recoil-right {
+  0% { transform: translate3d(0, 0, 0); }
+  34% { transform: translate3d(11px, 0, 0); }
+  66% { transform: translate3d(-3px, 0, 0); }
+  85% { transform: translate3d(1px, 0, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+.hero-recoil-left {
+  animation: hero-recoil-left 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.hero-recoil-right {
+  animation: hero-recoil-right 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 /* 波光粼粼 — Sunlit water caustics & shimmering specular glint */
@@ -533,20 +544,36 @@ textarea:focus-visible {
   }
 }
 
-@keyframes water-caustic-sweep {
+@keyframes water-caustic-sweep-left {
   0% {
     opacity: 0;
-    transform: translate3d(-115%, 0, 0) skewX(-16deg);
+    transform: translate3d(125%, 0, 0) skewX(-14deg);
   }
-  22% {
-    opacity: 0.95;
+  24% {
+    opacity: 0.88;
   }
-  65% {
-    opacity: 0.55;
+  68% {
+    opacity: 0.48;
   }
   100% {
     opacity: 0;
-    transform: translate3d(135%, 0, 0) skewX(-16deg);
+    transform: translate3d(-125%, 0, 0) skewX(-14deg);
+  }
+}
+@keyframes water-caustic-sweep-right {
+  0% {
+    opacity: 0;
+    transform: translate3d(-125%, 0, 0) skewX(14deg);
+  }
+  24% {
+    opacity: 0.88;
+  }
+  68% {
+    opacity: 0.48;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(125%, 0, 0) skewX(14deg);
   }
 }
 .water-caustic-wave {
@@ -575,8 +602,11 @@ textarea:focus-visible {
       transparent 28px
     );
 }
-.water-caustic-wave.is-flowing {
-  animation: water-caustic-sweep 0.92s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+.water-caustic-wave.is-flowing-left {
+  animation: water-caustic-sweep-left 0.78s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.water-caustic-wave.is-flowing-right {
+  animation: water-caustic-sweep-right 0.78s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 .hero-frame.hero-dragging-h {
   touch-action: none;
@@ -828,8 +858,10 @@ textarea:focus-visible {
   .animate-sensual-pop,
   .animate-heart-sensual,
   .thumb-shimmer,
-  .hero-jelly-active,
-  .water-caustic-wave.is-flowing {
+  .hero-recoil-left,
+  .hero-recoil-right,
+  .water-caustic-wave.is-flowing-left,
+  .water-caustic-wave.is-flowing-right {
     animation: none !important;
   }
   .hero-stage:hover .hero-hi,

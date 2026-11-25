@@ -10,20 +10,20 @@
           <div ref="auraPopoverRoot" class="relative inline-flex items-center">
             <button
               type="button"
-              class="inline-flex items-center gap-1.5 px-2 py-0.5 -my-0.5 rounded-full text-[11px] font-medium text-foreground-muted hover:text-foreground hover:bg-black/[0.04] transition-all duration-200 active:scale-[0.95]"
+              data-aura-trigger
+              class="inline-flex items-center gap-1.5 px-1.5 py-0.5 -my-0.5 rounded-full text-[11px] font-medium text-foreground-muted hover:text-foreground hover:bg-black/[0.04] transition-all duration-200 active:scale-[0.95]"
               :aria-expanded="auraOpen"
-              :title="`${starAura.label} — ${starAura.mood}`"
+              aria-label="Palette & profile"
               @click="toggleAuraPanel"
             >
               <span
-                class="w-2 h-2 rounded-full shrink-0 transition-all duration-500"
+                class="w-2.5 h-2.5 rounded-full shrink-0 transition-all duration-500"
                 :style="{
                   backgroundColor: `rgb(${auraRgb})`,
                   boxShadow: `0 0 8px rgba(${auraRgb}, 0.55)`,
                 }"
               />
-              <span>{{ starAura.label }}</span>
-              <span v-if="auraTraitBrief" class="hidden sm:inline text-foreground-muted/70">· {{ auraTraitBrief }}</span>
+              <span v-if="auraTraitBrief" class="hidden sm:inline text-foreground-muted/75">{{ auraTraitBrief }}</span>
             </button>
 
             <Transition name="pop">
@@ -38,11 +38,8 @@
                     boxShadow: `0 4px 16px -4px rgba(${auraRgb}, 0.55)`,
                   }"
                 />
-                <div class="flex items-start justify-between gap-2">
-                  <div>
-                    <p class="text-[14px] font-semibold text-foreground">{{ starAura.label }}</p>
-                    <p class="text-[12px] text-foreground-muted mt-0.5">{{ starAura.mood }}</p>
-                  </div>
+                <div class="flex items-center justify-between gap-2">
+                  <p class="text-[13px] font-semibold text-foreground">{{ star.name }}</p>
                   <button
                     type="button"
                     class="text-[12px] font-medium px-2.5 py-1 rounded-full bg-black/[0.05] text-foreground hover:bg-black/[0.09] transition"
@@ -56,7 +53,7 @@
                   <!-- 16-palette one-click chromatic style selector -->
                   <div>
                     <div class="flex items-center justify-between mb-1.5">
-                      <span class="text-[10px] uppercase tracking-wider text-foreground-muted/70">Palette (16)</span>
+                      <span class="text-[10px] uppercase tracking-wider text-foreground-muted/70">Palette</span>
                       <button
                         v-if="localProfile.style"
                         type="button"
@@ -68,14 +65,13 @@
                     </div>
                     <div class="grid grid-cols-8 gap-1.5">
                       <button
-                        v-for="p in STAR_PALETTES"
+                        v-for="(p, pi) in STAR_PALETTES"
                         :key="p.id"
                         type="button"
                         class="w-6 h-6 rounded-full transition-transform duration-200 ease-spring hover:scale-115 active:scale-95"
                         :class="starAura.id === p.id ? 'ring-2 ring-offset-2 ring-foreground scale-110' : 'ring-1 ring-black/10'"
                         :style="{ backgroundColor: p.swatch }"
-                        :title="`${p.label} — ${p.mood}`"
-                        :aria-label="p.label"
+                        :aria-label="`Palette ${pi + 1}`"
                         @click="selectPalette(p.id)"
                       />
                     </div>
@@ -174,19 +170,27 @@
         <div
           ref="heroStageRef"
           class="hero-stage group/hero relative w-full max-w-[760px] rounded-[22px] overflow-hidden bg-fill shadow-[0_30px_60px_-34px_rgba(0,0,0,0.5)] touch-pan-y select-none outline-none"
-          :class="{ 'controls-shown': controlsShown, 'hero-jelly-active': jellyActive }"
+          :class="{
+            'controls-shown': controlsShown,
+            'hero-recoil-left': recoilDir === 'left',
+            'hero-recoil-right': recoilDir === 'right',
+          }"
+          :data-recoil-dir="recoilDir || undefined"
           tabindex="0"
           role="group"
           :aria-label="`${activeTitle.code} cover, swipe or use arrow keys to browse titles`"
           @keydown="onHeroKeydown"
           @pointermove="onStageGlintMove"
         >
-          <!-- 波光粼粼 — sunlit water mirror glint + flowing caustic ripple on slide -->
+          <!-- 波光粼粼 — sunlit water mirror glint + directional caustic ripple on slide -->
           <div class="water-glint" aria-hidden="true" />
           <div
             :key="waterWaveKey"
             class="water-caustic-wave"
-            :class="{ 'is-flowing': waterWaveKey > 0 }"
+            :class="{
+              'is-flowing-left': waterWaveKey > 0 && waterWaveDir === 'left',
+              'is-flowing-right': waterWaveKey > 0 && waterWaveDir === 'right',
+            }"
             aria-hidden="true"
           />
           <div
@@ -290,17 +294,6 @@
                   <div class="flex items-center flex-wrap gap-x-2 gap-y-1 text-[13px] font-medium text-foreground-muted tabular-nums">
                     <span v-if="activeTitle.date">{{ fmtDate(activeTitle.date) }}</span>
                     <span v-if="activeIsHd" class="chip bg-black/[0.06] text-foreground">HD</span>
-                    <span
-                      v-if="activeTitleMood"
-                      class="chip transition-colors duration-500"
-                      :style="{
-                        backgroundColor: `rgba(${auraRgb}, 0.11)`,
-                        color: `rgb(${auraDeepRgb})`,
-                      }"
-                    >
-                      <span class="w-1.5 h-1.5 rounded-full" :style="{ backgroundColor: `rgb(${auraRgb})` }" />
-                      {{ activeTitleMood.label }}
-                    </span>
                     <span v-if="activeTitle.magnet_status === 'dead'" class="chip bg-danger/10 text-danger">Unavailable</span>
                   </div>
                   <h3 class="mt-2 text-[34px] sm:text-[48px] lg:text-[56px] font-bold text-foreground leading-[1] tracking-[-0.03em]">
@@ -653,20 +646,28 @@ const heroTrackStyle = computed(() => {
 })
 
 const waterWaveKey = ref(0)
-const jellyActive = ref(false)
-let jellyTimer: ReturnType<typeof setTimeout> | null = null
+const waterWaveDir = ref<'left' | 'right'>('left')
+const recoilDir = ref<'left' | 'right' | null>(null)
+let recoilTimer: ReturnType<typeof setTimeout> | null = null
 let lastDragPx = 0
 
-function triggerWaterJelly() {
+/**
+ * Trigger a unidirectional horizontal recoil matching gesture direction:
+ * - dir = 1 (next / swipe left): content travels left → recoil left ('left')
+ * - dir = -1 (prev / swipe right): content travels right → recoil right ('right')
+ */
+function triggerDirectionalRecoil(dir: -1 | 1) {
+  const motion: 'left' | 'right' = dir > 0 ? 'left' : 'right'
+  waterWaveDir.value = motion
   waterWaveKey.value++
-  jellyActive.value = false
-  if (jellyTimer) clearTimeout(jellyTimer)
+  recoilDir.value = null
+  if (recoilTimer) clearTimeout(recoilTimer)
   requestAnimationFrame(() => {
-    jellyActive.value = true
-    jellyTimer = setTimeout(() => {
-      jellyActive.value = false
-      jellyTimer = null
-    }, 660)
+    recoilDir.value = motion
+    recoilTimer = setTimeout(() => {
+      recoilDir.value = null
+      recoilTimer = null
+    }, 520)
   })
 }
 
@@ -746,6 +747,9 @@ function goToIndex(
     keyBurstTimer = null
   }
 
+  const prevIdx = activeIndex.value
+  const stepDir: -1 | 1 = idx >= prevIdx ? 1 : -1
+
   const title = props.star.titles?.[idx]
   const cacheHit = !!(title && isHeroCoverReady(title.code))
   if (title) {
@@ -756,7 +760,7 @@ function goToIndex(
   activeIndex.value = idx
   setHeroDragTranslate(0)
   armStepLock(cacheHit)
-  triggerWaterJelly()
+  triggerDirectionalRecoil(stepDir)
 
   if (!opts?.thumbAligned) {
     revealThumb(idx, opts?.smoothThumb !== false ? 'smooth' : 'auto')
@@ -1215,6 +1219,7 @@ onUnmounted(() => {
   if (keyBurstTimer) clearTimeout(keyBurstTimer)
   if (controlsTimer) clearTimeout(controlsTimer)
   if (stepAnimTimer) clearTimeout(stepAnimTimer)
+  if (recoilTimer) clearTimeout(recoilTimer)
 })
 const copied = ref(false)
 const liking = ref(false)
