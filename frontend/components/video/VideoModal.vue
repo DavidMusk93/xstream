@@ -56,6 +56,7 @@
           @abort="onAbort"
           @error="onError"
           @timeupdate="onTimeUpdate"
+          @progress="onVideoProgress"
           @ended="onEnded"
           @loadedmetadata="onLoadedMetadata"
           @pause="onPause"
@@ -78,6 +79,7 @@
             :buffered="bufferedRanges"
             @seek="onSeek"
             @scrubbing="onScrubbing"
+            @scrub-preview="onScrubPreview"
           />
 
           <!-- Controls row -->
@@ -119,16 +121,28 @@
               </span>
             </div>
 
-            <button
-              class="w-11 h-11 rounded-full text-white flex items-center justify-center transition hover:bg-white/10 active:scale-[0.9]"
-              :aria-label="isFullscreen ? 'Exit full screen' : 'Full screen'"
-              @click="toggleFullscreen"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path v-if="isFullscreen" d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3m13-3h-3a2 2 0 0 0-2 2v3"/>
-                <path v-else d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
-              </svg>
-            </button>
+            <div class="flex items-center gap-1.5">
+              <!-- Live cache & network pill fused with the player controls -->
+              <div
+                v-if="liveCacheBadge"
+                class="hidden sm:flex items-center gap-1.5 rounded-full bg-white/[0.08] backdrop-blur-md px-2.5 py-1 text-[11px] font-medium text-white/75 tabular-nums select-none"
+                :title="cacheRatio || liveCacheBadge.text"
+              >
+                <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="liveCacheBadge.dot" />
+                <span>{{ liveCacheBadge.text }}</span>
+              </div>
+
+              <button
+                class="w-11 h-11 rounded-full text-white flex items-center justify-center transition hover:bg-white/10 active:scale-[0.9]"
+                :aria-label="isFullscreen ? 'Exit full screen' : 'Full screen'"
+                @click="toggleFullscreen"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path v-if="isFullscreen" d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3m13-3h-3a2 2 0 0 0-2 2v3"/>
+                  <path v-else d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -186,10 +200,10 @@
         <!-- Buffer status overlay -->
         <div
           v-if="buffering && !loading"
-          class="absolute top-[max(64px,calc(env(safe-area-inset-top)+52px))] left-1/2 -translate-x-1/2 z-30 bg-black/55 backdrop-blur-md px-3.5 py-1.5 rounded-full text-[12px] text-white/85 flex items-center gap-2 whitespace-nowrap max-w-[90%] truncate"
+          class="absolute top-[max(64px,calc(env(safe-area-inset-top)+52px))] left-1/2 -translate-x-1/2 z-30 bg-black/65 backdrop-blur-xl ring-1 ring-white/[0.12] px-3.5 py-1.5 rounded-full text-[12px] font-medium text-white/90 tabular-nums flex items-center gap-2 whitespace-nowrap max-w-[90%] truncate shadow-lg"
         >
-          <span class="spinner w-3 h-3 text-white/80" />
-          {{ statusText }}
+          <span class="spinner w-3 h-3 text-white/85 shrink-0" />
+          <span>{{ bufferingText }}</span>
         </div>
 
         <!-- Gesture hint -->
@@ -249,9 +263,16 @@ function clearAllTimers() {
 }
 
 const wasPlayingBeforeSeek = ref(false)
+const seekingTarget = ref<number | null>(null)
+const bufferVersion = ref(0)
+let lastReportedSeekAt = 0
+let lastReportedSeekSec = -1
+let scrubPrewarmTimer: ReturnType<typeof setTimeout> | null = null
 
 interface BufferedRange { start: number; width: number }
 const bufferedRanges = computed<BufferedRange[]>(() => {
+  // Touch reactive tick so DOM video.buffered updates trigger recomputation.
+  void bufferVersion.value
   const v = videoRef.value
   if (!v || !v.buffered || !duration.value || duration.value === Infinity) return []
   const ranges: BufferedRange[] = []
@@ -262,6 +283,21 @@ const bufferedRanges = computed<BufferedRange[]>(() => {
   }
   return ranges
 })
+
+function onVideoProgress() {
+  bufferVersion.value++
+}
+
+function sendSeekNow(t: number) {
+  const hash = props.hash
+  const dur = duration.value
+  if (!hash || !dur || !isFinite(dur)) return
+  const now = Date.now()
+  if (Math.abs(t - lastReportedSeekSec) < 1.0 && now - lastReportedSeekAt < 400) return
+  lastReportedSeekSec = t
+  lastReportedSeekAt = now
+  reportSeek(hash, t, dur)
+}
 
 function formatTime(sec: number): string {
   if (!sec || !isFinite(sec)) return '0:00'
@@ -283,9 +319,24 @@ function showControls() {
 function onSeek(t: number) {
   const v = videoRef.value
   if (!v) return
+  if (scrubPrewarmTimer) {
+    clearTimeout(scrubPrewarmTimer)
+    scrubPrewarmTimer = null
+  }
+  seekingTarget.value = t
+  sendSeekNow(t)
   v.currentTime = t
   currentTime.value = t
   showControls()
+}
+
+function onScrubPreview(t: number) {
+  // Debounced prewarm while dragging so librqbit starts pulling the target offset early.
+  if (scrubPrewarmTimer) clearTimeout(scrubPrewarmTimer)
+  scrubPrewarmTimer = safeSetTimeout(() => {
+    scrubPrewarmTimer = null
+    sendSeekNow(t)
+  }, 220)
 }
 
 function onScrubbing(active: boolean) {
@@ -491,12 +542,54 @@ const statusText = computed(() => {
   return 'Ready | Waiting for data'
 })
 
+const liveCacheBadge = computed<{ dot: string; text: string } | null>(() => {
+  const s = status.value
+  if (!s || !s.video_size) return null
+  if (s.state === 'finished' || s.progress >= 99.9) {
+    return { dot: 'bg-emerald-400', text: 'Cached 100%' }
+  }
+  const pct = `${s.progress.toFixed(1)}%`
+  const parts = [`Cached ${pct}`]
+  if (s.download_rate > 0) parts.push(formatSpeed(s.download_rate))
+  if (s.peers > 0) parts.push(`${s.peers}P`)
+  const dot = s.download_rate > 0
+    ? 'bg-amber-400 animate-pulse'
+    : s.peers > 0
+      ? 'bg-white/60'
+      : 'bg-white/30'
+  return { dot, text: parts.join(' · ') }
+})
+
+const bufferingText = computed(() => {
+  const s = status.value
+  const prefix = seekingTarget.value !== null
+    ? `Seeking ${formatTime(seekingTarget.value)}`
+    : 'Buffering'
+  if (!s) return `${prefix}...`
+  const parts = [prefix]
+  if (s.download_rate > 0) {
+    parts.push(formatSpeed(s.download_rate))
+  } else if (s.peers === 0 && s.progress < 99.9) {
+    parts.push('Waiting for peers')
+  }
+  if (s.peers > 0) parts.push(`${s.peers} peers`)
+  if (s.video_size > 0 && s.progress < 99.9) {
+    parts.push(`${s.progress.toFixed(1)}%`)
+  }
+  return parts.join(' · ')
+})
+
 async function openPlayback(hash: string) {
   errorMsg.value = ''
   canplayFired.value = false
   buffering.value = true
+  seekingTarget.value = null
   retryCount.value = 0
   logInfo('player', `open video hash=${hash.slice(0, 12)}`)
+
+  // Subscribe to SSE + fetch initial status BEFORE waitForHeadReady so the
+  // loading overlay shows live peers, speed, and cached MB from the first second.
+  startPolling(hash)
 
   const openStart = Date.now()
   const ready = await waitForHeadReady(hash)
@@ -531,9 +624,7 @@ async function openPlayback(hash: string) {
     } else {
       logError('player', `videoRef missing after nextTick+setTimeout hash=${hash.slice(0, 12)}`)
     }
-  }, 200)
-
-  startPolling(hash)
+  }, 100)
 }
 
 watch([() => props.hash, isOpen], async ([hash, open]) => {
@@ -604,6 +695,8 @@ function onLoadedMetadata() {
 function onCanplay() {
   canplayFired.value = true
   buffering.value = false
+  seekingTarget.value = null
+  bufferVersion.value++
   retryCount.value = 0
   const v = videoRef.value
   logInfo('player', 'canplay', {
@@ -658,7 +751,9 @@ function onWaiting() {
 }
 function onPlaying() {
   buffering.value = false
+  seekingTarget.value = null
   isPlaying.value = true
+  bufferVersion.value++
   logInfo('player', 'playing')
   const v = videoRef.value
   if (props.hash && v && v.duration && isFinite(v.duration)) {
@@ -669,6 +764,10 @@ function onSeeking() {
   buffering.value = true
   const v = videoRef.value
   wasPlayingBeforeSeek.value = isPlaying.value
+  if (v && isFinite(v.currentTime)) {
+    seekingTarget.value = v.currentTime
+    sendSeekNow(v.currentTime)
+  }
   logInfo('player', 'seeking', {
     currentTime: v?.currentTime ?? 0,
     duration: v?.duration ?? 0,
@@ -677,6 +776,8 @@ function onSeeking() {
 }
 function onSeeked() {
   buffering.value = false
+  seekingTarget.value = null
+  bufferVersion.value++
   const v = videoRef.value
   if (v) {
     currentTime.value = v.currentTime
@@ -687,9 +788,6 @@ function onSeeked() {
     duration: v?.duration ?? 0,
     wasPlaying: wasPlayingBeforeSeek.value,
   })
-  if (v && v.duration && isFinite(v.duration) && props.hash) {
-    reportSeek(props.hash, v.currentTime, v.duration)
-  }
   if (wasPlayingBeforeSeek.value) {
     v?.play().then(() => {
       isPlaying.value = true

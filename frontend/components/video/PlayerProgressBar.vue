@@ -91,6 +91,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   seek: [time: number]
   scrubbing: [active: boolean]
+  'scrub-preview': [time: number]
 }>()
 
 const barRef = ref<HTMLDivElement>()
@@ -138,8 +139,8 @@ function stateAt(pct: number): number | null {
 
 function segmentClass(state: number): string {
   switch (state) {
-    case 2: return 'bg-white/40'
-    case 1: return 'bg-amber-400/70 animate-pulse'
+    case 2: return 'bg-white/45'
+    case 1: return 'bg-amber-400/75 animate-pulse'
     case 3: return 'bg-red-500/60'
     default: return ''
   }
@@ -190,6 +191,9 @@ function onPointerDown(e: PointerEvent) {
 function onPointerMove(e: PointerEvent) {
   if (scrubbing.value) {
     scrubPercent.value = percentFromEvent(e)
+    if (props.duration && isFinite(props.duration)) {
+      emit('scrub-preview', (props.duration * scrubPercent.value) / 100)
+    }
   } else if (e.pointerType === 'mouse') {
     hoverPercent.value = percentFromEvent(e)
   }
