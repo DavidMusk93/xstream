@@ -180,7 +180,7 @@ async def pause_torrent(req: ProgressRequest, engine: Any = Depends(get_engine))
     if not re.fullmatch(HASH_PATTERN, req.hash, re.IGNORECASE):
         raise HTTPException(status_code=400, detail="Invalid hash")
     if bt_client.is_enabled():
-        return await bt_client.control_action("pause", {"hash": req.hash})
+        return await bt_client.control_action("pause", {"hash": req.hash, "force": req.force})
     ok = await asyncio.to_thread(engine.pause_download, req.hash)
     if not ok:
         raise HTTPException(status_code=404, detail="Torrent not found")

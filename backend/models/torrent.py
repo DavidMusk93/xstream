@@ -23,6 +23,7 @@ class TorrentStatus(BaseModel):
     quality: str = "SD"
     piece_segments: list[list[float | int]] = []
     check_progress: float = 0.0
+    pinned: bool = False
 
 
 class TorrentAddRequest(BaseModel):
@@ -50,5 +51,6 @@ class SeekRequest(BaseModel):
 class ProgressRequest(BaseModel):
     """正常播放中定期进度上报请求"""
     hash: str
-    time: float
-    duration: float
+    time: float = 0.0
+    duration: float = 0.0
+    force: bool = False

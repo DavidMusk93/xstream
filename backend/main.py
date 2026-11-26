@@ -142,6 +142,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 from backend.routers.torrents import _resolve_magnet
                 from core.db.write_queue import db_read
 
+                # Respect disk watermark (85%) and cap concurrent background
+                # preloads so liked titles never exhaust disk or starve playback.
+                max_concurrent_liked = 2
+                metrics = await bt_client.cache_metrics()
+                used = int(metrics.get("used_bytes") or 0)
+                limit = int(metrics.get("max_bytes") or 0)
+                if limit > 0 and used >= int(limit * 0.85):
+                    log.info(
+                        f"Skipping liked preload: cache at {metrics.get('used_human')} / "
+                        f"{metrics.get('max_human')} (>= 85% watermark)"
+                    )
+                    return
+
                 resumed = 0
                 for magnet, h in liked_rows:
                     if not h:
@@ -149,13 +162,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     try:
                         raw = magnet or f"magnet:?xt=urn:btih:{h}"
                         resolved = await db_read(_resolve_magnet, raw)
-                        await bt_client.add_torrent(resolved, prefetch=False)
+                        # Only start up to max_concurrent_liked active; add the rest paused+pinned.
+                        prefetch = resumed >= max_concurrent_liked
+                        out = await bt_client.add_torrent(resolved, prefetch=prefetch)
                         await bt_client.set_pin(h, pinned=True)
-                        resumed += 1
+                        if not prefetch and float(out.get("progress") or 0.0) < 99.9:
+                            resumed += 1
                     except Exception as exc:
                         log.warning(f"Failed to resume liked torrent {h[:12]} in xstream_bt: {exc}")
                     await asyncio.sleep(0.2)
-                log.info(f"Resumed {resumed}/{len(liked_rows)} liked torrents in xstream_bt")
+                log.info(f"Preloaded {resumed} active liked torrents (cap={max_concurrent_liked}) in xstream_bt")
                 return
 
             await asyncio.to_thread(engine._preload_thread.join)
