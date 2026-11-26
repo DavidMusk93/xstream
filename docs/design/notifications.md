@@ -9,23 +9,45 @@ apply; high-frequency SSE-only events are never hooks.
 ```text
 publish_event(name, data)
     |
-    +--> EventBus -> /api/events (browser)
+    +--> EventBus -> /api/events (browser SSE, ephemeral)
     |
-    +--> notify.schedule_dispatch
+    +--> notify.schedule_dispatch (tracked task, env-cached gate)
               |
               v
-         render: tg-lint (HTML) | Python HTML fallback (always parse_mode=HTML)
+         render: tg-lint (HTML) | Python HTML fallback (parse_mode=HTML)
               |
               v
-         telegram.send_messages (split at 4096)
+         split_message (===SPLIT=== + 4096 HTML-safe chunks)
+              |
+              v
+         PG notify_outbox (status=pending, sent_chunks, next_retry_at)
+              |
+              v (asyncio.Event wakeup + due poll)
+         NotifyWorker (single serial consumer, reused httpx.AsyncClient)
+              |-- 1.05s per-chat pacing (avoids 429 bursts)
+              |-- chunk-level progress resume (no drops, no duplicates)
+              |-- HTTP 429 -> Retry-After reschedule
+              |-- Timeout / 5xx -> exponential backoff (5s..600s, max 6) -> dead
+              |-- HTTP 400 parse error -> single plain-text fallback per chunk
+              |-- graceful drain on lifespan shutdown
 ```
 
 - **Registry**: `backend/services/notify/registry.py` — add a `NotifyHook` row
   to extend; no scattered string literals.
+- **Durable outbox**: `core/db/notify_outbox.py` + `notify_outbox` PG table —
+  survives backend restarts and transient Telegram outages; rows older than
+  14 days (`sent`/`dead`) are pruned hourly.
+- **Worker**: `backend/services/notify/worker.py` — started/stopped in
+  `backend/main.py` lifespan. Queue depth and recent errors are exposed via
+  `GET /api/notify/status` (`worker_running`, `outbox`).
 - **Formatter**: `tools/tg-lint` (Rust) reads JSON stdin, prints Telegram HTML.
 - **Fallback**: `backend/services/notify/fallback.py` emits the same Telegram
-  **HTML** shape if the binary is missing; `telegram.py` retries plain text only
-  if Telegram rejects a chunk (`can't parse entities`).
+  **HTML** shape if the binary is missing; `telegram.py` retries plain text
+  only when Telegram rejects a chunk with an HTML entity parse error (`400`).
+- **Phase-B RSS coverage**: `scrapers/v2/tasks/sync_titles.py` returns
+  genuinely new RSS-only titles from `_rss_enrich_all`, and
+  `backend/routers/sync.py` publishes `sync.completed` with
+  `trigger="<trigger>/rss"` when Phase B discovers new works.
 
 ### Telegram HTML practice (summary)
 

@@ -104,6 +104,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _db.init_schema()
     log.info("PostgreSQL schema initialized")
 
+    # Start the durable Telegram outbox worker
+    from backend.services import notify as _notify
+    _notify.start_worker()
+
     # Load user-liked titles into the engine protection set
     try:
         conn = _db_conn()
@@ -168,6 +172,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     log.info("Backend shutting down...")
+    await _notify.stop_worker()
     from backend.services import bt_client
     await bt_client.close_client()
     if bridge is not None:
