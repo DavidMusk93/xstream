@@ -139,12 +139,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             from backend.services import bt_client
             if bt_client.is_enabled():
+                bt_client.start_progress_broadcaster()
                 from backend.routers.torrents import _resolve_magnet
                 from core.db.write_queue import db_read
 
                 # Respect disk watermark (85%) and cap concurrent background
-                # preloads so liked titles never exhaust disk or starve playback.
+                # preloads so liked titles only warm head+tail (~166 MiB each)
+                # without exhausting disk or starving playback.
                 max_concurrent_liked = 2
+                prewarm_cap_bytes = 166 * 1024 * 1024
                 metrics = await bt_client.cache_metrics()
                 used = int(metrics.get("used_bytes") or 0)
                 limit = int(metrics.get("max_bytes") or 0)
@@ -155,6 +158,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     )
                     return
 
+                existing_local: dict[str, int] = {}
+                try:
+                    cache_data = await bt_client.cache_list()
+                    for item in cache_data.get("items") or []:
+                        if item.get("hash"):
+                            existing_local[str(item["hash"]).lower()] = int(item.get("local_size") or 0)
+                except Exception:
+                    pass
+
                 resumed = 0
                 for magnet, h in liked_rows:
                     if not h:
@@ -162,8 +174,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     try:
                         raw = magnet or f"magnet:?xt=urn:btih:{h}"
                         resolved = await db_read(_resolve_magnet, raw)
-                        # Only start up to max_concurrent_liked active; add the rest paused+pinned.
-                        prefetch = resumed >= max_concurrent_liked
+                        already_warm = existing_local.get(h.lower(), 0) >= prewarm_cap_bytes
+                        prefetch = already_warm or resumed >= max_concurrent_liked
                         out = await bt_client.add_torrent(resolved, prefetch=prefetch)
                         await bt_client.set_pin(h, pinned=True)
                         if not prefetch and float(out.get("progress") or 0.0) < 99.9:

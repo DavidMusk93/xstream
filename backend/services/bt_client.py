@@ -15,6 +15,7 @@ log = get_logger("bt-client")
 
 _client: httpx.AsyncClient | None = None
 _watchers: dict[str, asyncio.Task[None]] = {}
+_broadcaster_task: asyncio.Task[None] | None = None
 
 
 def get_base_url() -> str | None:
@@ -41,14 +42,68 @@ def _get_client() -> httpx.AsyncClient:
 
 
 async def close_client() -> None:
-    """Shut down background watchers and close the shared HTTP client."""
+    """Shut down background watchers, broadcaster, and close the shared HTTP client."""
+    global _broadcaster_task, _client
+    if _broadcaster_task is not None and not _broadcaster_task.done():
+        _broadcaster_task.cancel()
+        try:
+            await _broadcaster_task
+        except asyncio.CancelledError:
+            pass
+    _broadcaster_task = None
     for task in list(_watchers.values()):
         task.cancel()
     _watchers.clear()
-    global _client
     if _client is not None and not _client.is_closed:
         await _client.aclose()
     _client = None
+
+
+def start_progress_broadcaster() -> None:
+    """Broadcast live torrent.progress for all active xstream_bt downloads while SSE clients exist."""
+    global _broadcaster_task
+    if not is_enabled():
+        return
+    if _broadcaster_task is not None and not _broadcaster_task.done():
+        return
+
+    async def _loop() -> None:
+        last_states: dict[str, str] = {}
+        try:
+            while True:
+                await asyncio.sleep(2.0)
+                bus = get_bus()
+                if bus.subscriber_count() <= 0:
+                    continue
+                base = get_base_url()
+                if not base:
+                    continue
+                try:
+                    resp = await _get_client().get(f"{base}/api/cache", timeout=5.0)
+                except Exception:
+                    continue
+                if resp.status_code != 200:
+                    continue
+                items = resp.json().get("items") or []
+                for item in items:
+                    h = str(item.get("hash") or "").lower()
+                    if not h:
+                        continue
+                    state = str(item.get("state") or "")
+                    prev = last_states.get(h)
+                    last_states[h] = state
+                    # Avoid duplicating hashes already watched by per-hash _watch_hash
+                    if h in _watchers:
+                        continue
+                    if state == "downloading" or (prev == "downloading" and state != prev):
+                        await bus.publish("torrent.progress", item)
+        except asyncio.CancelledError:
+            pass
+
+    try:
+        _broadcaster_task = asyncio.create_task(_loop(), name="bt-progress-broadcaster")
+    except RuntimeError:
+        pass
 
 
 def _watch_hash(hash_str: str) -> None:

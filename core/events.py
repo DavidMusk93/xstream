@@ -75,6 +75,10 @@ class EventBus:
         self._rust_bus.unsubscribe(sub.sub_id)
         log.debug(f"SSE client unsubscribed, total={self._rust_bus.subscriber_count()}")
 
+    def subscriber_count(self) -> int:
+        """Return the number of currently connected SSE clients."""
+        return self._rust_bus.subscriber_count()
+
     async def publish(self, event: str, data: dict[str, Any]) -> None:
         """Broadcast an event to all connected clients.
 
