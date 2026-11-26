@@ -290,6 +290,13 @@ impl CacheTracker {
         }
     }
 
+    /// Return `true` if `hash` is currently pinned (e.g. user-liked title).
+    pub fn is_pinned(&self, hash: &str) -> bool {
+        self.inner
+            .read()
+            .is_ok_and(|guard| guard.pinned.contains(hash))
+    }
+
     /// Remove all tracking metadata for a deleted torrent.
     pub fn forget(&self, hash: &str) {
         if let Ok(mut guard) = self.inner.write() {

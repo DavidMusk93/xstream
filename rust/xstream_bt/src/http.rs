@@ -49,8 +49,8 @@ pub fn build_router(engine: Arc<BtEngine>) -> Router {
         .route("/torrent/status/{hash}", get(torrent_status))
         .route("/torrent/pause", post(pause_torrent))
         .route("/torrent/resume", post(resume_torrent))
-        .route("/torrent/seek", post(seek_noop))
-        .route("/torrent/progress", post(progress_noop))
+        .route("/torrent/seek", post(seek_torrent))
+        .route("/torrent/progress", post(progress_torrent))
         .route("/torrent/{hash}", delete(delete_torrent))
         .route("/api/check/{hash}", get(check_stream))
         .route("/api/cache", get(cache_list))
@@ -172,12 +172,30 @@ async fn resume_torrent(
     Ok(Json(OkResponse { ok: true }))
 }
 
-async fn seek_noop(Json(_req): Json<HashControlRequest>) -> Json<OkResponse> {
-    // librqbit FileStream handles seek prioritization natively via HTTP Range requests.
-    Json(OkResponse { ok: true })
+#[derive(Deserialize)]
+struct SeekControlRequest {
+    hash: String,
+    #[serde(default)]
+    time: f64,
+    #[serde(default)]
+    duration: f64,
 }
 
-async fn progress_noop(Json(_req): Json<HashControlRequest>) -> Json<OkResponse> {
+async fn seek_torrent(
+    State(state): State<AppState>,
+    Json(req): Json<SeekControlRequest>,
+) -> Result<Json<OkResponse>, BtError> {
+    state.engine.seek(&req.hash, req.time, req.duration).await?;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn progress_torrent(
+    State(state): State<AppState>,
+    Json(req): Json<SeekControlRequest>,
+) -> Json<OkResponse> {
+    state
+        .engine
+        .note_playback_progress(&req.hash, req.time, req.duration);
     Json(OkResponse { ok: true })
 }
 
@@ -258,6 +276,8 @@ async fn stream_video(
                 .seek(SeekFrom::Start(range.start))
                 .await
                 .map_err(|err| BtError::Internal(format!("stream seek failed: {err}")))?;
+
+            state.engine.note_stream_offset(&hash, range.start).await;
 
             let len = range.len();
             if let Ok(val) = HeaderValue::from_str(&len.to_string()) {

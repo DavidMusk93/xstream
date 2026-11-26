@@ -1,20 +1,25 @@
 //! `BitTorrent` engine facade backed by `librqbit`.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt,
+    io::SeekFrom,
     net::{Ipv4Addr, SocketAddr},
+    ops::Range,
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 
 use librqbit::{
-    api::TorrentIdOrHash, AddTorrent, AddTorrentOptions, AddTorrentResponse, ListenerOptions,
+    api::TorrentIdOrHash, AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListenerOptions,
     ManagedTorrent, Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
 };
 use serde::Serialize;
-use tokio::io::{AsyncRead, AsyncSeek};
-use tracing::{info, warn};
+use tokio::{
+    io::{AsyncRead, AsyncSeek, AsyncSeekExt},
+    sync::Mutex,
+};
+use tracing::{debug, info, warn};
 
 use crate::{
     cache::{
@@ -113,8 +118,8 @@ pub struct TorrentStatusDto {
     pub verified_pieces: u64,
     /// Quality label (reserved for compatibility).
     pub quality: &'static str,
-    /// Piece segments (empty for `librqbit` streaming mode).
-    pub piece_segments: Vec<(u32, u32, u8)>,
+    /// Piece segments `[start_pct, end_pct, state]` (`0=missing, 1=downloading, 2=cached`).
+    pub piece_segments: Vec<(f64, f64, u8)>,
     /// Hash-check progress 0-100.
     pub check_progress: f64,
 }
@@ -191,12 +196,21 @@ impl fmt::Debug for OpenVideoStream {
     }
 }
 
+/// Number of fixed-width buckets reported in `piece_segments` for progress/cache heatmaps.
+const PIECE_SEGMENT_BUCKETS: usize = 64;
+
+/// Minimum bytes downloaded before `head_ready` becomes true when piece bitmap is unavailable.
+const HEAD_READY_MIN_BYTES: u64 = 1024 * 1024;
+
 /// Core `BitTorrent` streaming engine wrapping a `librqbit::Session`.
 pub struct BtEngine {
     session: Arc<Session>,
+    api: Api,
     cache_dir: PathBuf,
     policy: EvictionPolicy,
     tracker: CacheTracker,
+    seek_cursors: Mutex<HashMap<String, Box<dyn AsyncVideoStream>>>,
+    active_offsets: RwLock<HashMap<String, u64>>,
 }
 
 impl fmt::Debug for BtEngine {
@@ -212,6 +226,7 @@ struct VideoFileInfo {
     rel_path: String,
     len: u64,
     mime: &'static str,
+    piece_range: Range<u32>,
 }
 
 impl BtEngine {
@@ -264,11 +279,16 @@ impl BtEngine {
             "librqbit session initialized"
         );
 
+        let api = Api::new(Arc::clone(&session), None);
+
         Ok(Self {
             session,
+            api,
             cache_dir: config.cache_dir.clone(),
             policy,
             tracker,
+            seek_cursors: Mutex::new(HashMap::new()),
+            active_offsets: RwLock::new(HashMap::new()),
         })
     }
 
@@ -295,7 +315,7 @@ impl BtEngine {
                 let _ = self.session.unpause(&existing).await;
             }
             self.restrict_to_video_file(&existing).await;
-            let st = build_status(&hash, &existing);
+            let st = self.build_status(&hash, &existing);
             return Ok(AddOutcome {
                 hash,
                 status: "added",
@@ -327,7 +347,7 @@ impl BtEngine {
         };
 
         self.restrict_to_video_file(&handle).await;
-        let st = build_status(&hash, &handle);
+        let st = self.build_status(&hash, &handle);
 
         info!(
             hash = %hash,
@@ -352,7 +372,7 @@ impl BtEngine {
     /// if the torrent is not managed.
     pub fn status(&self, raw_hash: &str) -> Result<TorrentStatusDto, BtError> {
         let (hash, handle) = self.lookup_handle(raw_hash)?;
-        Ok(build_status(&hash, &handle))
+        Ok(self.build_status(&hash, &handle))
     }
 
     /// Return `/api/check/{hash}` readiness information.
@@ -378,7 +398,7 @@ impl BtEngine {
             });
         };
 
-        let st = build_status(&hash, &handle);
+        let st = self.build_status(&hash, &handle);
         Ok(StreamCheckDto {
             hash,
             cached: st.cached,
@@ -389,12 +409,23 @@ impl BtEngine {
         })
     }
 
-    /// Pause a managed torrent.
+    /// Pause a managed torrent (pinned/liked torrents keep downloading in the background).
     ///
     /// # Errors
     /// Returns [`BtError::NotFound`] or [`BtError::Internal`].
     pub async fn pause(&self, raw_hash: &str) -> Result<(), BtError> {
-        let (_, handle) = self.lookup_handle(raw_hash)?;
+        let (hash, handle) = self.lookup_handle(raw_hash)?;
+        {
+            let mut cursors = self.seek_cursors.lock().await;
+            cursors.remove(&hash);
+        }
+        if let Ok(mut offsets) = self.active_offsets.write() {
+            offsets.remove(&hash);
+        }
+        if self.tracker.is_pinned(&hash) {
+            debug!(hash = %hash, "skipping pause for pinned (liked) torrent");
+            return Ok(());
+        }
         self.session
             .pause(&handle)
             .await
@@ -415,6 +446,84 @@ impl BtEngine {
             .map_err(|err| BtError::Internal(format!("unpause failed: {err}")))
     }
 
+    /// Shift piece prioritization to the byte offset corresponding to `time_sec / duration_sec`.
+    ///
+    /// Maintains a single prewarm `FileStream` per torrent so rapid scrubbing immediately
+    /// replaces any previous seek window and focuses peer bandwidth on the new offset.
+    ///
+    /// # Errors
+    /// Returns [`BtError::InvalidInput`], [`BtError::NotFound`], or [`BtError::NotReady`].
+    pub async fn seek(
+        &self,
+        raw_hash: &str,
+        time_sec: f64,
+        duration_sec: f64,
+    ) -> Result<(), BtError> {
+        let (hash, handle) = self.lookup_handle(raw_hash)?;
+        self.tracker.touch(&hash);
+
+        let Some(video) = pick_video_from_handle(&handle) else {
+            return Ok(());
+        };
+        self.restrict_to_video_file(&handle).await;
+
+        let stats = handle.stats();
+        if matches!(stats.state, TorrentStatsState::Paused) {
+            let _ = self.session.unpause(&handle).await;
+        }
+
+        let target_byte = byte_offset_for_time(time_sec, duration_sec, video.len);
+        if let Ok(mut offsets) = self.active_offsets.write() {
+            offsets.insert(hash.clone(), target_byte);
+        }
+
+        if stats.finished {
+            return Ok(());
+        }
+
+        let mut stream = Arc::clone(&handle)
+            .stream(video.id)
+            .await
+            .map_err(|err| BtError::NotReady(format!("seek stream unavailable: {err}")))?;
+        stream
+            .seek(SeekFrom::Start(target_byte))
+            .await
+            .map_err(|err| BtError::Internal(format!("seek stream failed: {err}")))?;
+
+        let mut cursors = self.seek_cursors.lock().await;
+        cursors.insert(hash.clone(), Box::new(stream));
+        debug!(hash = %hash, target_byte, "seek prewarm cursor updated");
+        Ok(())
+    }
+
+    /// Record the latest playback position for heatmap highlighting without opening a stream.
+    pub fn note_playback_progress(&self, raw_hash: &str, time_sec: f64, duration_sec: f64) {
+        let Ok((hash, handle)) = self.lookup_handle(raw_hash) else {
+            return;
+        };
+        self.tracker.touch(&hash);
+        let Some(video) = pick_video_from_handle(&handle) else {
+            return;
+        };
+        let offset = byte_offset_for_time(time_sec, duration_sec, video.len);
+        if let Ok(mut offsets) = self.active_offsets.write() {
+            offsets.insert(hash, offset);
+        }
+    }
+
+    /// Record an active HTTP Range stream offset and release any redundant seek prewarm cursor.
+    pub async fn note_stream_offset(&self, raw_hash: &str, offset_bytes: u64) {
+        let Some(hash) = normalize_hash(raw_hash) else {
+            return;
+        };
+        self.tracker.touch(&hash);
+        if let Ok(mut offsets) = self.active_offsets.write() {
+            offsets.insert(hash.clone(), offset_bytes);
+        }
+        let mut cursors = self.seek_cursors.lock().await;
+        cursors.remove(&hash);
+    }
+
     /// Delete a torrent from the session, optionally removing downloaded files.
     ///
     /// # Errors
@@ -423,6 +532,13 @@ impl BtEngine {
         let hash = normalize_hash(raw_hash)
             .ok_or_else(|| BtError::InvalidInput("invalid info-hash".to_string()))?;
         let id = parse_torrent_id(&hash)?;
+        {
+            let mut cursors = self.seek_cursors.lock().await;
+            cursors.remove(&hash);
+        }
+        if let Ok(mut offsets) = self.active_offsets.write() {
+            offsets.remove(&hash);
+        }
         let remove_disk = matches!(delete_files, DeleteFiles::Remove);
         self.session
             .delete(id, remove_disk)
@@ -459,7 +575,7 @@ impl BtEngine {
         let items: Vec<TorrentStatusDto> = self.session.with_torrents(|iter| {
             iter.filter_map(|(_, handle)| {
                 let h = handle.info_hash().as_string();
-                let st = build_status(&h, handle);
+                let st = self.build_status(&h, handle);
                 (st.video_size > 0).then_some(st)
             })
             .collect()
@@ -625,6 +741,113 @@ impl BtEngine {
             );
         }
     }
+
+    fn build_status(&self, hash: &str, handle: &ManagedTorrent) -> TorrentStatusDto {
+        let stats = handle.stats();
+        let video = pick_video_from_handle(handle);
+        let name = handle.name();
+
+        let (peers, download_rate, upload_rate, verified_pieces) = match &stats.live {
+            Some(live) => (
+                live.snapshot.peer_stats.live,
+                live.download_speed.as_bytes(),
+                live.upload_speed.as_bytes(),
+                live.snapshot.downloaded_and_checked_pieces,
+            ),
+            None => (0, 0, 0, 0),
+        };
+
+        let (video_file, video_size, local_size, mime, ready, piece_range) = match video {
+            Some(v) => {
+                let file_done = stats.file_progress.get(v.id).copied().unwrap_or(0);
+                (
+                    Some(v.rel_path),
+                    v.len,
+                    file_done,
+                    v.mime,
+                    v.len > 0,
+                    Some(v.piece_range),
+                )
+            }
+            None => (
+                None,
+                stats.total_bytes,
+                stats.progress_bytes,
+                "video/mp4",
+                false,
+                None,
+            ),
+        };
+
+        let progress = compute_percent(local_size, video_size);
+        let state_label = map_state(&stats);
+        let is_active_download = state_label == "downloading";
+
+        let active_ratio = if is_active_download && video_size > 0 {
+            self.active_offsets
+                .read()
+                .ok()
+                .and_then(|map| map.get(hash).copied())
+                .map(|off| compute_percent(off, video_size) / 100.0)
+        } else {
+            None
+        };
+
+        let (piece_segments, first_piece_have) = match piece_range {
+            Some(range) if !range.is_empty() => {
+                if stats.finished {
+                    let count = usize::try_from(range.end.saturating_sub(range.start)).unwrap_or(0);
+                    let all_have = vec![true; count.clamp(1, PIECE_SEGMENT_BUCKETS)];
+                    (
+                        compute_piece_segments(&all_have, None, PIECE_SEGMENT_BUCKETS),
+                        true,
+                    )
+                } else if let Ok(id) = parse_torrent_id(hash) {
+                    if let Ok((bf, total_pieces)) = self.api.api_dump_haves(id) {
+                        let start = usize::try_from(range.start).unwrap_or(0);
+                        let end = usize::try_from(range.end.min(total_pieces)).unwrap_or(start);
+                        let mut bits = Vec::with_capacity(end.saturating_sub(start));
+                        for idx in start..end {
+                            bits.push(bf.get(idx).as_deref().copied().unwrap_or(false));
+                        }
+                        let first_ok = bits.first().copied().unwrap_or(false);
+                        let segs =
+                            compute_piece_segments(&bits, active_ratio, PIECE_SEGMENT_BUCKETS);
+                        (segs, first_ok)
+                    } else {
+                        (Vec::new(), false)
+                    }
+                } else {
+                    (Vec::new(), false)
+                }
+            }
+            _ => (Vec::new(), false),
+        };
+
+        let head_ready =
+            ready && (stats.finished || first_piece_have || local_size >= HEAD_READY_MIN_BYTES);
+
+        TorrentStatusDto {
+            hash: hash.to_string(),
+            name,
+            ready,
+            cached: local_size > HEAD_READY_MIN_BYTES,
+            head_ready,
+            peers,
+            progress,
+            download_rate,
+            upload_rate,
+            video_file,
+            video_size,
+            local_size,
+            mime,
+            state: state_label,
+            verified_pieces,
+            quality: "",
+            piece_segments,
+            check_progress: 0.0,
+        }
+    }
 }
 
 fn parse_torrent_id(hash: &str) -> Result<TorrentIdOrHash, BtError> {
@@ -646,69 +869,93 @@ fn pick_video_from_handle(handle: &ManagedTorrent) -> Option<VideoFileInfo> {
                 })
                 .collect();
 
-            select_video_file(&candidates).map(|picked| VideoFileInfo {
-                id: picked.id,
-                rel_path: picked.path.to_string_lossy().into_owned(),
-                len: picked.len,
-                mime: mime_for_path(picked.path),
+            select_video_file(&candidates).and_then(|picked| {
+                let fi = meta.file_infos.get(picked.id)?;
+                Some(VideoFileInfo {
+                    id: picked.id,
+                    rel_path: picked.path.to_string_lossy().into_owned(),
+                    len: picked.len,
+                    mime: mime_for_path(picked.path),
+                    piece_range: fi.piece_range.clone(),
+                })
             })
         })
         .ok()
         .flatten()
 }
 
-fn build_status(hash: &str, handle: &ManagedTorrent) -> TorrentStatusDto {
-    let stats = handle.stats();
-    let video = pick_video_from_handle(handle);
-    let name = handle.name();
-
-    let (peers, download_rate, upload_rate, verified_pieces) = match &stats.live {
-        Some(live) => (
-            live.snapshot.peer_stats.live,
-            live.download_speed.as_bytes(),
-            live.upload_speed.as_bytes(),
-            live.snapshot.downloaded_and_checked_pieces,
-        ),
-        None => (0, 0, 0, 0),
-    };
-
-    let (video_file, video_size, local_size, mime, ready) = match video {
-        Some(v) => {
-            let file_done = stats.file_progress.get(v.id).copied().unwrap_or(0);
-            (Some(v.rel_path), v.len, file_done, v.mime, v.len > 0)
-        }
-        None => (
-            None,
-            stats.total_bytes,
-            stats.progress_bytes,
-            "video/mp4",
-            false,
-        ),
-    };
-
-    let progress = compute_percent(local_size, video_size);
-    let state_label = map_state(&stats);
-
-    TorrentStatusDto {
-        hash: hash.to_string(),
-        name,
-        ready,
-        cached: local_size > 1024 * 1024,
-        head_ready: ready,
-        peers,
-        progress,
-        download_rate,
-        upload_rate,
-        video_file,
-        video_size,
-        local_size,
-        mime,
-        state: state_label,
-        verified_pieces,
-        quality: "",
-        piece_segments: Vec::new(),
-        check_progress: 0.0,
+/// Convert a `(time_sec, duration_sec)` playback position into a clamped byte offset.
+fn byte_offset_for_time(time_sec: f64, duration_sec: f64, total_bytes: u64) -> u64 {
+    if total_bytes == 0 || !time_sec.is_finite() || !duration_sec.is_finite() || duration_sec <= 0.0
+    {
+        return 0;
     }
+    let ratio = (time_sec / duration_sec).clamp(0.0, 0.995);
+    // Scale via integer basis points (0..=10_000) without `as` casts.
+    let mut bp: u64 = 0;
+    for step in (0..=10_000_u32).rev() {
+        if f64::from(step) / 10_000.0 <= ratio {
+            bp = u64::from(step);
+            break;
+        }
+    }
+    let scaled = u128::from(total_bytes)
+        .saturating_mul(u128::from(bp))
+        .checked_div(10_000)
+        .unwrap_or(0);
+    u64::try_from(scaled).unwrap_or(total_bytes.saturating_sub(1))
+}
+
+/// Compress per-piece download booleans into fixed-width `[start_pct, end_pct, state]` buckets.
+///
+/// States match xstream's `PlayerProgressBar` and `CachePanel` contract:
+/// `0 = missing`, `1 = downloading / partial`, `2 = cached`.
+pub fn compute_piece_segments(
+    have_bits: &[bool],
+    active_ratio: Option<f64>,
+    max_buckets: usize,
+) -> Vec<(f64, f64, u8)> {
+    let total = have_bits.len();
+    if total == 0 || max_buckets == 0 {
+        return Vec::new();
+    }
+    let buckets = total.min(max_buckets);
+    let buckets_u32 = u32::try_from(buckets).unwrap_or(1);
+    let active_bucket = active_ratio.and_then(|r| {
+        if !r.is_finite() {
+            return None;
+        }
+        let clamped = r.clamp(0.0, 0.9999);
+        for b in (0..buckets_u32).rev() {
+            if f64::from(b) / f64::from(buckets_u32) <= clamped {
+                return usize::try_from(b).ok();
+            }
+        }
+        Some(0)
+    });
+
+    let mut out = Vec::with_capacity(buckets);
+    for b in 0..buckets {
+        let start_idx = b.saturating_mul(total) / buckets;
+        let end_idx = ((b + 1).saturating_mul(total) / buckets)
+            .max(start_idx + 1)
+            .min(total);
+        let slice = &have_bits[start_idx..end_idx];
+        let have_count = slice.iter().filter(|&&h| h).count();
+
+        let state = if have_count == slice.len() {
+            2_u8
+        } else {
+            u8::from(have_count > 0 || active_bucket == Some(b))
+        };
+
+        let start_u32 = u32::try_from(b).unwrap_or(0);
+        let end_u32 = u32::try_from(b + 1).unwrap_or(buckets_u32);
+        let start_pct = (f64::from(start_u32) * 1000.0 / f64::from(buckets_u32)).round() / 10.0;
+        let end_pct = (f64::from(end_u32) * 1000.0 / f64::from(buckets_u32)).round() / 10.0;
+        out.push((start_pct, end_pct, state));
+    }
+    out
 }
 
 fn map_state(stats: &librqbit::TorrentStats) -> &'static str {
@@ -755,5 +1002,34 @@ mod tests {
             (compute_percent(150, 100) - 100.0).abs() < f64::EPSILON,
             "clamped"
         );
+    }
+
+    #[test]
+    fn piece_segments_maps_cached_partial_and_active_cursor() {
+        let mut bits = vec![false; 128];
+        // First 32 pieces cached -> first 16 buckets (of 64) are cached (2).
+        for b in bits.iter_mut().take(32) {
+            *b = true;
+        }
+        // One piece in bucket 16 cached -> partial (1).
+        bits[32] = true;
+
+        let segs = compute_piece_segments(&bits, Some(0.5), 64);
+        assert_eq!(segs.len(), 64);
+        assert_eq!(segs[0].2, 2);
+        assert_eq!(segs[15].2, 2);
+        assert_eq!(segs[16].2, 1);
+        assert_eq!(segs[17].2, 0);
+        // Active cursor at 50% (bucket 32) highlighted as downloading (1).
+        assert_eq!(segs[32].2, 1);
+        assert_eq!(segs[63].2, 0);
+    }
+
+    #[test]
+    fn byte_offset_clamps_bounds() {
+        assert_eq!(byte_offset_for_time(0.0, 100.0, 10_000), 0);
+        assert_eq!(byte_offset_for_time(50.0, 100.0, 10_000), 5_000);
+        assert_eq!(byte_offset_for_time(200.0, 100.0, 10_000), 9_950);
+        assert_eq!(byte_offset_for_time(10.0, 0.0, 10_000), 0);
     }
 }
