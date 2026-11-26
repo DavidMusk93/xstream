@@ -236,11 +236,14 @@ const containerRef = ref<HTMLDivElement>()
 const { status, loading, error, canplayFired, startPolling, stopPolling, waitForHeadReady, cancelWaitForHeadReady, reportSeek, reportProgress, reportPause, reportResume, formatSpeed } = useVideoPlayer()
 
 const buffering = ref(false)
+const retryingMsg = ref('')
 const errorMsg = ref('')
 const isFullscreen = ref(false)
 const isMuted = ref(false)
 const retryCount = ref(0)
 const MAX_RETRIES = 3
+let pauseDownloadTimer: ReturnType<typeof setTimeout> | null = null
+const PAUSE_GRACE_MS = 30000
 
 const currentTime = ref(0)
 const duration = ref(0)
@@ -564,6 +567,7 @@ const liveCacheBadge = computed<{ dot: string; text: string; compact: string } |
 })
 
 const bufferingText = computed(() => {
+  if (retryingMsg.value) return retryingMsg.value
   const s = status.value
   const prefix = seekingTarget.value !== null
     ? `Seeking ${formatTime(seekingTarget.value)}`
@@ -667,7 +671,12 @@ watch(isOpen, (open) => {
       exitFullscreen()
     }
     errorMsg.value = ''
+    retryingMsg.value = ''
     buffering.value = false
+    if (pauseDownloadTimer) {
+      clearTimeout(pauseDownloadTimer)
+      pauseDownloadTimer = null
+    }
     showGestureHint.value = false
     currentTime.value = 0
     duration.value = 0
@@ -698,6 +707,7 @@ function onLoadedMetadata() {
 function onCanplay() {
   canplayFired.value = true
   buffering.value = false
+  retryingMsg.value = ''
   seekingTarget.value = null
   bufferVersion.value++
   retryCount.value = 0
@@ -754,9 +764,14 @@ function onWaiting() {
 }
 function onPlaying() {
   buffering.value = false
+  retryingMsg.value = ''
   seekingTarget.value = null
   isPlaying.value = true
   bufferVersion.value++
+  if (pauseDownloadTimer) {
+    clearTimeout(pauseDownloadTimer)
+    pauseDownloadTimer = null
+  }
   logInfo('player', 'playing')
   const v = videoRef.value
   if (props.hash && v && v.duration && isFinite(v.duration)) {
@@ -765,6 +780,10 @@ function onPlaying() {
 }
 function onSeeking() {
   buffering.value = true
+  if (pauseDownloadTimer) {
+    clearTimeout(pauseDownloadTimer)
+    pauseDownloadTimer = null
+  }
   const v = videoRef.value
   wasPlayingBeforeSeek.value = isPlaying.value
   if (v && isFinite(v.currentTime)) {
@@ -804,8 +823,18 @@ function onSeeked() {
 function onPause() {
   isPlaying.value = false
   logInfo('player', 'pause')
-  if (props.hash) {
-    reportPause(props.hash)
+  // Grace window: keep buffering ahead for 30s when the user pauses playback
+  // (e.g. pausing during a stall to let cache build). Closing the modal still
+  // pauses immediately.
+  if (pauseDownloadTimer) clearTimeout(pauseDownloadTimer)
+  const hash = props.hash
+  if (hash) {
+    pauseDownloadTimer = safeSetTimeout(() => {
+      pauseDownloadTimer = null
+      if (!isPlaying.value && isOpen.value && props.hash === hash) {
+        reportPause(hash)
+      }
+    }, PAUSE_GRACE_MS)
   }
 }
 
@@ -851,7 +880,10 @@ function onError() {
   if (code === 4 && retryCount.value < MAX_RETRIES) {
     retryCount.value++
     logInfo('player', `code=4 retry ${retryCount.value}/${MAX_RETRIES}`)
-    errorMsg.value = `Loading (${retryCount.value}/${MAX_RETRIES})...`
+    // Keep <video> mounted during retries: setting errorMsg unmounts <video>
+    // and would make videoRef.value null before the retry timer fires.
+    buffering.value = true
+    retryingMsg.value = `Retrying playback (${retryCount.value}/${MAX_RETRIES})...`
     const src = streamUrl.value
     safeSetTimeout(() => {
       if (videoRef.value) {
@@ -863,6 +895,7 @@ function onError() {
   }
 
   if (code === 4) {
+    retryingMsg.value = ''
     errorMsg.value = 'Playback failed, unsupported format or corrupted data'
     track('play_error', {
       code: props.code, star_code: props.starCode,
@@ -875,7 +908,8 @@ function onError() {
   if (retryCount.value < MAX_RETRIES) {
     retryCount.value++
     logInfo('player', `retry ${retryCount.value}/${MAX_RETRIES}`)
-    errorMsg.value = `Loading (${retryCount.value}/${MAX_RETRIES})...`
+    buffering.value = true
+    retryingMsg.value = `Retrying playback (${retryCount.value}/${MAX_RETRIES})...`
     const src = v?.src || streamUrl.value
     safeSetTimeout(() => {
       if (videoRef.value) {
@@ -886,6 +920,7 @@ function onError() {
     return
   }
 
+  retryingMsg.value = ''
   errorMsg.value = 'Playback failed, file may be incomplete'
   track('play_error', {
     code: props.code, star_code: props.starCode,
