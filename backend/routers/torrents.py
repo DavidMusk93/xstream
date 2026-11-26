@@ -148,7 +148,10 @@ async def seek_torrent(req: SeekRequest, engine: Any = Depends(get_engine)):
     if not re.fullmatch(HASH_PATTERN, req.hash, re.IGNORECASE):
         raise HTTPException(status_code=400, detail="Invalid hash")
     if bt_client.is_enabled():
-        return await bt_client.control_action("seek", {"hash": req.hash})
+        return await bt_client.control_action(
+            "seek",
+            {"hash": req.hash, "time": req.time, "duration": req.duration},
+        )
     ok = await asyncio.to_thread(engine.apply_seek_priority, req.hash, req.time, req.duration)
     if not ok:
         raise HTTPException(status_code=404, detail="Torrent not found or not ready")
@@ -161,7 +164,10 @@ async def progress_torrent(req: ProgressRequest, engine: Any = Depends(get_engin
     if not re.fullmatch(HASH_PATTERN, req.hash, re.IGNORECASE):
         raise HTTPException(status_code=400, detail="Invalid hash")
     if bt_client.is_enabled():
-        return await bt_client.control_action("progress", {"hash": req.hash})
+        return await bt_client.control_action(
+            "progress",
+            {"hash": req.hash, "time": req.time, "duration": req.duration},
+        )
     ok = await asyncio.to_thread(engine.update_play_progress, req.hash, req.time, req.duration)
     if not ok:
         raise HTTPException(status_code=404, detail="Torrent not found or not ready")

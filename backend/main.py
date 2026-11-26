@@ -109,19 +109,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _notify.start_worker()
 
     # Load user-liked titles into the engine protection set
+    liked_rows: list[tuple[str | None, str | None]] = []
     try:
         conn = _db_conn()
         try:
-            rows = conn.execute(
-                "SELECT magnet_hash FROM titles WHERE user_liked = 1 AND magnet_hash IS NOT NULL"
+            liked_rows = conn.execute(
+                """
+                SELECT magnet, magnet_hash
+                FROM titles
+                WHERE user_liked = 1 AND magnet_hash IS NOT NULL
+                ORDER BY updated_at DESC
+                """
             ).fetchall()
             from backend.services import bt_client
-            for (h,) in rows:
+            for _m, h in liked_rows:
                 if h:
                     engine.set_liked(h, True)
                     if bt_client.is_enabled():
                         await bt_client.set_pin(h, pinned=True)
-            log.info(f"Loaded {len(rows)} liked torrents into cache protection set")
+            log.info(f"Loaded {len(liked_rows)} liked torrents into cache protection set")
         finally:
             conn.close()
     except Exception as e:
@@ -131,6 +137,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # downloading instead of staying paused until the user clicks play.
     async def _resume_liked_after_preload() -> None:
         try:
+            from backend.services import bt_client
+            if bt_client.is_enabled():
+                from backend.routers.torrents import _resolve_magnet
+                from core.db.write_queue import db_read
+
+                resumed = 0
+                for magnet, h in liked_rows:
+                    if not h:
+                        continue
+                    try:
+                        raw = magnet or f"magnet:?xt=urn:btih:{h}"
+                        resolved = await db_read(_resolve_magnet, raw)
+                        await bt_client.add_torrent(resolved, prefetch=False)
+                        await bt_client.set_pin(h, pinned=True)
+                        resumed += 1
+                    except Exception as exc:
+                        log.warning(f"Failed to resume liked torrent {h[:12]} in xstream_bt: {exc}")
+                    await asyncio.sleep(0.2)
+                log.info(f"Resumed {resumed}/{len(liked_rows)} liked torrents in xstream_bt")
+                return
+
             await asyncio.to_thread(engine._preload_thread.join)
             await asyncio.sleep(1)
             await asyncio.to_thread(engine.resume_liked_torrents)

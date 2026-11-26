@@ -52,7 +52,7 @@ async def close_client() -> None:
 
 
 def _watch_hash(hash_str: str) -> None:
-    """Start a lightweight 1s SSE status publisher for an active torrent hash."""
+    """Start a lightweight SSE status publisher for an active torrent hash."""
     h = hash_str.lower()
     existing = _watchers.get(h)
     if existing is not None and not existing.done():
@@ -63,24 +63,32 @@ def _watch_hash(hash_str: str) -> None:
         if not base:
             return
         head_emitted = False
+        consecutive_errors = 0
         try:
-            for _ in range(300):
-                await asyncio.sleep(1.0)
+            while True:
+                await asyncio.sleep(1.0 if not head_emitted else 1.5)
                 try:
                     resp = await _get_client().get(f"{base}/torrent/status/{h}", timeout=5.0)
+                    consecutive_errors = 0
                 except Exception:
+                    consecutive_errors += 1
+                    if consecutive_errors >= 15:
+                        break
                     continue
                 if resp.status_code != 200:
                     break
                 data = resp.json()
                 bus = get_bus()
-                bus.publish("torrent.progress", data)
+                await bus.publish("torrent.progress", data)
                 if data.get("head_ready") and not head_emitted:
                     head_emitted = True
-                    bus.publish("torrent.head_ready", {"hash": h})
+                    await bus.publish("torrent.head_ready", {"hash": h})
                 state = data.get("state")
                 if state in ("paused", "finished", "error"):
-                    bus.publish("torrent.status", {"hash": h, "state": state, "ready": data.get("ready", False)})
+                    await bus.publish(
+                        "torrent.status",
+                        {"hash": h, "state": state, "ready": data.get("ready", False)},
+                    )
                     break
         except asyncio.CancelledError:
             pass
@@ -88,7 +96,7 @@ def _watch_hash(hash_str: str) -> None:
             _watchers.pop(h, None)
 
     try:
-        _watchers[h] = asyncio.create_task(_run())
+        _watchers[h] = asyncio.create_task(_run(), name=f"bt-watch:{h[:12]}")
     except RuntimeError:
         pass
 
@@ -119,7 +127,14 @@ async def add_torrent(magnet: str, *, prefetch: bool = False) -> dict[str, Any]:
     if not prefetch and data.get("hash"):
         _watch_hash(data["hash"])
         if data.get("ready"):
-            get_bus().publish("torrent.head_ready", {"hash": data["hash"]})
+            # Only emit head_ready immediately if the torrent already has head data;
+            # otherwise the watcher emits it as soon as xstream_bt reports head_ready.
+            try:
+                st = await get_status(data["hash"])
+                if st.get("head_ready"):
+                    await get_bus().publish("torrent.head_ready", {"hash": data["hash"]})
+            except Exception:
+                pass
     return data
 
 
@@ -177,8 +192,21 @@ async def control_action(action: str, payload: dict[str, Any]) -> dict[str, Any]
     return resp.json()
 
 
+async def _wait_disconnect(request: Request) -> None:
+    """Resolve as soon as the downstream client disconnects."""
+    while True:
+        if await request.is_disconnected():
+            return
+        await asyncio.sleep(0.05)
+
+
 async def stream_video(request: Request, hash_str: str) -> Response:
-    """Stream GET /stream/{hash} directly from xstream_bt without buffering."""
+    """Stream GET /stream/{hash} directly from xstream_bt without buffering.
+
+    Actively watches downstream client disconnect both while awaiting upstream
+    headers and while streaming chunks so fast-scrub Range cancellations drop
+    the upstream librqbit FileStream immediately instead of starving new seeks.
+    """
     base = get_base_url()
     assert base is not None
     req_headers: dict[str, str] = {}
@@ -188,8 +216,23 @@ async def stream_video(request: Request, hash_str: str) -> Response:
 
     client = _get_client()
     req = client.build_request("GET", f"{base}/stream/{hash_str}", headers=req_headers)
+
+    send_task = asyncio.create_task(client.send(req, stream=True))
+    disc_task = asyncio.create_task(_wait_disconnect(request))
     try:
-        upstream = await client.send(req, stream=True)
+        done, pending = await asyncio.wait(
+            {send_task, disc_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for p in pending:
+            p.cancel()
+        if disc_task in done and send_task not in done:
+            try:
+                await send_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            return Response(status_code=499)
+        upstream = send_task.result()
     except httpx.HTTPError as exc:
         log.error(f"xstream_bt stream failed: {exc}")
         raise HTTPException(status_code=503, detail="BitTorrent daemon unavailable")
@@ -208,7 +251,11 @@ async def stream_video(request: Request, hash_str: str) -> Response:
     async def _iter_chunks():
         try:
             async for chunk in upstream.aiter_bytes(chunk_size=65_536):
+                if await request.is_disconnected():
+                    break
                 yield chunk
+        except (asyncio.CancelledError, httpx.HTTPError):
+            pass
         finally:
             await upstream.aclose()
 
