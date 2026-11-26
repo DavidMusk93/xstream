@@ -122,14 +122,15 @@
             </div>
 
             <div class="flex items-center gap-1.5">
-              <!-- Live cache & network pill fused with the player controls -->
+              <!-- Live cache & network pill fused with the player controls (compact on mobile) -->
               <div
                 v-if="liveCacheBadge"
-                class="hidden sm:flex items-center gap-1.5 rounded-full bg-white/[0.08] backdrop-blur-md px-2.5 py-1 text-[11px] font-medium text-white/75 tabular-nums select-none"
+                class="flex items-center gap-1.5 rounded-full bg-white/[0.08] backdrop-blur-md px-2 sm:px-2.5 py-1 text-[11px] font-medium text-white/75 tabular-nums select-none max-w-[140px] sm:max-w-none truncate"
                 :title="cacheRatio || liveCacheBadge.text"
               >
                 <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="liveCacheBadge.dot" />
-                <span>{{ liveCacheBadge.text }}</span>
+                <span class="hidden sm:inline">{{ liveCacheBadge.text }}</span>
+                <span class="sm:hidden truncate">{{ liveCacheBadge.compact }}</span>
               </div>
 
               <button
@@ -542,22 +543,24 @@ const statusText = computed(() => {
   return 'Ready | Waiting for data'
 })
 
-const liveCacheBadge = computed<{ dot: string; text: string } | null>(() => {
+const liveCacheBadge = computed<{ dot: string; text: string; compact: string } | null>(() => {
   const s = status.value
   if (!s || !s.video_size) return null
   if (s.state === 'finished' || s.progress >= 99.9) {
-    return { dot: 'bg-emerald-400', text: 'Cached 100%' }
+    return { dot: 'bg-emerald-400', text: 'Cached 100%', compact: '100%' }
   }
   const pct = `${s.progress.toFixed(1)}%`
   const parts = [`Cached ${pct}`]
   if (s.download_rate > 0) parts.push(formatSpeed(s.download_rate))
   if (s.peers > 0) parts.push(`${s.peers}P`)
+  const compactParts = [`${Math.floor(s.progress)}%`]
+  if (s.download_rate > 0) compactParts.push(formatSpeed(s.download_rate).replace(' /s', ''))
   const dot = s.download_rate > 0
     ? 'bg-amber-400 animate-pulse'
     : s.peers > 0
       ? 'bg-white/60'
       : 'bg-white/30'
-  return { dot, text: parts.join(' · ') }
+  return { dot, text: parts.join(' · '), compact: compactParts.join(' · ') }
 })
 
 const bufferingText = computed(() => {

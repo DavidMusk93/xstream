@@ -61,8 +61,9 @@
           >
             <div class="flex items-center gap-2">
               <p class="text-[15px] font-semibold text-foreground truncate min-w-0">{{ item.displayCode }}</p>
+              <span v-if="item.pinned" class="chip bg-accent/10 text-accent">Liked</span>
               <span v-if="item.quality === 'HD'" class="chip bg-black/[0.06] text-foreground">HD</span>
-              <span class="ml-auto shrink-0 flex items-center gap-1.5 text-[12px] font-medium" :class="stateTextClass(item)">
+              <span class="ml-auto shrink-0 flex items-center gap-1.5 text-[12px] font-medium tabular-nums" :class="stateTextClass(item)">
                 <span class="w-1.5 h-1.5 rounded-full bg-current" :class="{ 'animate-pulse': item.state === 'downloading' || item.state?.includes('checking') }" />
                 {{ stateLabel(item) }}
               </span>
@@ -82,23 +83,30 @@
             <div class="mt-2 flex items-center flex-wrap gap-x-2 gap-y-1 text-[12px] text-foreground-muted tabular-nums whitespace-nowrap">
               <span>{{ formatSize(item.local_size) }} / {{ formatSize(item.video_size) }}</span>
               <span class="text-foreground-muted/40">·</span>
-              <span>{{ tierLabel(item) }}</span>
+              <span>{{ (item.progress ?? 0).toFixed(1) }}%</span>
               <template v-if="item.peers > 0">
                 <span class="text-foreground-muted/40">·</span>
                 <span>{{ item.peers }} peers</span>
               </template>
-              <span v-if="item.download_rate > 0" class="text-foreground">↓ {{ formatSpeed(item.download_rate) }}</span>
+              <span v-if="item.download_rate > 0" class="text-foreground font-medium">↓ {{ formatSpeed(item.download_rate) }}</span>
               <span v-if="item.verified_pieces > 0 && item.state?.includes('checking')" class="text-warning">
                 {{ item.verified_pieces }} verified
               </span>
 
               <span class="ml-auto flex items-center gap-1 shrink-0 sm:opacity-0 sm:group-hover/item:opacity-100 transition-opacity">
                 <button
-                  v-if="!item.head_ready && item.progress < 99.9"
+                  v-if="item.state === 'downloading'"
                   class="h-7 px-2.5 rounded-full text-[12px] font-medium text-foreground hover:bg-black/[0.06] active:scale-[0.96] transition"
-                  @click="boostItem(item.hash)"
+                  @click="pauseItem(item.hash)"
                 >
-                  Boost
+                  Pause
+                </button>
+                <button
+                  v-else-if="item.state === 'paused' && item.progress < 99.9"
+                  class="h-7 px-2.5 rounded-full text-[12px] font-medium text-foreground hover:bg-black/[0.06] active:scale-[0.96] transition"
+                  @click="resumeItem(item.hash)"
+                >
+                  Resume
                 </button>
                 <button
                   class="h-7 px-2.5 rounded-full text-[12px] font-medium text-danger hover:bg-danger/10 active:scale-[0.96] transition"
@@ -153,7 +161,7 @@ const refreshing = ref(false)
 let unsubs: (() => void)[] = []
 let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
-const { getCacheItems, getCacheMetrics, deleteCache, addTorrent } = useApi()
+const { getCacheItems, getCacheMetrics, deleteCache, pauseTorrent, resumeTorrent } = useApi()
 
 const WORK_CODE_RE = /[A-Z]{2,6}-\d{3,5}/i
 function extractCode(name?: string): string | null {
@@ -203,7 +211,12 @@ const enrichedItems = computed(() => {
   })
 })
 
-const activeCount = computed(() => items.value.filter(i => i.progress > 0 && i.progress < 99.9).length)
+const activeCount = computed(() => {
+  if (items.value.length > 0) {
+    return items.value.filter(i => i.state === 'downloading').length
+  }
+  return metrics.value?.downloading ?? 0
+})
 
 const usedPct = computed(() => {
   const used = metrics.value?.used_bytes || 0
@@ -318,13 +331,21 @@ async function removeItem(hash: string) {
   }
 }
 
-async function boostItem(hash: string) {
-  const item = items.value.find(i => i.hash === hash)
-  if (!item?.magnet) return
+async function pauseItem(hash: string) {
   try {
-    await addTorrent(item.magnet)
-  } catch {
-    // ignore
+    await pauseTorrent(hash, true)
+    await refresh(false)
+  } catch (e) {
+    console.error('pause torrent failed:', e)
+  }
+}
+
+async function resumeItem(hash: string) {
+  try {
+    await resumeTorrent(hash)
+    await refresh(false)
+  } catch (e) {
+    console.error('resume torrent failed:', e)
   }
 }
 
@@ -345,6 +366,20 @@ async function clearAll() {
   }
 }
 
+let globalUnsubs: (() => void)[] = []
+
+onMounted(() => {
+  // Fetch lightweight metrics once on mount so the header indicator dot
+  // reflects active background downloads even before the popover is opened.
+  getCacheMetrics().then((m) => { metrics.value = m as CacheMetrics }).catch(() => {})
+  const { onServerEvent } = useEventSource()
+  globalUnsubs = [
+    onServerEvent('cache.update', () => {
+      getCacheMetrics().then((m) => { metrics.value = m as CacheMetrics }).catch(() => {})
+    }),
+  ]
+})
+
 watch(isOpen, (open) => {
   if (open) {
     refresh(true)
@@ -353,10 +388,11 @@ watch(isOpen, (open) => {
       onServerEvent('cache.update', () => {
         scheduleRefresh()
       }),
-      // Field-level live update for visible rows — no refetch, no list re-sort.
+      // Field-level live update for visible rows — including local_size and piece_segments.
       onServerEvent('torrent.progress', (data: any) => {
         const item = items.value.find((i) => i.hash === data.hash)
         if (!item) return
+        const prevLocal = Number(item.local_size || 0)
         Object.assign(item, {
           state: data.state,
           progress: data.progress,
@@ -365,7 +401,19 @@ watch(isOpen, (open) => {
           peers: data.peers,
           head_ready: data.head_ready,
           verified_pieces: data.verified_pieces,
+          ...(data.local_size !== undefined ? { local_size: data.local_size } : {}),
+          ...(Array.isArray(data.piece_segments) && data.piece_segments.length
+            ? { piece_segments: data.piece_segments }
+            : {}),
+          ...(data.pinned !== undefined ? { pinned: data.pinned } : {}),
         })
+        if (metrics.value && data.local_size !== undefined) {
+          const delta = Number(data.local_size) - prevLocal
+          if (delta > 0) {
+            metrics.value.used_bytes += delta
+            metrics.value.used_human = formatSize(metrics.value.used_bytes)
+          }
+        }
       }),
       // Server coalesced our event queue — refetch once.
       onServerEvent('sync.resync_required', () => {
@@ -385,6 +433,8 @@ watch(isOpen, (open) => {
 onUnmounted(() => {
   unsubs.forEach((fn) => fn())
   unsubs = []
+  globalUnsubs.forEach((fn) => fn())
+  globalUnsubs = []
   if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer)
 })
 </script>

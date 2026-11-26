@@ -53,6 +53,28 @@ export function useApi() {
     return res._data
   }
 
+  async function pauseTorrent(hash: string, force = true) {
+    const res = await $fetch.raw('/torrent/pause', {
+      baseURL: config.public.apiBase,
+      method: 'POST',
+      headers: _headers(),
+      body: { hash, time: 0, duration: 0, force },
+    })
+    syncTraceIdFromResponse(res)
+    return res._data
+  }
+
+  async function resumeTorrent(hash: string) {
+    const res = await $fetch.raw('/torrent/resume', {
+      baseURL: config.public.apiBase,
+      method: 'POST',
+      headers: _headers(),
+      body: { hash, time: 0, duration: 0 },
+    })
+    syncTraceIdFromResponse(res)
+    return res._data
+  }
+
   async function deleteStar(code: string) {
     const res = await $fetch.raw(`/api/stars/${code}`, {
       baseURL: config.public.apiBase,
@@ -180,6 +202,8 @@ export function useApi() {
     getCacheMetrics,
     getCacheItems,
     deleteCache,
+    pauseTorrent,
+    resumeTorrent,
     deleteStar,
     likeTitle,
     getSyncStatus,
