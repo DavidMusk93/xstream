@@ -53,14 +53,15 @@ async fn main() {
         }
     });
 
-    // Background QoS restorer: resumes yielded background downloads once playback goes idle.
+    // Background QoS & prewarm maintainer: auto-pauses head+tail-warmed background
+    // downloads and resumes yielded downloads once playback goes idle.
     let qos_engine = Arc::clone(&engine);
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(5));
         ticker.tick().await;
         loop {
             ticker.tick().await;
-            qos_engine.restore_yielded_if_idle().await;
+            qos_engine.maintain_background_downloads().await;
         }
     });
 

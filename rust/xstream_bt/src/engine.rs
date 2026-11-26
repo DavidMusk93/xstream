@@ -222,6 +222,15 @@ const HEAD_READY_MIN_BYTES: u64 = 1024 * 1024;
 /// Maximum concurrent background (non-streaming) downloads allowed simultaneously.
 const MAX_BACKGROUND_DOWNLOADS: usize = 2;
 
+/// Head window cached for liked/background prewarm (~2-4 minutes of HD playback).
+pub const PREWARM_HEAD_BYTES: u64 = 150 * 1024 * 1024;
+
+/// Tail window cached for liked/background prewarm (MP4 moov atom & seek index).
+pub const PREWARM_TAIL_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Total byte cap for a single background prewarm before auto-pausing.
+pub const PREWARM_MAX_BYTES: u64 = PREWARM_HEAD_BYTES + PREWARM_TAIL_BYTES;
+
 /// Core `BitTorrent` streaming engine wrapping a `librqbit::Session`.
 pub struct BtEngine {
     session: Arc<Session>,
@@ -265,6 +274,7 @@ impl BtEngine {
         tokio::fs::create_dir_all(&state_dir)
             .await
             .map_err(|err| BtError::Internal(format!("create state dir failed: {err}")))?;
+        let pins_file = state_dir.join("pins.json");
 
         let opts = SessionOptions {
             fastresume: true,
@@ -283,7 +293,7 @@ impl BtEngine {
             .map_err(|err| BtError::Internal(format!("librqbit session init failed: {err}")))?;
 
         let policy = EvictionPolicy::from_max_bytes(config.max_cache_bytes);
-        let tracker = CacheTracker::new();
+        let tracker = CacheTracker::with_pins_file(pins_file);
 
         // Seed LRU timestamps for any persisted torrents restored by librqbit.
         session.with_torrents(|iter| {
@@ -799,6 +809,78 @@ impl BtEngine {
         }
     }
 
+    /// Return `true` if a background torrent has already cached enough head+tail data
+    /// (~150 MiB head + ~16 MiB tail) for instant playback without downloading the full file.
+    fn is_torrent_prewarm_done(&self, hash: &str, handle: &ManagedTorrent) -> bool {
+        let stats = handle.stats();
+        if stats.finished {
+            return true;
+        }
+        let Some(video) = pick_video_from_handle(handle) else {
+            return false;
+        };
+        let local_bytes = stats.file_progress.get(video.id).copied().unwrap_or(0);
+        if local_bytes >= PREWARM_MAX_BYTES {
+            return true;
+        }
+        let bits = self.video_have_bits(hash, &video.piece_range);
+        is_prewarm_satisfied(&bits, video.len, local_bytes)
+    }
+
+    fn video_have_bits(&self, hash: &str, piece_range: &Range<u32>) -> Vec<bool> {
+        if piece_range.is_empty() {
+            return Vec::new();
+        }
+        let Ok(id) = parse_torrent_id(hash) else {
+            return Vec::new();
+        };
+        let Ok((bf, total_pieces)) = self.api.api_dump_haves(id) else {
+            return Vec::new();
+        };
+        let start = usize::try_from(piece_range.start).unwrap_or(0);
+        let end = usize::try_from(piece_range.end.min(total_pieces)).unwrap_or(start);
+        let mut bits = Vec::with_capacity(end.saturating_sub(start));
+        for idx in start..end {
+            bits.push(bf.get(idx).as_deref().copied().unwrap_or(false));
+        }
+        bits
+    }
+
+    /// Periodic 5s maintenance: pause background prewarms that reached their head+tail budget,
+    /// and resume yielded background downloads once foreground playback goes idle.
+    pub async fn maintain_background_downloads(&self) {
+        let live_bg: Vec<(String, Arc<ManagedTorrent>)> = self.session.with_torrents(|iter| {
+            iter.filter_map(|(_, handle)| {
+                let stats = handle.stats();
+                if stats.finished || !matches!(stats.state, TorrentStatsState::Live) {
+                    return None;
+                }
+                let h = handle.info_hash().as_string();
+                if self.tracker.active_streams_for(&h) > 0 {
+                    return None;
+                }
+                Some((h, Arc::clone(handle)))
+            })
+            .collect()
+        });
+
+        for (h, handle) in live_bg {
+            if self.is_torrent_prewarm_done(&h, &handle)
+                && self.session.pause(&handle).await.is_ok()
+            {
+                let mut yielded = self.yielded_for_playback.lock().await;
+                yielded.remove(&h);
+                info!(
+                    hash = %h,
+                    cap_mb = PREWARM_MAX_BYTES / (1024 * 1024),
+                    "background head+tail prewarm satisfied; paused to save cache budget"
+                );
+            }
+        }
+
+        self.restore_yielded_if_idle().await;
+    }
+
     /// Resume previously yielded background downloads once no playback stream is active
     /// and disk usage is below the 85% watermark.
     pub async fn restore_yielded_if_idle(&self) {
@@ -847,7 +929,7 @@ impl BtEngine {
                 to_remove.push(h);
                 continue;
             };
-            if handle.stats().finished {
+            if handle.stats().finished || self.is_torrent_prewarm_done(&h, &handle) {
                 to_remove.push(h);
                 continue;
             }
@@ -1114,6 +1196,44 @@ fn pick_video_from_handle(handle: &ManagedTorrent) -> Option<VideoFileInfo> {
         .flatten()
 }
 
+/// Check whether a background prewarm has cached enough head (~150 MiB) + tail (~16 MiB)
+/// data to guarantee instant playback without downloading the full video file.
+pub fn is_prewarm_satisfied(have_bits: &[bool], file_len: u64, local_bytes: u64) -> bool {
+    if file_len == 0 {
+        return false;
+    }
+    if file_len <= PREWARM_MAX_BYTES {
+        return local_bytes >= file_len || (!have_bits.is_empty() && have_bits.iter().all(|&b| b));
+    }
+    if local_bytes >= PREWARM_MAX_BYTES {
+        return true;
+    }
+    let total_pieces = have_bits.len();
+    if total_pieces == 0 {
+        return false;
+    }
+    let total_pieces_u128 = u128::try_from(total_pieces).unwrap_or(1);
+    let file_len_u128 = u128::from(file_len);
+    let head_count = usize::try_from(
+        total_pieces_u128
+            .saturating_mul(u128::from(PREWARM_HEAD_BYTES))
+            .div_ceil(file_len_u128),
+    )
+    .unwrap_or(1)
+    .clamp(1, total_pieces);
+    let tail_count = usize::try_from(
+        total_pieces_u128
+            .saturating_mul(u128::from(PREWARM_TAIL_BYTES))
+            .div_ceil(file_len_u128),
+    )
+    .unwrap_or(1)
+    .clamp(1, total_pieces);
+
+    let head_ok = have_bits.iter().take(head_count).all(|&b| b);
+    let tail_ok = have_bits.iter().rev().take(tail_count).all(|&b| b);
+    head_ok && tail_ok
+}
+
 /// Convert a `(time_sec, duration_sec)` playback position into a clamped byte offset.
 fn byte_offset_for_time(time_sec: f64, duration_sec: f64, total_bytes: u64) -> u64 {
     if total_bytes == 0 || !time_sec.is_finite() || !duration_sec.is_finite() || duration_sec <= 0.0
@@ -1261,5 +1381,34 @@ mod tests {
         assert_eq!(byte_offset_for_time(50.0, 100.0, 10_000), 5_000);
         assert_eq!(byte_offset_for_time(200.0, 100.0, 10_000), 9_950);
         assert_eq!(byte_offset_for_time(10.0, 0.0, 10_000), 0);
+    }
+
+    #[test]
+    fn prewarm_requires_head_and_tail_or_budget_cap() {
+        // 6 GiB video with 1000 pieces (~6 MiB/piece):
+        // head ~150 MiB -> ~25 pieces, tail ~16 MiB -> ~3 pieces.
+        let file_len = 6 * 1024 * 1024 * 1024_u64;
+        let mut bits = vec![false; 1000];
+        assert!(!is_prewarm_satisfied(&bits, file_len, 0));
+
+        // Head only -> not yet satisfied (tail moov missing)
+        for b in bits.iter_mut().take(30) {
+            *b = true;
+        }
+        assert!(!is_prewarm_satisfied(&bits, file_len, 100 * 1024 * 1024));
+
+        // Head + tail -> satisfied!
+        for b in bits.iter_mut().rev().take(5) {
+            *b = true;
+        }
+        assert!(is_prewarm_satisfied(&bits, file_len, 110 * 1024 * 1024));
+
+        // Hard 166 MiB cap -> satisfied even if pieces are scattered
+        let empty_bits = vec![false; 1000];
+        assert!(is_prewarm_satisfied(
+            &empty_bits,
+            file_len,
+            PREWARM_MAX_BYTES
+        ));
     }
 }

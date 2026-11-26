@@ -19,7 +19,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -239,6 +239,7 @@ struct TrackerInner {
 #[derive(Debug, Clone, Default)]
 pub struct CacheTracker {
     inner: Arc<RwLock<TrackerInner>>,
+    pins_path: Option<Arc<Path>>,
 }
 
 /// RAII guard that keeps a torrent protected from eviction while an HTTP stream is open.
@@ -263,9 +264,46 @@ impl Drop for ActiveStreamGuard {
 }
 
 impl CacheTracker {
-    /// Create a new empty tracker.
+    /// Create a new empty in-memory tracker.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a tracker that persists pinned hashes to `pins_path` (JSON array) across restarts.
+    pub fn with_pins_file(pins_path: PathBuf) -> Self {
+        let mut inner = TrackerInner::default();
+        if let Ok(raw) = fs::read_to_string(&pins_path) {
+            if let Ok(list) = serde_json::from_str::<Vec<String>>(&raw) {
+                for h in list {
+                    let norm = h.trim().to_ascii_lowercase();
+                    if norm.len() == 40 {
+                        inner.pinned.insert(norm);
+                    }
+                }
+            }
+        }
+        Self {
+            inner: Arc::new(RwLock::new(inner)),
+            pins_path: Some(Arc::from(pins_path)),
+        }
+    }
+
+    fn persist_pins_snapshot(&self, snapshot: &HashSet<String>) {
+        let Some(path) = &self.pins_path else {
+            return;
+        };
+        let mut sorted: Vec<&str> = snapshot.iter().map(String::as_str).collect();
+        sorted.sort_unstable();
+        let Ok(json) = serde_json::to_string_pretty(&sorted) else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let tmp = path.with_extension("json.tmp");
+        if fs::write(&tmp, json).is_ok() {
+            let _ = fs::rename(&tmp, path.as_ref());
+        }
     }
 
     /// Record an access timestamp for `hash`.
@@ -277,16 +315,28 @@ impl CacheTracker {
 
     /// Mark `hash` as pinned (protected from eviction, e.g. user-liked title).
     pub fn pin(&self, hash: &str) {
-        if let Ok(mut guard) = self.inner.write() {
-            guard.pinned.insert(hash.to_string());
+        let snapshot = if let Ok(mut guard) = self.inner.write() {
+            let changed = guard.pinned.insert(hash.to_string());
             guard.last_access.insert(hash.to_string(), unix_now_secs());
+            changed.then(|| guard.pinned.clone())
+        } else {
+            None
+        };
+        if let Some(pins) = snapshot {
+            self.persist_pins_snapshot(&pins);
         }
     }
 
     /// Remove pin protection from `hash`.
     pub fn unpin(&self, hash: &str) {
-        if let Ok(mut guard) = self.inner.write() {
-            guard.pinned.remove(hash);
+        let snapshot = if let Ok(mut guard) = self.inner.write() {
+            let changed = guard.pinned.remove(hash);
+            changed.then(|| guard.pinned.clone())
+        } else {
+            None
+        };
+        if let Some(pins) = snapshot {
+            self.persist_pins_snapshot(&pins);
         }
     }
 
@@ -497,6 +547,25 @@ mod tests {
             s_after.active_streams, 0,
             "dropping guard releases stream pin"
         );
+    }
+
+    #[test]
+    fn pins_persist_across_tracker_reloads() {
+        let dir = std::env::temp_dir().join(format!("xstream-pins-test-{}", unix_now_secs()));
+        let pins_file = dir.join("pins.json");
+        let h1 = "a".repeat(40);
+        let h2 = "b".repeat(40);
+
+        let t1 = CacheTracker::with_pins_file(pins_file.clone());
+        t1.pin(&h1);
+        t1.pin(&h2);
+        t1.unpin(&h2);
+
+        let t2 = CacheTracker::with_pins_file(pins_file);
+        assert!(t2.is_pinned(&h1), "h1 must survive restart");
+        assert!(!t2.is_pinned(&h2), "unpinned h2 must stay unpinned");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
