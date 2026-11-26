@@ -47,6 +47,17 @@ from .crud import (
 )
 from .write_queue import DBWriteQueue, db_write, get_queue
 from .queries import get_stats
+from .notify_outbox import (
+    enqueue_notification,
+    fetch_due_notifications,
+    next_pending_delay,
+    advance_notification_progress,
+    mark_notification_sent,
+    schedule_notification_retry,
+    mark_notification_dead,
+    get_notify_outbox_stats,
+    prune_old_notifications,
+)
 
 __all__ = [
     "_conn",
@@ -94,4 +105,13 @@ __all__ = [
     "blacklist_titles",
     "delete_titles_by_ids",
     "get_stats",
+    "enqueue_notification",
+    "fetch_due_notifications",
+    "next_pending_delay",
+    "advance_notification_progress",
+    "mark_notification_sent",
+    "schedule_notification_retry",
+    "mark_notification_dead",
+    "get_notify_outbox_stats",
+    "prune_old_notifications",
 ]
