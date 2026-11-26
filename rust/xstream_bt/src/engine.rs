@@ -8,6 +8,7 @@ use std::{
     ops::Range,
     path::PathBuf,
     sync::{Arc, RwLock},
+    time::{Duration, Instant},
 };
 
 use librqbit::{
@@ -239,6 +240,11 @@ pub const PREWARM_TAIL_BYTES: u64 = TAIL_PREWARM_BYTES;
 /// Total byte cap for a single background prewarm before auto-pausing.
 pub const PREWARM_MAX_BYTES: u64 = PREWARM_HEAD_BYTES + PREWARM_TAIL_BYTES;
 
+/// Grace window (seconds) after the last `/stream`, `seek`, `progress`, or `resume` call
+/// during which a torrent is treated as active foreground playback and must NOT be paused
+/// by background maintenance between discrete browser HTTP Range requests.
+const FOREGROUND_GRACE: Duration = Duration::from_secs(45);
+
 /// Core `BitTorrent` streaming engine wrapping a `librqbit::Session`.
 pub struct BtEngine {
     session: Arc<Session>,
@@ -249,6 +255,7 @@ pub struct BtEngine {
     seek_cursors: Mutex<HashMap<String, Box<dyn AsyncVideoStream>>>,
     prewarm_cursors: Mutex<HashMap<String, Vec<Box<dyn AsyncVideoStream>>>>,
     active_offsets: RwLock<HashMap<String, u64>>,
+    last_foreground_at: RwLock<HashMap<String, Instant>>,
     yielded_for_playback: Mutex<HashSet<String>>,
 }
 
@@ -339,6 +346,7 @@ impl BtEngine {
             seek_cursors: Mutex::new(HashMap::new()),
             prewarm_cursors: Mutex::new(HashMap::new()),
             active_offsets: RwLock::new(HashMap::new()),
+            last_foreground_at: RwLock::new(HashMap::new()),
             yielded_for_playback: Mutex::new(HashSet::new()),
         })
     }
@@ -485,6 +493,9 @@ impl BtEngine {
         if let Ok(mut offsets) = self.active_offsets.write() {
             offsets.remove(&hash);
         }
+        if let Ok(mut fg) = self.last_foreground_at.write() {
+            fg.remove(&hash);
+        }
         if matches!(mode, PauseMode::Force) {
             let mut yielded = self.yielded_for_playback.lock().await;
             yielded.remove(&hash);
@@ -516,6 +527,7 @@ impl BtEngine {
     pub async fn resume(&self, raw_hash: &str) -> Result<(), BtError> {
         let (hash, handle) = self.lookup_handle(raw_hash)?;
         self.tracker.touch(&hash);
+        self.mark_foreground(&hash);
         self.enforce_on_demand_mode(&handle).await;
         if matches!(handle.stats().state, TorrentStatsState::Paused) {
             self.session
@@ -544,6 +556,7 @@ impl BtEngine {
     ) -> Result<(), BtError> {
         let (hash, handle) = self.lookup_handle(raw_hash)?;
         self.tracker.touch(&hash);
+        self.mark_foreground(&hash);
 
         let Some(video) = pick_video_from_handle(&handle) else {
             return Ok(());
@@ -560,17 +573,8 @@ impl BtEngine {
             return Ok(());
         }
 
-        let mut stream = Arc::clone(&handle)
-            .stream(video.id)
-            .await
-            .map_err(|err| BtError::NotReady(format!("seek stream unavailable: {err}")))?;
-        stream
-            .seek(SeekFrom::Start(target_byte))
-            .await
-            .map_err(|err| BtError::Internal(format!("seek stream failed: {err}")))?;
-
-        let mut cursors = self.seek_cursors.lock().await;
-        cursors.insert(hash.clone(), Box::new(stream));
+        self.advance_play_cursor(&hash, &handle, video.id, target_byte)
+            .await?;
         debug!(hash = %hash, target_byte, "seek prewarm cursor updated");
         Ok(())
     }
@@ -581,6 +585,7 @@ impl BtEngine {
             return;
         };
         self.tracker.touch(&hash);
+        self.mark_foreground(&hash);
         let Some(video) = pick_video_from_handle(&handle) else {
             return;
         };
@@ -590,22 +595,32 @@ impl BtEngine {
         }
     }
 
-    /// Record an active HTTP Range stream offset and release any redundant prewarm cursors.
+    /// Record an active HTTP Range stream offset and keep a persistent playback `FileStream`
+    /// cursor pinned at `offset_bytes` so `librqbit` keeps seeders connected and buffers
+    /// strictly `[offset_bytes .. offset_bytes + 32 MiB]` between discrete browser Range bursts.
     pub async fn note_stream_offset(&self, raw_hash: &str, offset_bytes: u64) {
-        let Some(hash) = normalize_hash(raw_hash) else {
+        let Ok((hash, handle)) = self.lookup_handle(raw_hash) else {
             return;
         };
         self.tracker.touch(&hash);
+        self.mark_foreground(&hash);
         if let Ok(mut offsets) = self.active_offsets.write() {
             offsets.insert(hash.clone(), offset_bytes);
         }
         {
-            let mut cursors = self.seek_cursors.lock().await;
-            cursors.remove(&hash);
-        }
-        {
             let mut prewarms = self.prewarm_cursors.lock().await;
             prewarms.remove(&hash);
+        }
+        if is_video_finished(&handle, &handle.stats()) {
+            let mut cursors = self.seek_cursors.lock().await;
+            cursors.remove(&hash);
+            return;
+        }
+        if let Some(video) = pick_video_from_handle(&handle) {
+            let clamped = offset_bytes.min(video.len);
+            let _ = self
+                .advance_play_cursor(&hash, &handle, video.id, clamped)
+                .await;
         }
     }
 
@@ -627,6 +642,9 @@ impl BtEngine {
         }
         if let Ok(mut offsets) = self.active_offsets.write() {
             offsets.remove(&hash);
+        }
+        if let Ok(mut fg) = self.last_foreground_at.write() {
+            fg.remove(&hash);
         }
         let remove_disk = matches!(delete_files, DeleteFiles::Remove);
         self.session
@@ -769,7 +787,7 @@ impl BtEngine {
     /// exhausting host disk space or starving playback.
     async fn enforce_background_limits(&self, used_bytes: u64) {
         let over_watermark = self.policy.max_bytes > 0 && used_bytes >= self.policy.target_bytes;
-        let has_foreground_playback = self.tracker.total_active_streams() > 0;
+        let has_foreground_playback = self.has_any_foreground_active();
 
         let mut live_bg: Vec<(String, u64, Arc<ManagedTorrent>)> =
             self.session.with_torrents(|iter| {
@@ -781,7 +799,7 @@ impl BtEngine {
                         return None;
                     }
                     let h = handle.info_hash().as_string();
-                    if self.tracker.active_streams_for(&h) > 0 {
+                    if self.is_foreground_active(&h) {
                         return None;
                     }
                     Some((h, video_local_bytes(handle, &stats), Arc::clone(handle)))
@@ -931,7 +949,14 @@ impl BtEngine {
         });
 
         for (h, handle) in live_bg {
+            if self.is_foreground_active(&h) {
+                continue;
+            }
             if self.is_torrent_prewarm_done(&h, &handle) {
+                {
+                    let mut cursors = self.seek_cursors.lock().await;
+                    cursors.remove(&h);
+                }
                 {
                     let mut prewarms = self.prewarm_cursors.lock().await;
                     prewarms.remove(&h);
@@ -954,7 +979,7 @@ impl BtEngine {
     /// Resume previously yielded background downloads once no playback stream is active
     /// and disk usage is below the 85% watermark.
     pub async fn restore_yielded_if_idle(&self) {
-        if self.tracker.total_active_streams() > 0 {
+        if self.has_any_foreground_active() {
             return;
         }
         let candidates: Vec<String> = {
@@ -1044,6 +1069,7 @@ impl BtEngine {
 
         self.enforce_on_demand_mode(&handle).await;
         self.unpause_if_paused(&handle).await;
+        self.mark_foreground(&hash);
 
         let guard = self.tracker.acquire_stream(&hash);
         self.yield_background_downloads(&hash).await;
@@ -1058,6 +1084,58 @@ impl BtEngine {
             mime: video.mime,
             guard,
         })
+    }
+
+    fn mark_foreground(&self, hash: &str) {
+        if let Ok(mut fg) = self.last_foreground_at.write() {
+            fg.insert(hash.to_string(), Instant::now());
+        }
+    }
+
+    fn is_foreground_active(&self, hash: &str) -> bool {
+        if self.tracker.active_streams_for(hash) > 0 {
+            return true;
+        }
+        self.last_foreground_at
+            .read()
+            .ok()
+            .and_then(|fg| fg.get(hash).copied())
+            .is_some_and(|ts| ts.elapsed() < FOREGROUND_GRACE)
+    }
+
+    fn has_any_foreground_active(&self) -> bool {
+        if self.tracker.total_active_streams() > 0 {
+            return true;
+        }
+        self.last_foreground_at
+            .read()
+            .is_ok_and(|fg| fg.values().any(|ts| ts.elapsed() < FOREGROUND_GRACE))
+    }
+
+    async fn advance_play_cursor(
+        &self,
+        hash: &str,
+        handle: &Arc<ManagedTorrent>,
+        file_id: usize,
+        offset_bytes: u64,
+    ) -> Result<(), BtError> {
+        let mut cursors = self.seek_cursors.lock().await;
+        if let Some(existing) = cursors.get_mut(hash) {
+            if existing.seek(SeekFrom::Start(offset_bytes)).await.is_ok() {
+                return Ok(());
+            }
+            cursors.remove(hash);
+        }
+        let mut stream = Arc::clone(handle)
+            .stream(file_id)
+            .await
+            .map_err(|err| BtError::NotReady(format!("play cursor unavailable: {err}")))?;
+        stream
+            .seek(SeekFrom::Start(offset_bytes))
+            .await
+            .map_err(|err| BtError::Internal(format!("play cursor seek failed: {err}")))?;
+        cursors.insert(hash.to_string(), Box::new(stream));
+        Ok(())
     }
 
     fn lookup_handle(&self, raw_hash: &str) -> Result<(String, Arc<ManagedTorrent>), BtError> {
