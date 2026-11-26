@@ -804,7 +804,7 @@ async def _rss_enrich_all(
     roster_names: list[str],
     phase_a_covers: dict[str, set[str]],
     on_progress: ProgressCallback | None,
-) -> None:
+) -> dict[str, Any]:
     """Phase B: sukebei RSS supplement, deferred off the sync critical path.
 
     Per star (serialized by the shared rate limiter): fetch RSS → merge into
@@ -812,7 +812,13 @@ async def _rss_enrich_all(
     only for codes phase A did not cover → idempotent ON CONFLICT write with
     the magnet-enriched merged data. RSS failures are logged and skipped —
     they never fail anything.
+
+    Returns a summary dict including ``total_new`` and ``star_updates`` for
+    genuinely new RSS-only titles (excluding codes already written in Phase A),
+    so callers can notify operators without missing Phase-B discoveries.
     """
+    t_rss = time.perf_counter()
+
     async def _emit(phase: str, **kw: Any) -> None:
         if on_progress is not None:
             try:
@@ -824,6 +830,8 @@ async def _rss_enrich_all(
     n_enriched = 0
     n_new = 0
     n_failed = 0
+    actual_rss_new = 0
+    rss_star_updates: list[dict[str, Any]] = []
     suppressed = await db_read(db.load_rss_suppressed_stars)
     if suppressed:
         log.info(f"phase B: {len(suppressed)} stars rss-suppressed (repeated empty results)")
@@ -907,7 +915,7 @@ async def _rss_enrich_all(
                 phase_b_new_codes = {
                     it.code for it in new_items if it.code not in already_covered
                 }
-                await sink.write_batch(sync_items, phase_b_new_codes, cover_map)
+                batch_result = await sink.write_batch(sync_items, phase_b_new_codes, cover_map)
             except Exception as e:
                 n_failed += 1
                 log.error(f"phase B: write failed for {star.name}: {e}")
@@ -915,18 +923,44 @@ async def _rss_enrich_all(
                             enriched=0, new=0, error=f"{type(e).__name__}: {e}"[:200])
                 continue
 
+            written_new = int((batch_result or {}).get("new") or 0)
+            if written_new > 0:
+                rss_new_briefs = [
+                    _title_brief(it)
+                    for it in new_items
+                    if it.code in phase_b_new_codes and it.code in cover_map and it.magnets
+                ]
+                if rss_new_briefs:
+                    actual_rss_new += len(rss_new_briefs)
+                    rss_star_updates.append({
+                        "code": star.code,
+                        "name": star.name,
+                        "count": len(rss_new_briefs),
+                        "updated": enriched,
+                        "new_titles": rss_new_briefs,
+                    })
+
             n_enriched += enriched
             n_new += len(new_items)
             log.info(f"phase B: {star.name}: {len(new_items)} new/rss-only, {enriched} enriched")
             await _emit("rss", star=star.name, done=i, total=len(stars),
                         enriched=enriched, new=len(new_items))
 
+    elapsed = round(time.perf_counter() - t_rss, 1)
     log.info(
         f"rss enrichment done: {len(stars)} stars, {n_enriched} enriched, "
-        f"{n_new} rss-only new, {n_failed} failed"
+        f"{actual_rss_new} rss-only new ({n_new} total new), {n_failed} failed"
     )
     await _emit("rss_done", stars=len(stars), enriched=n_enriched,
-                new=n_new, failed=n_failed)
+                new=actual_rss_new, failed=n_failed)
+    return {
+        "stars": len(stars),
+        "enriched": n_enriched,
+        "total_new": actual_rss_new,
+        "star_updates": rss_star_updates,
+        "failed": n_failed,
+        "elapsed": elapsed,
+    }
 
 
 def _query_stats(conn=None):

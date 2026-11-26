@@ -46,6 +46,7 @@ _sync_state: dict[str, Any] = {
 _sync_task: asyncio.Task[Any] | None = None
 _scheduler_task: asyncio.Task[Any] | None = None
 _rss_task: asyncio.Task[Any] | None = None  # phase-B RSS enrichment (never awaited)
+_rss_watch_task: asyncio.Task[Any] | None = None
 _next_scheduled_at: float | None = None
 
 
@@ -73,6 +74,38 @@ def _on_rss_task_done(task: asyncio.Task[Any]) -> None:
         return
     if exc is not None:
         log.error(f"rss enrichment task failed: {exc}", exc_info=exc)
+
+
+async def _watch_rss_task(task: asyncio.Task[Any], trigger: str) -> None:
+    """Await phase-B completion in the background and publish RSS-only new titles."""
+    try:
+        rss_outcome = await task
+    except asyncio.CancelledError:
+        return
+    except Exception as exc:
+        log.error(f"rss enrichment task failed: {exc}", exc_info=exc)
+        return
+
+    if not isinstance(rss_outcome, dict):
+        return
+    total_new = int(rss_outcome.get("total_new") or 0)
+    star_updates = rss_outcome.get("star_updates") or []
+    if total_new <= 0 or not star_updates:
+        return
+
+    invalidate_stars_cache()
+    try:
+        await publish_event("sync.completed", {
+            "trigger": f"{trigger}/rss",
+            "log_lines": [],
+            "total_new": total_new,
+            "total_updated": int(rss_outcome.get("enriched") or 0),
+            "star_updates": star_updates,
+            "failed": [],
+            "elapsed": rss_outcome.get("elapsed", 0),
+        })
+    except Exception:
+        log.exception("failed to publish phase-B RSS sync.completed event")
 
 
 async def _run_sync_bg(trigger: str) -> None:
@@ -129,12 +162,15 @@ async def _run_sync_bg(trigger: str) -> None:
         })
 
         # Phase B (sukebei RSS enrichment) runs in the background — keep a
-        # reference, log its exceptions, never await it here.
-        global _rss_task
+        # reference, log its exceptions, and publish RSS-only new titles when done.
+        global _rss_task, _rss_watch_task
         rss_task = outcome.get("rss_task")
         if rss_task is not None:
             _rss_task = rss_task
-            _rss_task.add_done_callback(_on_rss_task_done)
+            _rss_watch_task = asyncio.create_task(
+                _watch_rss_task(rss_task, trigger),
+                name="sync-rss-watch",
+            )
 
         # Sync may have resurrected dead primaries (ON CONFLICT overwrites
         # magnet/all_magnets with fresh scrape data) — validate new/changed

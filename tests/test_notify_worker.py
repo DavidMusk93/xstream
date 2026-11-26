@@ -143,3 +143,56 @@ async def test_send_chunk_html_parse_error_falls_back_to_plain(monkeypatch):
     assert seen_payloads[0].get("parse_mode") == "HTML"
     assert "parse_mode" not in seen_payloads[1]
     assert seen_payloads[1]["text"] == "broken"
+
+
+@pytest.mark.asyncio
+async def test_watch_rss_task_publishes_only_when_rss_new_titles_found(monkeypatch):
+    """Phase-B watcher publishes sync.completed (trigger=<trigger>/rss) iff total_new > 0."""
+    import asyncio
+    from backend.routers import sync as sync_router
+
+    published: list[tuple[str, dict]] = []
+    invalidated = {"count": 0}
+
+    async def fake_publish(event: str, data: dict) -> None:
+        published.append((event, data))
+
+    monkeypatch.setattr(sync_router, "publish_event", fake_publish)
+    monkeypatch.setattr(
+        sync_router,
+        "invalidate_stars_cache",
+        lambda: invalidated.__setitem__("count", invalidated["count"] + 1),
+    )
+
+    async def rss_empty():
+        return {"stars": 1, "enriched": 2, "total_new": 0, "star_updates": [], "failed": 0, "elapsed": 1.2}
+
+    await sync_router._watch_rss_task(asyncio.create_task(rss_empty()), "scheduled")
+    assert published == []
+    assert invalidated["count"] == 0
+
+    async def rss_with_new():
+        return {
+            "stars": 1,
+            "enriched": 3,
+            "total_new": 1,
+            "star_updates": [{
+                "code": "S1",
+                "name": "Nao Satsuki",
+                "count": 1,
+                "updated": 3,
+                "new_titles": [{"code": "ABC-999", "title": "RSS Exclusive"}],
+            }],
+            "failed": 0,
+            "elapsed": 4.5,
+        }
+
+    await sync_router._watch_rss_task(asyncio.create_task(rss_with_new()), "scheduled")
+    assert len(published) == 1
+    ev, data = published[0]
+    assert ev == "sync.completed"
+    assert data["trigger"] == "scheduled/rss"
+    assert data["total_new"] == 1
+    assert data["star_updates"][0]["new_titles"][0]["code"] == "ABC-999"
+    assert invalidated["count"] == 1
+
