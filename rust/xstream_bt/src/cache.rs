@@ -297,6 +297,23 @@ impl CacheTracker {
             .is_ok_and(|guard| guard.pinned.contains(hash))
     }
 
+    /// Return the number of active HTTP `/stream` connections for `hash`.
+    pub fn active_streams_for(&self, hash: &str) -> usize {
+        self.inner
+            .read()
+            .ok()
+            .and_then(|guard| guard.active_streams.get(hash).copied())
+            .unwrap_or(0)
+    }
+
+    /// Return the total number of active HTTP `/stream` connections across all torrents.
+    pub fn total_active_streams(&self) -> usize {
+        self.inner
+            .read()
+            .ok()
+            .map_or(0, |guard| guard.active_streams.values().sum())
+    }
+
     /// Remove all tracking metadata for a deleted torrent.
     pub fn forget(&self, hash: &str) {
         if let Ok(mut guard) = self.inner.write() {

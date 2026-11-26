@@ -8,6 +8,7 @@ use std::{
     ops::Range,
     path::PathBuf,
     sync::{Arc, RwLock},
+    time::Duration,
 };
 
 use librqbit::{
@@ -51,6 +52,16 @@ pub enum DeleteFiles {
     Remove,
 }
 
+/// Whether `pause` should honor pin protection or force-pause a pinned torrent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PauseMode {
+    /// Keep pinned (liked) torrents downloading when a player closes or pauses.
+    RespectPin,
+    /// Explicitly pause even if the torrent is pinned (e.g. operator action in `CachePanel`).
+    Force,
+}
+
 /// Result returned when adding a magnet link.
 #[derive(Debug, Clone, Serialize)]
 pub struct AddOutcome {
@@ -84,6 +95,10 @@ pub struct StreamCheckDto {
 }
 
 /// Response payload matching xstream's `/torrent/status/{hash}` contract.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "JSON API DTO mirrors xstream TorrentStatus wire contract"
+)]
 #[derive(Debug, Clone, Serialize)]
 pub struct TorrentStatusDto {
     /// Lowercase 40-char hex info-hash.
@@ -122,6 +137,8 @@ pub struct TorrentStatusDto {
     pub piece_segments: Vec<(f64, f64, u8)>,
     /// Hash-check progress 0-100.
     pub check_progress: f64,
+    /// True when pinned (protected from eviction, e.g. user-liked title).
+    pub pinned: bool,
 }
 
 /// Object-safe trait combining `AsyncRead + AsyncSeek + Send + Unpin` for video streams.
@@ -202,6 +219,9 @@ const PIECE_SEGMENT_BUCKETS: usize = 64;
 /// Minimum bytes downloaded before `head_ready` becomes true when piece bitmap is unavailable.
 const HEAD_READY_MIN_BYTES: u64 = 1024 * 1024;
 
+/// Maximum concurrent background (non-streaming) downloads allowed simultaneously.
+const MAX_BACKGROUND_DOWNLOADS: usize = 2;
+
 /// Core `BitTorrent` streaming engine wrapping a `librqbit::Session`.
 pub struct BtEngine {
     session: Arc<Session>,
@@ -211,6 +231,7 @@ pub struct BtEngine {
     tracker: CacheTracker,
     seek_cursors: Mutex<HashMap<String, Box<dyn AsyncVideoStream>>>,
     active_offsets: RwLock<HashMap<String, u64>>,
+    yielded_for_playback: Mutex<HashSet<String>>,
 }
 
 impl fmt::Debug for BtEngine {
@@ -289,6 +310,7 @@ impl BtEngine {
             tracker,
             seek_cursors: Mutex::new(HashMap::new()),
             active_offsets: RwLock::new(HashMap::new()),
+            yielded_for_playback: Mutex::new(HashSet::new()),
         })
     }
 
@@ -346,7 +368,8 @@ impl BtEngine {
             }
         };
 
-        self.restrict_to_video_file(&handle).await;
+        self.schedule_restrict_to_video_file(Arc::clone(&handle))
+            .await;
         let st = self.build_status(&hash, &handle);
 
         info!(
@@ -409,11 +432,11 @@ impl BtEngine {
         })
     }
 
-    /// Pause a managed torrent (pinned/liked torrents keep downloading in the background).
+    /// Pause a managed torrent (respects pin protection unless `PauseMode::Force`).
     ///
     /// # Errors
     /// Returns [`BtError::NotFound`] or [`BtError::Internal`].
-    pub async fn pause(&self, raw_hash: &str) -> Result<(), BtError> {
+    pub async fn pause(&self, raw_hash: &str, mode: PauseMode) -> Result<(), BtError> {
         let (hash, handle) = self.lookup_handle(raw_hash)?;
         {
             let mut cursors = self.seek_cursors.lock().await;
@@ -422,7 +445,11 @@ impl BtEngine {
         if let Ok(mut offsets) = self.active_offsets.write() {
             offsets.remove(&hash);
         }
-        if self.tracker.is_pinned(&hash) {
+        if matches!(mode, PauseMode::Force) {
+            let mut yielded = self.yielded_for_playback.lock().await;
+            yielded.remove(&hash);
+        }
+        if matches!(mode, PauseMode::RespectPin) && self.tracker.is_pinned(&hash) {
             debug!(hash = %hash, "skipping pause for pinned (liked) torrent");
             return Ok(());
         }
@@ -620,6 +647,7 @@ impl BtEngine {
             .unwrap_or(0);
 
         if self.policy.max_bytes == 0 || total_disk <= self.policy.max_bytes {
+            self.enforce_background_limits(total_disk).await;
             return EvictResultDto {
                 evicted_hashes: Vec::new(),
                 freed_bytes: 0,
@@ -660,11 +688,181 @@ impl BtEngine {
             .await
             .unwrap_or(plan.remaining_bytes);
 
+        self.enforce_background_limits(used_after).await;
+
         EvictResultDto {
             evicted_hashes,
             freed_bytes: total_disk.saturating_sub(used_after),
             used_bytes: used_after,
             max_bytes: self.policy.max_bytes,
+        }
+    }
+
+    /// Enforce disk watermark brake and concurrency cap for non-streaming background downloads.
+    ///
+    /// Never pauses a torrent that has an active `/stream` connection, but WILL pause
+    /// background (including pinned/liked) downloads once disk usage hits the 85% target
+    /// watermark or exceeds [`MAX_BACKGROUND_DOWNLOADS`], preventing pinned downloads from
+    /// exhausting host disk space or starving playback.
+    async fn enforce_background_limits(&self, used_bytes: u64) {
+        let over_watermark = self.policy.max_bytes > 0 && used_bytes >= self.policy.target_bytes;
+        let has_foreground_playback = self.tracker.total_active_streams() > 0;
+
+        let mut live_bg: Vec<(String, u64, Arc<ManagedTorrent>)> =
+            self.session.with_torrents(|iter| {
+                iter.filter_map(|(_, handle)| {
+                    let stats = handle.stats();
+                    if stats.finished || !matches!(stats.state, TorrentStatsState::Live) {
+                        return None;
+                    }
+                    let h = handle.info_hash().as_string();
+                    if self.tracker.active_streams_for(&h) > 0 {
+                        return None;
+                    }
+                    Some((h, stats.progress_bytes, Arc::clone(handle)))
+                })
+                .collect()
+            });
+
+        if live_bg.is_empty() {
+            return;
+        }
+
+        if over_watermark {
+            for (h, _, handle) in &live_bg {
+                if self.session.pause(handle).await.is_ok() {
+                    warn!(
+                        hash = %h,
+                        used_bytes,
+                        target_bytes = self.policy.target_bytes,
+                        "paused background download: disk watermark reached"
+                    );
+                }
+            }
+            return;
+        }
+
+        if has_foreground_playback {
+            let mut yielded = self.yielded_for_playback.lock().await;
+            for (h, _, handle) in &live_bg {
+                if self.session.pause(handle).await.is_ok() {
+                    yielded.insert(h.clone());
+                }
+            }
+            return;
+        }
+
+        if live_bg.len() > MAX_BACKGROUND_DOWNLOADS {
+            // Keep the highest-progress torrents running so they complete fastest; pause the rest.
+            live_bg.sort_by_key(|a| std::cmp::Reverse(a.1));
+            let mut yielded = self.yielded_for_playback.lock().await;
+            for (h, _, handle) in live_bg.iter().skip(MAX_BACKGROUND_DOWNLOADS) {
+                if self.session.pause(handle).await.is_ok() {
+                    yielded.insert(h.clone());
+                    info!(
+                        hash = %h,
+                        max_bg = MAX_BACKGROUND_DOWNLOADS,
+                        "paused excess background download to cap concurrency"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Yield (pause) all non-streaming background downloads so `foreground_hash` gets 100% bandwidth.
+    async fn yield_background_downloads(&self, foreground_hash: &str) {
+        let to_yield: Vec<(String, Arc<ManagedTorrent>)> = self.session.with_torrents(|iter| {
+            iter.filter_map(|(_, handle)| {
+                let h = handle.info_hash().as_string();
+                if h == foreground_hash || self.tracker.active_streams_for(&h) > 0 {
+                    return None;
+                }
+                let stats = handle.stats();
+                if stats.finished || !matches!(stats.state, TorrentStatsState::Live) {
+                    return None;
+                }
+                Some((h, Arc::clone(handle)))
+            })
+            .collect()
+        });
+
+        if to_yield.is_empty() {
+            return;
+        }
+
+        let mut yielded = self.yielded_for_playback.lock().await;
+        for (h, handle) in to_yield {
+            if self.session.pause(&handle).await.is_ok() {
+                yielded.insert(h.clone());
+                debug!(hash = %h, foreground = %foreground_hash, "yielded background download for playback");
+            }
+        }
+    }
+
+    /// Resume previously yielded background downloads once no playback stream is active
+    /// and disk usage is below the 85% watermark.
+    pub async fn restore_yielded_if_idle(&self) {
+        if self.tracker.total_active_streams() > 0 {
+            return;
+        }
+        let candidates: Vec<String> = {
+            let yielded = self.yielded_for_playback.lock().await;
+            if yielded.is_empty() {
+                return;
+            }
+            yielded.iter().cloned().collect()
+        };
+
+        let cache_dir = self.cache_dir.clone();
+        let used = tokio::task::spawn_blocking(move || disk_usage_bytes(&cache_dir))
+            .await
+            .unwrap_or(0);
+        if self.policy.max_bytes > 0 && used >= self.policy.target_bytes {
+            return;
+        }
+
+        let currently_live = self.session.with_torrents(|iter| {
+            iter.filter(|(_, h)| {
+                let st = h.stats();
+                !st.finished && matches!(st.state, TorrentStatsState::Live)
+            })
+            .count()
+        });
+        let slots = MAX_BACKGROUND_DOWNLOADS.saturating_sub(currently_live);
+        if slots == 0 {
+            return;
+        }
+
+        let mut resumed = 0usize;
+        let mut to_remove = Vec::new();
+        for h in candidates {
+            if resumed >= slots {
+                break;
+            }
+            let Ok(id) = parse_torrent_id(&h) else {
+                to_remove.push(h);
+                continue;
+            };
+            let Some(handle) = self.session.get(id) else {
+                to_remove.push(h);
+                continue;
+            };
+            if handle.stats().finished {
+                to_remove.push(h);
+                continue;
+            }
+            if self.session.unpause(&handle).await.is_ok() {
+                resumed += 1;
+                to_remove.push(h.clone());
+                debug!(hash = %h, "resumed yielded background download");
+            }
+        }
+
+        if !to_remove.is_empty() {
+            let mut yielded = self.yielded_for_playback.lock().await;
+            for h in to_remove {
+                yielded.remove(&h);
+            }
         }
     }
 
@@ -698,6 +896,7 @@ impl BtEngine {
         }
 
         let guard = self.tracker.acquire_stream(&hash);
+        self.yield_background_downloads(&hash).await;
         let stream = Arc::clone(&handle)
             .stream(video.id)
             .await
@@ -722,24 +921,54 @@ impl BtEngine {
         Ok((hash, handle))
     }
 
-    async fn restrict_to_video_file(&self, handle: &Arc<ManagedTorrent>) {
+    async fn restrict_to_video_file(&self, handle: &Arc<ManagedTorrent>) -> bool {
         let Some(video) = pick_video_from_handle(handle) else {
-            return;
+            return false;
         };
         if let Some(current) = handle.only_files() {
             if current.len() == 1 && current[0] == video.id {
-                return;
+                return true;
             }
         }
         let mut only = HashSet::with_capacity(1);
         only.insert(video.id);
-        if let Err(err) = self.session.update_only_files(handle, &only).await {
-            warn!(
-                file_id = video.id,
-                error = %err,
-                "failed to restrict torrent only_files to video"
-            );
+        match self.session.update_only_files(handle, &only).await {
+            Ok(()) => true,
+            Err(err) => {
+                debug!(
+                    file_id = video.id,
+                    error = %err,
+                    "deferring only_files restriction (torrent still initializing)"
+                );
+                false
+            }
         }
+    }
+
+    async fn schedule_restrict_to_video_file(&self, handle: Arc<ManagedTorrent>) {
+        if self.restrict_to_video_file(&handle).await {
+            return;
+        }
+        let session = Arc::clone(&self.session);
+        tokio::spawn(async move {
+            for _ in 0..12 {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let Some(video) = pick_video_from_handle(&handle) else {
+                    continue;
+                };
+                if let Some(current) = handle.only_files() {
+                    if current.len() == 1 && current[0] == video.id {
+                        return;
+                    }
+                }
+                let mut only = HashSet::with_capacity(1);
+                only.insert(video.id);
+                if session.update_only_files(&handle, &only).await.is_ok() {
+                    debug!(file_id = video.id, "restricted torrent only_files to video");
+                    return;
+                }
+            }
+        });
     }
 
     fn build_status(&self, hash: &str, handle: &ManagedTorrent) -> TorrentStatusDto {
@@ -846,6 +1075,7 @@ impl BtEngine {
             quality: "",
             piece_segments,
             check_progress: 0.0,
+            pinned: self.tracker.is_pinned(hash),
         }
     }
 }

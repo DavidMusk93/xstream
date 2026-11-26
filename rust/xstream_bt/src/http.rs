@@ -24,7 +24,7 @@ use crate::{
     cache::ActiveStreamGuard,
     engine::{
         AddOutcome, BtEngine, CacheListDto, CacheMetricsDto, DeleteFiles, EvictResultDto,
-        StartMode, StreamCheckDto, TorrentStatusDto,
+        PauseMode, StartMode, StreamCheckDto, TorrentStatusDto,
     },
     error::BtError,
     range::parse_byte_range,
@@ -151,6 +151,13 @@ struct HashControlRequest {
     hash: String,
 }
 
+#[derive(Deserialize)]
+struct PauseControlRequest {
+    hash: String,
+    #[serde(default)]
+    force: bool,
+}
+
 #[derive(Serialize)]
 struct OkResponse {
     ok: bool,
@@ -158,9 +165,14 @@ struct OkResponse {
 
 async fn pause_torrent(
     State(state): State<AppState>,
-    Json(req): Json<HashControlRequest>,
+    Json(req): Json<PauseControlRequest>,
 ) -> Result<Json<OkResponse>, BtError> {
-    state.engine.pause(&req.hash).await?;
+    let mode = if req.force {
+        PauseMode::Force
+    } else {
+        PauseMode::RespectPin
+    };
+    state.engine.pause(&req.hash, mode).await?;
     Ok(Json(OkResponse { ok: true }))
 }
 
