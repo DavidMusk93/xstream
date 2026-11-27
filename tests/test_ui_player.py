@@ -28,21 +28,14 @@ CACHE_PANEL = (ROOT / "frontend" / "components" / "cache" / "CachePanel.vue").re
 
 
 def test_video_modal_retry_keeps_video_element_mounted():
-    """Regression: <video> must stay mounted across loading/retry so gesture priming & refs survive."""
+    """Regression: <video> must stay mounted across loading/retry and delegate transitions to playerMachine."""
     video_tag = VIDEO_MODAL.split("<video", 1)[1].split("/>", 1)[0]
     assert "v-if=" not in video_tag
     assert 'v-show="isOpen"' in VIDEO_MODAL
-
-    on_error_block = VIDEO_MODAL.split("function onError()", 1)[1].split("function togglePlay()", 1)[0]
-    retry_branches = on_error_block.split("if (retryCount.value < MAX_RETRIES)")
-    assert len(retry_branches) >= 2
-    first_retry = on_error_block.split("if (code === 4 && retryCount.value < MAX_RETRIES)", 1)[1].split("return", 1)[0]
-    assert "errorMsg.value =" not in first_retry
-    assert "retryingMsg.value =" in first_retry
-
-    second_retry = retry_branches[1].split("return", 1)[0]
-    assert "errorMsg.value =" not in second_retry
-    assert "retryingMsg.value =" in second_retry
+    assert "from '~/utils/playerMachine'" in VIDEO_MODAL
+    assert "transitionPlayer(" in VIDEO_MODAL
+    assert "selectIsPlaying(" in VIDEO_MODAL
+    assert "selectIsBuffering(" in VIDEO_MODAL
 
 
 def test_video_modal_gesture_priming_and_autoplay_fallback():
@@ -55,22 +48,20 @@ def test_video_modal_gesture_priming_and_autoplay_fallback():
 
 
 def test_video_modal_play_button_tracks_media_element_state():
-    """Regression: network `stalled` / transient `waiting` must never stick isPlaying=false while playing."""
+    """Regression: network `stalled` / transient `waiting` must route through verified playerMachine."""
     video_tag = VIDEO_MODAL.split("<video", 1)[1].split("/>", 1)[0]
     assert '@play="onPlay"' in video_tag
     assert '@playing="onPlaying"' in video_tag
     assert '@timeupdate="onTimeUpdate"' in video_tag
 
     on_stalled_block = VIDEO_MODAL.split("function onStalled()", 1)[1].split("function onAbort()", 1)[0]
-    assert "isPlaying.value = false" not in on_stalled_block
-    assert "syncPlayingState()" in on_stalled_block
+    assert "type: 'STALLED'" in on_stalled_block
 
     on_waiting_block = VIDEO_MODAL.split("function onWaiting()", 1)[1].split("function onPlaying()", 1)[0]
-    assert "isPlaying.value = false" not in on_waiting_block
-    assert "syncPlayingState()" in on_waiting_block
+    assert "type: 'WAITING'" in on_waiting_block
 
     on_timeupdate_block = VIDEO_MODAL.split("function onTimeUpdate()", 1)[1].split("function onEnded()", 1)[0]
-    assert "!v.paused && !v.ended" in on_timeupdate_block
+    assert "type: 'TIMEUPDATE'" in on_timeupdate_block
 
 
 def test_video_modal_subscribes_sse_before_wait_for_head_ready():

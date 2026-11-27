@@ -46,8 +46,40 @@ def _guess_image_mime(data: bytes) -> str:
     return "image/jpeg"  # Default fallback
 
 
-def _get_engine() -> TorrentEngine:
-    """Create TorrentEngine singleton."""
+class _DisabledLegacyEngine:
+    """No-op placeholder when Rust xstream_bt handles all BitTorrent traffic.
+
+    Prevents legacy libtorrent from binding UDP/TCP ports 6881/6882 or spawning
+    background alert/preload threads while keeping router attributes compatible.
+    """
+
+    def __init__(self, cache_dir: str) -> None:
+        import threading
+
+        self.cache_dir = cache_dir
+        self.torrents: dict[str, dict] = {}
+        self.lock = threading.Lock()
+
+    def set_liked(self, _hash_str: str, _liked: bool) -> None:
+        return None
+
+    def remove_torrent(self, _hash_str: str) -> bool:
+        return False
+
+    def gc_orphaned_torrents(self) -> int:
+        return 0
+
+    def shutdown(self) -> None:
+        return None
+
+
+def _get_engine() -> TorrentEngine | _DisabledLegacyEngine:
+    """Create TorrentEngine singleton (or no-op stub when xstream_bt is enabled)."""
+    from backend.services import bt_client
+
+    if bt_client.is_enabled():
+        log.info("XSTREAM_BT_URL enabled — skipping legacy libtorrent TorrentEngine")
+        return _DisabledLegacyEngine(CACHE_DIR)
     return TorrentEngine(CACHE_DIR, max_size_gb=0)
 
 

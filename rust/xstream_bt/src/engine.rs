@@ -3,17 +3,18 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    io::SeekFrom,
-    net::{Ipv4Addr, SocketAddr},
+    io::{Read, SeekFrom},
+    net::{Ipv6Addr, SocketAddr},
     ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
 use librqbit::{
-    api::TorrentIdOrHash, AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListenerOptions,
-    ManagedTorrent, Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
+    api::TorrentIdOrHash, AddTorrent, AddTorrentOptions, AddTorrentResponse, Api,
+    ConnectionOptions, ListenerMode, ListenerOptions, ManagedTorrent, PeerConnectionOptions,
+    Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
 };
 use serde::Serialize;
 use tokio::{
@@ -29,6 +30,7 @@ use crate::{
     },
     config::Config,
     error::BtError,
+    mp4::{inspect_mp4_head, MoovLocation},
     video::{extract_info_hash, mime_for_path, normalize_hash, select_video_file, FileCandidate},
 };
 
@@ -240,6 +242,22 @@ pub const PREWARM_TAIL_BYTES: u64 = TAIL_PREWARM_BYTES;
 /// Total byte cap for a single background prewarm before auto-pausing.
 pub const PREWARM_MAX_BYTES: u64 = PREWARM_HEAD_BYTES + PREWARM_TAIL_BYTES;
 
+/// Extra contiguous media bytes required past a fast-start `moov` box for immediate keyframe decode.
+const FAST_START_KEYFRAME_BUFFER_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Maximum top-level MP4 header bytes read from disk to detect `moov` placement.
+const MP4_HEAD_INSPECT_BYTES: usize = 64 * 1024;
+
+/// High-availability public trackers injected alongside magnet trackers + DHT to speed up peer discovery.
+const DEFAULT_PUBLIC_TRACKERS: &[&str] = &[
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://tracker.moeking.me:6969/announce",
+    "http://tracker.opentrackr.org:1337/announce",
+];
+
 /// Grace window (seconds) after the last `/stream`, `seek`, `progress`, or `resume` call
 /// during which a torrent is treated as active foreground playback and must NOT be paused
 /// by background maintenance between discrete browser HTTP Range requests.
@@ -303,15 +321,37 @@ impl BtEngine {
             .map_err(|err| BtError::Internal(format!("create state dir failed: {err}")))?;
         let pins_file = state_dir.join("pins.json");
 
+        let trackers: HashSet<url::Url> = DEFAULT_PUBLIC_TRACKERS
+            .iter()
+            .filter_map(|raw| url::Url::parse(raw).ok())
+            .collect();
+
         let opts = SessionOptions {
             fastresume: true,
             persistence: Some(SessionPersistenceConfig::Json {
                 folder: Some(state_dir),
             }),
             listen: Some(ListenerOptions {
-                listen_addr: SocketAddr::from((Ipv4Addr::UNSPECIFIED, config.bt_listen_port)),
+                mode: ListenerMode::TcpAndUtp,
+                listen_addr: SocketAddr::from((Ipv6Addr::UNSPECIFIED, config.bt_listen_port)),
+                ipv4_only: false,
                 ..ListenerOptions::default()
             }),
+            connect: Some(ConnectionOptions {
+                enable_tcp: true,
+                peer_opts: Some(PeerConnectionOptions {
+                    connect_timeout: Some(Duration::from_secs(4)),
+                    read_write_timeout: Some(Duration::from_secs(10)),
+                    keep_alive_interval: Some(Duration::from_secs(60)),
+                    // Smaller per-peer request window (32 chunks = 512 KiB vs default 128 = 2 MiB)
+                    // reacts 4x faster to seek cursor shifts while still saturating high-speed peers.
+                    max_request_window: Some(32),
+                }),
+                ..ConnectionOptions::default()
+            }),
+            trackers,
+            peer_limit: Some(200),
+            concurrent_init_limit: Some(8),
             ..SessionOptions::default()
         };
 
@@ -455,6 +495,7 @@ impl BtEngine {
         let session = Arc::clone(&self.session);
         let pending_adds = Arc::clone(&self.pending_adds);
         let prewarm_cursors = Arc::clone(&self.prewarm_cursors);
+        let cache_dir = self.cache_dir.clone();
         let hash_bg = hash.to_string();
         let magnet_owned = magnet.to_string();
 
@@ -490,8 +531,14 @@ impl BtEngine {
                                 let _ = session.unpause(&handle).await;
                             }
                             let api = Api::new(Arc::clone(&session), None);
-                            open_head_tail_prewarm_with(&api, &prewarm_cursors, &hash_bg, &handle)
-                                .await;
+                            open_head_tail_prewarm_with(
+                                &api,
+                                &prewarm_cursors,
+                                &cache_dir,
+                                &hash_bg,
+                                &handle,
+                            )
+                            .await;
                         }
                         StartMode::Paused => {
                             if !matches!(handle.stats().state, TorrentStatsState::Paused) {
@@ -1278,6 +1325,13 @@ impl BtEngine {
         self.unpause_if_paused(&handle).await;
         self.mark_foreground(&hash);
 
+        // Single-cursor foreground focus: drop prewarm streams immediately so librqbit's
+        // TorrentStreams::iter_next_pieces never splits/shuffles bandwidth away from playback.
+        {
+            let mut prewarms = self.prewarm_cursors.lock().await;
+            prewarms.remove(&hash);
+        }
+
         let guard = self.tracker.acquire_stream(&hash);
         self.yield_background_downloads(&hash).await;
         let stream = Arc::clone(&handle)
@@ -1392,11 +1446,17 @@ impl BtEngine {
         }
     }
 
-    /// Open head (byte 0) + tail (last 4 MiB) `FileStream` cursors so `librqbit` focuses 100%
-    /// of peer bandwidth on the contiguous MP4 header (`ftyp`+`moov`) and tail index without
-    /// downloading any other pieces of the file.
+    /// Open head (byte 0) + optional tail `FileStream` cursors using exact MP4 `moov` placement
+    /// when known, focusing 100% of peer bandwidth on the minimum bytes needed for instant start.
     async fn ensure_head_prewarm(&self, hash: &str, handle: &Arc<ManagedTorrent>) {
-        open_head_tail_prewarm_with(&self.api, &self.prewarm_cursors, hash, handle).await;
+        open_head_tail_prewarm_with(
+            &self.api,
+            &self.prewarm_cursors,
+            &self.cache_dir,
+            hash,
+            handle,
+        )
+        .await;
     }
 
     fn build_status(&self, hash: &str, handle: &ManagedTorrent) -> TorrentStatusDto {
@@ -1467,7 +1527,10 @@ impl BtEngine {
                     )
                 } else {
                     let bits = self.video_have_bits(hash, &range);
-                    let head_ok = is_head_ready(&bits, video_size);
+                    let moov = video_file.as_deref().map_or(MoovLocation::Unknown, |rel| {
+                        inspect_disk_mp4_moov(&self.cache_dir, rel, video_size, &bits)
+                    });
+                    let head_ok = is_head_ready_for_moov(&bits, video_size, moov);
                     let segs = compute_piece_segments(&bits, active_ratio, PIECE_SEGMENT_BUCKETS);
                     (segs, head_ok)
                 }
@@ -1523,6 +1586,7 @@ fn video_have_bits_with_api(api: &Api, hash: &str, piece_range: &Range<u32>) -> 
 async fn open_head_tail_prewarm_with(
     api: &Api,
     prewarm_cursors: &Mutex<PrewarmCursorMap>,
+    cache_dir: &Path,
     hash: &str,
     handle: &Arc<ManagedTorrent>,
 ) {
@@ -1533,7 +1597,8 @@ async fn open_head_tail_prewarm_with(
         return;
     };
     let bits = video_have_bits_with_api(api, hash, &video.piece_range);
-    if is_head_ready(&bits, video.len) {
+    let moov = inspect_disk_mp4_moov(cache_dir, &video.rel_path, video.len, &bits);
+    if is_head_ready_for_moov(&bits, video.len, moov) {
         return;
     }
     {
@@ -1547,10 +1612,18 @@ async fn open_head_tail_prewarm_with(
     if let Ok(head_stream) = Arc::clone(handle).stream(video.id).await {
         streams.push(Box::new(head_stream));
     }
-    if video.len > HEAD_READY_CONTIGUOUS_BYTES {
-        let tail_offset = video.len.saturating_sub(TAIL_PREWARM_BYTES);
+    // Fast-start MP4 (`MoovLocation::Head`) needs zero tail bytes; keep a single head stream
+    // so librqbit never splits peer bandwidth with a tail cursor.
+    let tail_offset = match moov {
+        MoovLocation::Tail { start_offset } => Some(start_offset),
+        MoovLocation::Unknown if video.len > HEAD_READY_CONTIGUOUS_BYTES => {
+            Some(video.len.saturating_sub(TAIL_PREWARM_BYTES))
+        }
+        MoovLocation::Head { .. } | MoovLocation::Unknown => None,
+    };
+    if let Some(offset) = tail_offset {
         if let Ok(mut tail_stream) = Arc::clone(handle).stream(video.id).await {
-            if tail_stream.seek(SeekFrom::Start(tail_offset)).await.is_ok() {
+            if tail_stream.seek(SeekFrom::Start(offset)).await.is_ok() {
                 streams.push(Box::new(tail_stream));
             }
         }
@@ -1559,7 +1632,7 @@ async fn open_head_tail_prewarm_with(
     if !streams.is_empty() {
         let mut prewarms = prewarm_cursors.lock().await;
         prewarms.insert(hash.to_string(), streams);
-        debug!(hash = %hash, "opened on-demand head+tail prewarm cursors");
+        debug!(hash = %hash, moov = ?moov, "opened on-demand prewarm cursors");
     }
 }
 
@@ -1606,6 +1679,72 @@ fn pick_video_from_handle(handle: &ManagedTorrent) -> Option<VideoFileInfo> {
         })
         .ok()
         .flatten()
+}
+
+/// Inspect the on-disk MP4 top-level boxes once piece 0 is verified on disk.
+fn inspect_disk_mp4_moov(
+    cache_dir: &Path,
+    rel_path: &str,
+    file_len: u64,
+    have_bits: &[bool],
+) -> MoovLocation {
+    if !have_bits.first().copied().unwrap_or(false) {
+        return MoovLocation::Unknown;
+    }
+    let full_path = cache_dir.join(rel_path);
+    let Ok(mut file) = std::fs::File::open(full_path) else {
+        return MoovLocation::Unknown;
+    };
+    let mut buf = vec![0_u8; MP4_HEAD_INSPECT_BYTES];
+    let Ok(n) = file.read(&mut buf) else {
+        return MoovLocation::Unknown;
+    };
+    inspect_mp4_head(&buf[..n], file_len)
+}
+
+/// Check `head_ready` using exact MP4 `moov` box boundaries when known, falling back to
+/// [`is_head_ready`] (10 MiB contiguous head + tail piece) for unknown containers.
+#[must_use]
+pub fn is_head_ready_for_moov(have_bits: &[bool], file_len: u64, moov: MoovLocation) -> bool {
+    let total_pieces = have_bits.len();
+    if file_len == 0 || total_pieces == 0 {
+        return false;
+    }
+    match moov {
+        MoovLocation::Head { end_offset } => {
+            // Fast-start MP4: only need contiguous head covering `moov` + 2 MiB keyframes;
+            // no tail piece required!
+            let target_bytes = end_offset
+                .saturating_add(FAST_START_KEYFRAME_BUFFER_BYTES)
+                .min(HEAD_READY_CONTIGUOUS_BYTES)
+                .min(file_len);
+            let head_count = pieces_for_bytes(total_pieces, file_len, target_bytes);
+            have_bits.iter().take(head_count).all(|&b| b)
+        }
+        MoovLocation::Tail { start_offset } => {
+            // Tail-moov MP4: need initial keyframes (2 MiB) + exact tail `[start_offset..EOF]`.
+            let head_bytes = FAST_START_KEYFRAME_BUFFER_BYTES.min(file_len);
+            let head_count = pieces_for_bytes(total_pieces, file_len, head_bytes);
+            let tail_bytes = file_len.saturating_sub(start_offset).max(1);
+            let tail_count = pieces_for_bytes(total_pieces, file_len, tail_bytes);
+            let head_ok = have_bits.iter().take(head_count).all(|&b| b);
+            let tail_ok = have_bits.iter().rev().take(tail_count).all(|&b| b);
+            head_ok && tail_ok
+        }
+        MoovLocation::Unknown => is_head_ready(have_bits, file_len),
+    }
+}
+
+fn pieces_for_bytes(total_pieces: usize, file_len: u64, bytes: u64) -> usize {
+    let total_pieces_u128 = u128::try_from(total_pieces).unwrap_or(1);
+    let file_len_u128 = u128::from(file_len.max(1));
+    usize::try_from(
+        total_pieces_u128
+            .saturating_mul(u128::from(bytes))
+            .div_ceil(file_len_u128),
+    )
+    .unwrap_or(1)
+    .clamp(1, total_pieces)
 }
 
 /// Check whether contiguous head pieces covering [`HEAD_READY_CONTIGUOUS_BYTES`] (10 MiB,

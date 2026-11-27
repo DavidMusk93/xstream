@@ -7,6 +7,7 @@
     "dev": "nuxt dev --port 3000",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
+    "test": "vitest run",
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
@@ -20,7 +21,9 @@
     "@nuxtjs/tailwindcss": "^6.14.0",
     "@types/node": "^25.6.0",
     "@vite-pwa/nuxt": "^1.1.1",
+    "fast-check": "^4.11.0",
     "sharp": "^0.34.5",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "vitest": "^5.1.2"
   }
 }

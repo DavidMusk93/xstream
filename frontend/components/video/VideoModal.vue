@@ -243,6 +243,15 @@
 <script setup lang="ts">
 import { nextTick } from 'vue'
 import { logInfo, logError } from '~/composables/useLogger'
+import {
+  createInitialPlayerState,
+  selectIsBuffering,
+  selectIsPlaying,
+  transitionPlayer,
+  type PlayerEffect,
+  type PlayerEvent,
+  type PlayerMachineState,
+} from '~/utils/playerMachine'
 
 const isOpen = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ hash?: string; code?: string; starCode?: string }>()
@@ -253,29 +262,42 @@ const videoRef = ref<HTMLVideoElement>()
 const containerRef = ref<HTMLDivElement>()
 const { status, loading, error, canplayFired, startPolling, stopPolling, waitForHeadReady, cancelWaitForHeadReady, reportSeek, reportProgress, reportPause, reportResume, formatSpeed } = useVideoPlayer()
 
-const buffering = ref(false)
-const retryingMsg = ref('')
-const errorMsg = ref('')
+const machine = ref<PlayerMachineState>(createInitialPlayerState())
+const isPlaying = computed(() => selectIsPlaying(machine.value))
+const buffering = computed(() => selectIsBuffering(machine.value))
+const retryingMsg = computed(() => machine.value.retryingMsg)
+const errorMsg = computed(() => machine.value.errorMsg)
+const retryCount = computed(() => machine.value.retryCount)
+const autoMutedByPolicy = computed(() => machine.value.autoMutedByPolicy)
+
 const isFullscreen = ref(false)
 const isMuted = ref(false)
-const retryCount = ref(0)
 const MAX_RETRIES = 3
 let pauseDownloadTimer: ReturnType<typeof setTimeout> | null = null
 const PAUSE_GRACE_MS = 30000
 
 const currentTime = ref(0)
 const duration = ref(0)
-const isPlaying = ref(false)
-const wantPlaying = ref(false)
-const autoMutedByPolicy = ref(false)
 let playAttemptInFlight = false
 const controlsHidden = ref(false)
 let controlsHideTimer: ReturnType<typeof setTimeout> | null = null
 const activeTimers = new Set<ReturnType<typeof setTimeout>>()
 
-function syncPlayingState() {
-  const v = videoRef.value
-  isPlaying.value = !!(v && !v.paused && !v.ended)
+function dispatchPlayer(event: PlayerEvent): PlayerEffect {
+  const { state, effect } = transitionPlayer(machine.value, event)
+  machine.value = state
+  if (effect.type === 'ATTEMPT_PLAY') {
+    void executePlayAttempt(effect.mutedFallback, effect.reason)
+  } else if (effect.type === 'SCHEDULE_RETRY') {
+    const src = videoRef.value?.getAttribute('src') || streamUrl.value
+    safeSetTimeout(() => {
+      if (videoRef.value && isOpen.value) {
+        videoRef.value.src = src
+        videoRef.value.load()
+      }
+    }, 1000)
+  }
+  return effect
 }
 
 function primeFromUserGesture() {
@@ -639,19 +661,23 @@ const bufferingText = computed(() => {
   return parts.join(' · ')
 })
 
-async function attemptAutoPlay(reason: string) {
+async function executePlayAttempt(mutedFallback: boolean, reason: string) {
   const v = videoRef.value
   if (!v || !isOpen.value || loading.value || !!errorMsg.value) return
-  if (!wantPlaying.value || !v.getAttribute('src')) return
+  if (!machine.value.wantPlaying || !v.getAttribute('src')) return
+  if (mutedFallback && !v.muted) {
+    v.muted = true
+    isMuted.value = true
+  }
   if (!v.paused) {
-    syncPlayingState()
+    dispatchPlayer({ type: 'PLAY_OK' })
     return
   }
   if (playAttemptInFlight) return
   playAttemptInFlight = true
   try {
     await v.play()
-    syncPlayingState()
+    dispatchPlayer({ type: 'PLAY_OK' })
     if (props.hash && v.duration && isFinite(v.duration)) {
       reportResume(props.hash, v.currentTime, v.duration)
     }
@@ -659,23 +685,13 @@ async function attemptAutoPlay(reason: string) {
   } catch (err: any) {
     const name = err?.name || ''
     if (name === 'AbortError') {
-      // Interrupted by a concurrent seek (e.g. restoreProgress) or retry load;
-      // the subsequent canplay / seeked event will re-trigger attemptAutoPlay.
+      dispatchPlayer({ type: 'PLAY_ABORTED' })
       logInfo('player', `autoplay interrupted (${reason}), retrying when ready`)
-    } else if (name === 'NotAllowedError' && !v.muted) {
-      logInfo('player', `unmuted autoplay blocked (${reason}), retrying muted`)
-      v.muted = true
-      isMuted.value = true
-      autoMutedByPolicy.value = true
-      try {
-        await v.play()
-        syncPlayingState()
-        if (props.hash && v.duration && isFinite(v.duration)) {
-          reportResume(props.hash, v.currentTime, v.duration)
-        }
-      } catch (err2: any) {
-        logError('player', `muted autoplay rejected (${reason}): ${err2?.name || err2?.message || err2}`)
-      }
+    } else if (name === 'NotAllowedError') {
+      logInfo('player', `autoplay blocked (${reason}), muted=${v.muted}`)
+      playAttemptInFlight = false
+      dispatchPlayer({ type: 'PLAY_NOT_ALLOWED', alreadyMuted: v.muted })
+      return
     } else {
       logError('player', `autoplay rejected (${reason}): ${name || err?.message || err}`)
     }
@@ -686,25 +702,20 @@ async function attemptAutoPlay(reason: string) {
 
 function unmuteFromPolicy() {
   const v = videoRef.value
-  autoMutedByPolicy.value = false
+  dispatchPlayer({ type: 'UNMUTE' })
   isMuted.value = false
   if (v) {
     v.muted = false
-    if (v.paused && wantPlaying.value) {
-      void attemptAutoPlay('unmute-tap')
+    if (v.paused && machine.value.wantPlaying) {
+      void executePlayAttempt(false, 'unmute-tap')
     }
   }
 }
 
 async function openPlayback(hash: string) {
-  errorMsg.value = ''
-  retryingMsg.value = ''
   canplayFired.value = false
-  buffering.value = true
-  wantPlaying.value = true
-  autoMutedByPolicy.value = false
   seekingTarget.value = null
-  retryCount.value = 0
+  dispatchPlayer({ type: 'OPEN', hash })
   logInfo('player', `open video hash=${hash.slice(0, 12)}`)
 
   // Subscribe to SSE + fetch initial status BEFORE waitForHeadReady so the
@@ -715,13 +726,13 @@ async function openPlayback(hash: string) {
   const ready = await waitForHeadReady(hash)
   if (!isOpen.value || props.hash !== hash) return
   if (!ready) {
-    wantPlaying.value = false
-    errorMsg.value = error.value || 'Load failed'
-    logError('player', `load failed hash=${hash.slice(0, 12)}: ${errorMsg.value}`)
+    const msg = error.value || 'Load failed'
+    dispatchPlayer({ type: 'HEAD_TIMEOUT', message: msg })
+    logError('player', `load failed hash=${hash.slice(0, 12)}: ${msg}`)
     track('play_timeout', {
       code: props.code, star_code: props.starCode,
       meta: {
-        hash, error: errorMsg.value,
+        hash, error: msg,
         peers: status.value?.peers ?? 0,
         state: status.value?.state ?? '',
         waited_sec: Math.round((Date.now() - openStart) / 1000),
@@ -730,6 +741,7 @@ async function openPlayback(hash: string) {
     return
   }
 
+  dispatchPlayer({ type: 'HEAD_READY' })
   track('play_ready', {
     code: props.code, star_code: props.starCode,
     meta: { hash, elapsed_ms: Date.now() - openStart },
@@ -743,11 +755,11 @@ async function openPlayback(hash: string) {
     v.load()
     logInfo('player', `src set hash=${hash.slice(0, 12)} readyState=${v.readyState} networkState=${v.networkState}`)
     if (v.readyState >= 3) {
-      void attemptAutoPlay('readyState')
+      dispatchPlayer({ type: 'CANPLAY', mediaPaused: v.paused })
     }
     safeSetTimeout(() => {
-      if (isOpen.value && props.hash === hash && wantPlaying.value && v.paused && v.readyState >= 2) {
-        void attemptAutoPlay('loadeddata-fallback')
+      if (isOpen.value && props.hash === hash && machine.value.wantPlaying && v.paused && v.readyState >= 2) {
+        void executePlayAttempt(false, 'loadeddata-fallback')
       }
     }, 500)
   } else {
@@ -776,9 +788,9 @@ watch(isOpen, (open) => {
       })
     }
     saveProgress()
-    wantPlaying.value = false
-    if (autoMutedByPolicy.value) {
-      autoMutedByPolicy.value = false
+    const wasAutoMuted = autoMutedByPolicy.value
+    dispatchPlayer({ type: 'CLOSE' })
+    if (wasAutoMuted) {
       isMuted.value = false
       if (videoRef.value) videoRef.value.muted = false
     }
@@ -797,9 +809,6 @@ watch(isOpen, (open) => {
     if (isFullscreen.value) {
       exitFullscreen()
     }
-    errorMsg.value = ''
-    retryingMsg.value = ''
-    buffering.value = false
     if (pauseDownloadTimer) {
       clearTimeout(pauseDownloadTimer)
       pauseDownloadTimer = null
@@ -807,7 +816,6 @@ watch(isOpen, (open) => {
     showGestureHint.value = false
     currentTime.value = 0
     duration.value = 0
-    isPlaying.value = false
   }
 })
 
@@ -817,7 +825,6 @@ function close() {
 }
 
 function doRetry() {
-  // Re-run the full open sequence on manual retry.
   if (props.hash) openPlayback(props.hash)
 }
 
@@ -830,8 +837,9 @@ function onLoadedMetadata() {
 }
 
 function onPlay() {
-  if (!isOpen.value || loading.value || !videoRef.value?.getAttribute('src')) return
-  syncPlayingState()
+  const v = videoRef.value
+  if (!isOpen.value || loading.value || !v?.getAttribute('src')) return
+  dispatchPlayer({ type: 'PLAY_EVENT', mediaPaused: v.paused, mediaEnded: v.ended })
   if (pauseDownloadTimer) {
     clearTimeout(pauseDownloadTimer)
     pauseDownloadTimer = null
@@ -842,30 +850,20 @@ function onCanplay() {
   const v = videoRef.value
   if (!isOpen.value || !v?.getAttribute('src')) return
   canplayFired.value = true
-  buffering.value = false
-  retryingMsg.value = ''
   seekingTarget.value = null
   bufferVersion.value++
-  retryCount.value = 0
-  syncPlayingState()
   logInfo('player', 'canplay', {
     currentTime: v.currentTime ?? 0,
     bufferedRanges: v.buffered?.length ?? 0,
   })
-  if (wantPlaying.value && v.paused) {
-    void attemptAutoPlay('canplay')
-  }
+  dispatchPlayer({ type: 'CANPLAY', mediaPaused: v.paused })
 }
 
 function onCanplayThrough() {
   const v = videoRef.value
   if (!isOpen.value || !v?.getAttribute('src')) return
-  buffering.value = false
   bufferVersion.value++
-  syncPlayingState()
-  if (wantPlaying.value && v.paused) {
-    void attemptAutoPlay('canplaythrough')
-  }
+  dispatchPlayer({ type: 'CANPLAY', mediaPaused: v.paused })
 }
 
 function onTimeUpdate() {
@@ -873,12 +871,13 @@ function onTimeUpdate() {
   if (!v || !isOpen.value || !v.getAttribute('src')) return
   currentTime.value = v.currentTime
   duration.value = v.duration || 0
-  if (!v.paused && !v.ended) {
-    if (!isPlaying.value) isPlaying.value = true
-    if (buffering.value && !v.seeking && v.readyState >= 3 && !retryingMsg.value) {
-      buffering.value = false
-    }
-  }
+  dispatchPlayer({
+    type: 'TIMEUPDATE',
+    mediaPaused: v.paused,
+    mediaEnded: v.ended,
+    seeking: v.seeking,
+    readyState: v.readyState,
+  })
   const now = Date.now()
   if (now - lastProgressSave > PROGRESS_SAVE_INTERVAL_MS) {
     saveProgress()
@@ -893,8 +892,7 @@ function onTimeUpdate() {
 }
 
 function onEnded() {
-  wantPlaying.value = false
-  isPlaying.value = false
+  dispatchPlayer({ type: 'ENDED' })
   logInfo('player', 'ended')
   clearProgress()
 }
@@ -902,8 +900,7 @@ function onEnded() {
 function onWaiting() {
   const v = videoRef.value
   if (!isOpen.value || !v?.getAttribute('src')) return
-  buffering.value = true
-  syncPlayingState()
+  dispatchPlayer({ type: 'WAITING', mediaPaused: v.paused, mediaEnded: v.ended })
   logInfo('player', 'waiting', {
     currentTime: v.currentTime ?? 0,
     readyState: v.readyState ?? -1,
@@ -913,12 +910,9 @@ function onWaiting() {
 function onPlaying() {
   const v = videoRef.value
   if (!isOpen.value || !v?.getAttribute('src')) return
-  buffering.value = false
-  retryingMsg.value = ''
   seekingTarget.value = null
-  wantPlaying.value = true
-  syncPlayingState()
   bufferVersion.value++
+  dispatchPlayer({ type: 'PLAYING' })
   if (pauseDownloadTimer) {
     clearTimeout(pauseDownloadTimer)
     pauseDownloadTimer = null
@@ -932,12 +926,12 @@ function onPlaying() {
 function onSeeking() {
   const v = videoRef.value
   if (!isOpen.value || !v?.getAttribute('src')) return
-  buffering.value = true
   if (pauseDownloadTimer) {
     clearTimeout(pauseDownloadTimer)
     pauseDownloadTimer = null
   }
-  wasPlayingBeforeSeek.value = wantPlaying.value || !v.paused
+  wasPlayingBeforeSeek.value = machine.value.wantPlaying || !v.paused
+  dispatchPlayer({ type: 'SEEKING', mediaPaused: v.paused })
   if (isFinite(v.currentTime)) {
     seekingTarget.value = v.currentTime
     sendSeekNow(v.currentTime)
@@ -952,29 +946,23 @@ function onSeeking() {
 function onSeeked() {
   const v = videoRef.value
   if (!isOpen.value || !v?.getAttribute('src')) return
-  buffering.value = false
   seekingTarget.value = null
   bufferVersion.value++
   currentTime.value = v.currentTime
   duration.value = v.duration || 0
-  syncPlayingState()
   logInfo('player', 'seeked', {
     currentTime: v.currentTime ?? 0,
     duration: v.duration ?? 0,
     wasPlaying: wasPlayingBeforeSeek.value,
   })
-  if (wasPlayingBeforeSeek.value || wantPlaying.value) {
-    wantPlaying.value = true
-    void attemptAutoPlay('seeked')
-  }
+  dispatchPlayer({ type: 'SEEKED', mediaPaused: v.paused, mediaEnded: v.ended })
 }
 
 function onPause() {
   const v = videoRef.value
   if (!isOpen.value || loading.value || !v?.getAttribute('src')) return
-  isPlaying.value = false
+  dispatchPlayer({ type: 'NATIVE_PAUSE', ended: v.ended, seeking: v.seeking })
   if (v.ended || retryingMsg.value || v.seeking) return
-  wantPlaying.value = false
   logInfo('player', 'pause')
   // Grace window: keep buffering ahead for 30s when the user pauses playback
   // (e.g. pausing during a stall to let cache build). Closing the modal still
@@ -998,12 +986,13 @@ function onVideoClick() {
 function onStalled() {
   const v = videoRef.value
   if (!isOpen.value || !v?.getAttribute('src')) return
-  // `stalled` reflects background network fetch idle (~3s), NOT playback pause.
-  // Never reset isPlaying to false while frames are still rendering from buffer.
-  syncPlayingState()
-  if (v.readyState < 3 || v.seeking) {
-    buffering.value = true
-  }
+  dispatchPlayer({
+    type: 'STALLED',
+    mediaPaused: v.paused,
+    mediaEnded: v.ended,
+    seeking: v.seeking,
+    readyState: v.readyState,
+  })
   logInfo('player', 'stalled', {
     currentTime: v.currentTime ?? 0,
     readyState: v.readyState ?? -1,
@@ -1014,13 +1003,11 @@ function onStalled() {
 
 function onAbort() {
   logInfo('player', 'abort')
-  buffering.value = false
 }
 
 function onError() {
   const v = videoRef.value
   if (!isOpen.value || loading.value || !v?.getAttribute('src')) return
-  isPlaying.value = false
   const code = v.error?.code ?? 0
   const message = v.error?.message ?? 'unknown'
   const networkState = v.networkState ?? -1
@@ -1037,53 +1024,12 @@ function onError() {
     hash: props.hash?.slice(0, 12),
   })
 
-  if (code === 4 && retryCount.value < MAX_RETRIES) {
-    retryCount.value++
-    logInfo('player', `code=4 retry ${retryCount.value}/${MAX_RETRIES}`)
-    // Keep <video> active during retries: setting errorMsg hides <video>
-    // instead of retrying transparently in the buffering pill.
-    buffering.value = true
-    retryingMsg.value = `Retrying playback (${retryCount.value}/${MAX_RETRIES})...`
-    const src = streamUrl.value
-    safeSetTimeout(() => {
-      if (videoRef.value && isOpen.value) {
-        videoRef.value.src = src
-        videoRef.value.load()
-      }
-    }, 1000)
+  const effect = dispatchPlayer({ type: 'MEDIA_ERROR', code, maxRetries: MAX_RETRIES })
+  if (effect.type === 'SCHEDULE_RETRY') {
+    logInfo('player', `code=${code} retry ${effect.attempt}/${MAX_RETRIES}`)
     return
   }
 
-  if (code === 4) {
-    wantPlaying.value = false
-    retryingMsg.value = ''
-    errorMsg.value = 'Playback failed, unsupported format or corrupted data'
-    track('play_error', {
-      code: props.code, star_code: props.starCode,
-      meta: { hash: props.hash, video_error: code, message, retries: retryCount.value },
-    })
-    stopPolling()
-    return
-  }
-
-  if (retryCount.value < MAX_RETRIES) {
-    retryCount.value++
-    logInfo('player', `retry ${retryCount.value}/${MAX_RETRIES}`)
-    buffering.value = true
-    retryingMsg.value = `Retrying playback (${retryCount.value}/${MAX_RETRIES})...`
-    const src = v.src || streamUrl.value
-    safeSetTimeout(() => {
-      if (videoRef.value && isOpen.value) {
-        videoRef.value.src = src
-        videoRef.value.load()
-      }
-    }, 1000)
-    return
-  }
-
-  wantPlaying.value = false
-  retryingMsg.value = ''
-  errorMsg.value = 'Playback failed, file may be incomplete'
   track('play_error', {
     code: props.code, star_code: props.starCode,
     meta: { hash: props.hash, video_error: code, message, retries: retryCount.value },
@@ -1095,23 +1041,10 @@ function togglePlay() {
   const v = videoRef.value
   if (!v) return
   if (v.paused) {
-    // Update UI immediately so the button feels synchronous.
-    wantPlaying.value = true
-    isPlaying.value = true
-    v.play().then(() => {
-      syncPlayingState()
-      if (props.hash && v.duration && isFinite(v.duration)) {
-        reportResume(props.hash, v.currentTime, v.duration)
-      }
-      logInfo('player', 'toggle play success')
-    }).catch((err: any) => {
-      syncPlayingState()
-      logError('player', `toggle play rejected: ${err?.name || err?.message || err}`)
-    })
+    dispatchPlayer({ type: 'USER_PLAY' })
   } else {
-    wantPlaying.value = false
+    dispatchPlayer({ type: 'USER_PAUSE' })
     v.pause()
-    isPlaying.value = false
     logInfo('player', 'toggle pause')
   }
 }
@@ -1131,7 +1064,7 @@ function toggleFullscreen() {
 function toggleMute() {
   const v = videoRef.value
   if (!v) return
-  autoMutedByPolicy.value = false
+  dispatchPlayer({ type: 'UNMUTE' })
   v.muted = !v.muted
   isMuted.value = v.muted
   logInfo('player', `toggleMute muted=${v.muted}`)
