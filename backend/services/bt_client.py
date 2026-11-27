@@ -16,6 +16,7 @@ log = get_logger("bt-client")
 _client: httpx.AsyncClient | None = None
 _watchers: dict[str, asyncio.Task[None]] = {}
 _broadcaster_task: asyncio.Task[None] | None = None
+_archived_submitted: set[str] = set()
 
 
 def get_base_url() -> str | None:
@@ -28,6 +29,50 @@ def get_omesh_url() -> str | None:
     """Return configured omesh CDN/edge URL (e.g. http://127.0.0.1:8767), or None if disabled."""
     raw = os.environ.get("XSTREAM_OMESH_URL", "").strip().rstrip("/")
     return raw or None
+
+
+def get_omesh_token() -> str | None:
+    """Return Bearer token for omesh requests (XSTREAM_OMESH_TOKEN or OMESH_TOKEN)."""
+    raw = (
+        os.environ.get("XSTREAM_OMESH_TOKEN", "").strip()
+        or os.environ.get("OMESH_TOKEN", "").strip()
+    )
+    return raw or None
+
+
+def _omesh_headers(extra: dict[str, str] | None = None) -> dict[str, str]:
+    headers = dict(extra or {})
+    tok = get_omesh_token()
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    return headers
+
+
+async def submit_archive_job(hash_str: str) -> bool:
+    """Ask omesh to lossless-faststart and archive a completed torrent to ostore (deduped)."""
+    omesh = get_omesh_url()
+    if not omesh:
+        return False
+    h = hash_str.strip().lower()
+    if not h or h in _archived_submitted:
+        return False
+    _archived_submitted.add(h)
+    try:
+        resp = await _get_client().post(
+            f"{omesh}/mesh/jobs",
+            json={"kind": "faststart_archive", "hash": h, "target": "local"},
+            headers=_omesh_headers(),
+            timeout=5.0,
+        )
+        if resp.status_code < 400:
+            log.info(f"omesh faststart_archive queued for {h[:12]}...")
+            return True
+        _archived_submitted.discard(h)
+        log.warning(f"omesh archive rejected for {h[:12]}: {resp.status_code}")
+    except Exception as exc:
+        _archived_submitted.discard(h)
+        log.debug(f"omesh archive submit failed for {h[:12]}: {exc}")
+    return False
 
 
 def is_enabled() -> bool:
@@ -150,6 +195,8 @@ def _watch_hash(hash_str: str) -> None:
                         "torrent.status",
                         {"hash": h, "state": state, "ready": data.get("ready", False)},
                     )
+                    if state == "finished" and data.get("pinned"):
+                        asyncio.create_task(submit_archive_job(h))
                     break
         except asyncio.CancelledError:
             pass
@@ -220,7 +267,11 @@ async def check_stream(hash_str: str) -> JSONResponse:
     omesh = get_omesh_url()
     if omesh:
         try:
-            resp = await _get_client().get(f"{omesh}/api/check/{hash_str}", timeout=3.0)
+            resp = await _get_client().get(
+                f"{omesh}/api/check/{hash_str}",
+                headers=_omesh_headers(),
+                timeout=3.0,
+            )
             if resp.status_code == 200:
                 return JSONResponse(
                     content=resp.json(),
@@ -282,14 +333,16 @@ async def stream_video(request: Request, hash_str: str) -> Response:
     """
     base = get_base_url()
     assert base is not None
-    stream_base = get_omesh_url() or base
+    omesh = get_omesh_url()
+    stream_base = omesh or base
     req_headers: dict[str, str] = {}
     range_hdr = request.headers.get("Range")
     if range_hdr:
         req_headers["Range"] = range_hdr
+    upstream_headers = _omesh_headers(req_headers) if omesh else req_headers
 
     client = _get_client()
-    req = client.build_request("GET", f"{stream_base}/stream/{hash_str}", headers=req_headers)
+    req = client.build_request("GET", f"{stream_base}/stream/{hash_str}", headers=upstream_headers)
 
     send_task = asyncio.create_task(client.send(req, stream=True))
     disc_task = asyncio.create_task(_wait_disconnect(request))
