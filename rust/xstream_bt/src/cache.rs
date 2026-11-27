@@ -364,11 +364,17 @@ impl CacheTracker {
             .map_or(0, |guard| guard.active_streams.values().sum())
     }
 
-    /// Remove all tracking metadata for a deleted torrent.
+    /// Remove all tracking metadata (including pin state) for a deleted torrent.
     pub fn forget(&self, hash: &str) {
-        if let Ok(mut guard) = self.inner.write() {
+        let snapshot = if let Ok(mut guard) = self.inner.write() {
             guard.last_access.remove(hash);
             guard.active_streams.remove(hash);
+            guard.pinned.remove(hash).then(|| guard.pinned.clone())
+        } else {
+            None
+        };
+        if let Some(pins) = snapshot {
+            self.persist_pins_snapshot(&pins);
         }
     }
 
@@ -564,6 +570,11 @@ mod tests {
         let t2 = CacheTracker::with_pins_file(pins_file);
         assert!(t2.is_pinned(&h1), "h1 must survive restart");
         assert!(!t2.is_pinned(&h2), "unpinned h2 must stay unpinned");
+
+        t2.forget(&h1);
+        assert!(!t2.is_pinned(&h1), "forget must clear pin state");
+        let t3 = CacheTracker::with_pins_file(dir.join("pins.json"));
+        assert!(!t3.is_pinned(&h1), "forget must persist pin removal");
 
         let _ = fs::remove_dir_all(&dir);
     }

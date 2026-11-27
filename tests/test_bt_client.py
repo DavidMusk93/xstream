@@ -134,3 +134,54 @@ async def test_progress_broadcaster_publishes_active_downloads_when_sse_connecte
 
     assert any(e == "torrent.progress" and d.get("hash") == "c" * 40 for e, d in published)
 
+
+@pytest.mark.asyncio
+async def test_delete_star_clears_xstream_bt_cache_and_pins(monkeypatch, tmp_path):
+    """Regression: delete_star must unpin and delete cached torrents via xstream_bt."""
+    import json
+    from fastapi import HTTPException
+    from types import SimpleNamespace
+    from backend.routers import stars as stars_router
+
+    monkeypatch.setenv("XSTREAM_BT_URL", "http://127.0.0.1:8766")
+
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps({"stars": [{"code": "TST-001", "name": "Test Star"}]}))
+    monkeypatch.setattr(stars_router, "CONFIG_PATH", str(cfg_path))
+    monkeypatch.setattr(stars_router, "invalidate_stars_cache", lambda: None)
+
+    h_cached = "d" * 40
+    h_missing = "e" * 40
+
+    async def fake_db_read(fn, *args, **kwargs):
+        return [h_cached, h_missing]
+
+    async def fake_db_write(fn, *args, **kwargs):
+        return True
+
+    monkeypatch.setattr(stars_router, "db_read", fake_db_read)
+    monkeypatch.setattr(stars_router, "db_write", fake_db_write)
+
+    unpinned: list[tuple[str, bool]] = []
+    deleted: list[str] = []
+
+    async def fake_set_pin(h: str, *, pinned: bool) -> None:
+        unpinned.append((h, pinned))
+
+    async def fake_cache_delete(h: str) -> dict:
+        deleted.append(h)
+        if h == h_missing:
+            raise HTTPException(status_code=404, detail="Torrent not found")
+        return {"deleted": True}
+
+    monkeypatch.setattr(bt_client, "set_pin", fake_set_pin)
+    monkeypatch.setattr(bt_client, "cache_delete", fake_cache_delete)
+
+    fake_req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(engine=SimpleNamespace())))
+    result = await stars_router.delete_star(fake_req, code="TST-001")
+
+    assert result == {"code": "TST-001", "deleted": True}
+    assert unpinned == [(h_cached, False), (h_missing, False)]
+    assert deleted == [h_cached, h_missing]
+
+

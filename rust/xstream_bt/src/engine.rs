@@ -343,9 +343,9 @@ impl BtEngine {
                     connect_timeout: Some(Duration::from_secs(4)),
                     read_write_timeout: Some(Duration::from_secs(10)),
                     keep_alive_interval: Some(Duration::from_secs(60)),
-                    // Smaller per-peer request window (32 chunks = 512 KiB vs default 128 = 2 MiB)
-                    // reacts 4x faster to seek cursor shifts while still saturating high-speed peers.
-                    max_request_window: Some(32),
+                    // Keep full 128-chunk (2 MiB) per-peer request window so high-RTT seedboxes
+                    // are not BDP-capped to ~2.5 MB/s per peer.
+                    max_request_window: Some(128),
                 }),
                 ..ConnectionOptions::default()
             }),

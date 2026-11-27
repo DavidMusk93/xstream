@@ -521,10 +521,21 @@ async def delete_star(
         log.warning(f"star {code} removed from config but not found in db")
 
     # Clear all caches and tracing bits for this actor's titles
+    from backend.services import bt_client
+
     for hash_str in magnet_hashes:
         try:
-            await asyncio.to_thread(engine.remove_torrent, hash_str)
-            log.info(f"delete_star: removed torrent {hash_str[:12]}... for {code}")
+            if bt_client.is_enabled():
+                await bt_client.set_pin(hash_str, pinned=False)
+                try:
+                    await bt_client.cache_delete(hash_str)
+                    log.info(f"delete_star: removed torrent via xstream_bt {hash_str[:12]}... for {code}")
+                except HTTPException as exc:
+                    if exc.status_code != 404:
+                        raise
+            else:
+                await asyncio.to_thread(engine.remove_torrent, hash_str)
+                log.info(f"delete_star: removed torrent {hash_str[:12]}... for {code}")
         except Exception as e:
             log.warning(f"delete_star: failed to remove torrent {hash_str[:12]}... for {code}: {e}")
 
