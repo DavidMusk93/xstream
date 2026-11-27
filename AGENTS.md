@@ -123,6 +123,7 @@ production; the frontend needs `npm run build` + restart.
 
 - **Every Python file starts with** `from __future__ import annotations`; 3.11+ annotation syntax (`str | None`).
 - **Rust code (incremental migration)**: follow the vendored [BeautifulRust](https://github.com/morganlinton/BeautifulRust) Agent Skills in `.agents/skills/rust-{best-practices,review,port}/` and enforce `rust/clippy.toml` + `rust/lints.toml` (`cargo clippy --all-targets --all-features -- -D warnings`). Always port original tests first (`rust-port`). See `docs/design/rust-migration.md`.
+- **Formal verification (state machines, schedulers, protocols)**: follow `.agents/skills/formal-verification/SKILL.md` — extract pure algebraic state machines, prove Safety/Liveness invariants via `stateright` / `proptest` (Rust) or `fast-check` (TS), and lock incident counterexample traces.
 - Names in English; **comments and docstrings in English**; f-strings.
 - SQL: **never** concatenate user input; `%s` placeholders; column identifiers whitelist-validated; JSONB via `psycopg.types.json.Jsonb`.
 - Match the surrounding file's conventions; no unsolicited comments/docs files.
