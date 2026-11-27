@@ -215,6 +215,22 @@ def _stop_watch(hash_str: str) -> None:
         task.cancel()
 
 
+async def _fanout_bt(payload: dict[str, Any]) -> None:
+    """Best-effort fan-out of BT add/seek/pause/delete to omesh peer workers."""
+    omesh = get_omesh_url()
+    if not omesh:
+        return
+    try:
+        await _get_client().post(
+            f"{omesh}/mesh/bt/fanout",
+            json=payload,
+            headers=_omesh_headers(),
+            timeout=3.0,
+        )
+    except Exception as exc:
+        log.debug(f"omesh bt fanout skipped ({payload.get('action')}): {exc}")
+
+
 async def add_torrent(magnet: str, *, prefetch: bool = False) -> dict[str, Any]:
     """Forward POST /torrent/add to xstream_bt and start SSE progress watch."""
     base = get_base_url()
@@ -233,6 +249,9 @@ async def add_torrent(magnet: str, *, prefetch: bool = False) -> dict[str, Any]:
         raise HTTPException(status_code=resp.status_code, detail=detail)
     data = resp.json()
     if not prefetch and data.get("hash"):
+        asyncio.create_task(
+            _fanout_bt({"action": "add", "hash": data["hash"], "magnet": magnet})
+        )
         _watch_hash(data["hash"])
         if data.get("ready"):
             # Only emit head_ready immediately if the torrent already has head data;
@@ -313,6 +332,26 @@ async def control_action(action: str, payload: dict[str, Any]) -> dict[str, Any]
             _watch_hash(h)
         elif action == "pause":
             _stop_watch(h)
+            asyncio.create_task(_fanout_bt({"action": "pause", "hash": h}))
+        elif action == "seek":
+            asyncio.create_task(
+                _fanout_bt({
+                    "action": "seek",
+                    "hash": h,
+                    "time": float(payload.get("time") or 0.0),
+                    "duration": float(payload.get("duration") or 0.0),
+                })
+            )
+        elif action == "progress":
+            asyncio.create_task(
+                _fanout_bt({
+                    "action": "seek",
+                    "hash": h,
+                    "time": float(payload.get("time") or 0.0),
+                    "duration": float(payload.get("duration") or 0.0),
+                    "stagger_secs": 45.0,
+                })
+            )
     return resp.json()
 
 
@@ -444,6 +483,7 @@ async def cache_delete(hash_str: str) -> dict[str, Any]:
     if resp.status_code >= 400:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
     _stop_watch(hash_str)
+    asyncio.create_task(_fanout_bt({"action": "delete", "hash": hash_str}))
     return resp.json()
 
 
