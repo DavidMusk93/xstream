@@ -58,7 +58,10 @@ export function useVideoPlayer() {
       }
       return res
     } catch (e: any) {
-      logError('player', `pollStatus ${hash.slice(0, 12)} failed: ${e.message || e}`)
+      const statusCode = e?.status ?? e?.response?.status
+      if (statusCode !== 404) {
+        logError('player', `pollStatus ${hash.slice(0, 12)} failed: ${e.message || e}`)
+      }
       throw e
     }
   }
@@ -98,11 +101,16 @@ export function useVideoPlayer() {
       logInfo('player', 'resync required, refetching status once')
       pollStatus(hash).catch(() => {})
     })
+    const unsubReconnected = onServerEvent('sse.reconnected', () => {
+      logInfo('player', 'SSE reconnected, refetching status once')
+      pollStatus(hash).catch(() => {})
+    })
     _unsubEvent = () => {
       unsubProgress()
       unsubHead()
       unsubStatus()
       unsubResync()
+      unsubReconnected()
     }
 
     // Ensure cleanup if the calling component is unmounted
@@ -204,6 +212,9 @@ export function useVideoPlayer() {
         onServerEvent('sync.resync_required', () => {
           checkHeadReady(hash).then((ok) => { if (ok) done('ready') }).catch(() => {})
         }),
+        onServerEvent('sse.reconnected', () => {
+          checkHeadReady(hash).then((ok) => { if (ok) done('ready') }).catch(() => {})
+        }),
       ]
       timer = setTimeout(() => done('timeout'), timeoutSec * 1000)
     })
@@ -267,8 +278,15 @@ export function useVideoPlayer() {
     }
   }
 
+  let lastResumeHash = ''
+  let lastResumeAt = 0
+
   async function reportResume(hash: string, time: number, duration: number) {
     if (!hash || !duration || duration === Infinity) return
+    const now = Date.now()
+    if (hash === lastResumeHash && now - lastResumeAt < 1000) return
+    lastResumeHash = hash
+    lastResumeAt = now
     try {
       logInfo('player', `reportResume ${hash.slice(0, 12)} time=${time.toFixed(1)}s/${duration.toFixed(1)}s`)
       await $fetch('/torrent/resume', {

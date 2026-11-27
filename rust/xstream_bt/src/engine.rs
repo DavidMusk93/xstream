@@ -245,6 +245,16 @@ pub const PREWARM_MAX_BYTES: u64 = PREWARM_HEAD_BYTES + PREWARM_TAIL_BYTES;
 /// by background maintenance between discrete browser HTTP Range requests.
 const FOREGROUND_GRACE: Duration = Duration::from_secs(45);
 
+type PrewarmCursorMap = HashMap<String, Vec<Box<dyn AsyncVideoStream>>>;
+
+#[derive(Debug, Clone, Copy)]
+struct PendingAddMode(StartMode);
+
+struct PendingAdd {
+    mode: PendingAddMode,
+    abort: tokio::task::AbortHandle,
+}
+
 /// Core `BitTorrent` streaming engine wrapping a `librqbit::Session`.
 pub struct BtEngine {
     session: Arc<Session>,
@@ -253,7 +263,8 @@ pub struct BtEngine {
     policy: EvictionPolicy,
     tracker: CacheTracker,
     seek_cursors: Mutex<HashMap<String, Box<dyn AsyncVideoStream>>>,
-    prewarm_cursors: Mutex<HashMap<String, Vec<Box<dyn AsyncVideoStream>>>>,
+    prewarm_cursors: Arc<Mutex<PrewarmCursorMap>>,
+    pending_adds: Arc<RwLock<HashMap<String, PendingAdd>>>,
     active_offsets: RwLock<HashMap<String, u64>>,
     last_foreground_at: RwLock<HashMap<String, Instant>>,
     yielded_for_playback: Mutex<HashSet<String>>,
@@ -344,7 +355,8 @@ impl BtEngine {
             policy,
             tracker,
             seek_cursors: Mutex::new(HashMap::new()),
-            prewarm_cursors: Mutex::new(HashMap::new()),
+            prewarm_cursors: Arc::new(Mutex::new(HashMap::new())),
+            pending_adds: Arc::new(RwLock::new(HashMap::new())),
             active_offsets: RwLock::new(HashMap::new()),
             last_foreground_at: RwLock::new(HashMap::new()),
             yielded_for_playback: Mutex::new(HashSet::new()),
@@ -372,6 +384,7 @@ impl BtEngine {
         if let Some(existing) = self.session.get(id) {
             self.enforce_on_demand_mode(&existing).await;
             if matches!(mode, StartMode::Active) {
+                self.mark_foreground(&hash);
                 self.unpause_if_paused(&existing).await;
                 self.ensure_head_prewarm(&hash, &existing).await;
             }
@@ -385,51 +398,138 @@ impl BtEngine {
             });
         }
 
-        // Empty `only_files` keeps librqbit strictly on-demand: zero bulk background pieces
-        // are queued, so only active `FileStream`s (playback, seek, or head+tail prewarm)
-        // pull pieces within their 32 MiB lookahead window.
-        let opts = AddTorrentOptions {
-            paused: matches!(mode, StartMode::Paused),
-            overwrite: true,
-            only_files: Some(Vec::new()),
-            ..AddTorrentOptions::default()
-        };
-
-        let resp = self
-            .session
-            .add_torrent(AddTorrent::from_url(magnet), Some(opts))
-            .await
-            .map_err(|err| BtError::Internal(format!("add_torrent failed: {err}")))?;
-
-        let handle = match resp {
-            AddTorrentResponse::Added(_, h) | AddTorrentResponse::AlreadyManaged(_, h) => h,
-            AddTorrentResponse::ListOnly(_) => {
-                return Err(BtError::Internal(
-                    "unexpected list_only response from add_torrent".to_string(),
-                ));
+        if let Ok(mut pending) = self.pending_adds.write() {
+            if let Some(entry) = pending.get_mut(&hash) {
+                if matches!(mode, StartMode::Active) {
+                    entry.mode = PendingAddMode(StartMode::Active);
+                    self.mark_foreground(&hash);
+                }
+                return Ok(AddOutcome {
+                    hash,
+                    status: "added",
+                    ready: false,
+                    peers: 0,
+                    progress: 0.0,
+                });
             }
-        };
-
-        self.enforce_on_demand_mode(&handle).await;
-        if matches!(mode, StartMode::Active) {
-            self.ensure_head_prewarm(&hash, &handle).await;
         }
-        let st = self.build_status(&hash, &handle);
 
-        info!(
-            hash = %hash,
-            ready = st.ready,
-            peers = st.peers,
-            "torrent added to librqbit (on-demand)"
-        );
+        if matches!(mode, StartMode::Active) {
+            self.mark_foreground(&hash);
+        }
+
+        let rx = self.spawn_background_add(&hash, magnet, mode);
+
+        if let Ok(Ok(res)) = tokio::time::timeout(Duration::from_millis(200), rx).await {
+            res?;
+            if let Some(handle) = self.session.get(id) {
+                let st = self.build_status(&hash, &handle);
+                return Ok(AddOutcome {
+                    hash,
+                    status: "added",
+                    ready: st.ready,
+                    peers: st.peers,
+                    progress: st.progress,
+                });
+            }
+        }
 
         Ok(AddOutcome {
             hash,
             status: "added",
-            ready: st.ready,
-            peers: st.peers,
-            progress: st.progress,
+            ready: false,
+            peers: 0,
+            progress: 0.0,
         })
+    }
+
+    fn spawn_background_add(
+        &self,
+        hash: &str,
+        magnet: &str,
+        mode: StartMode,
+    ) -> tokio::sync::oneshot::Receiver<Result<(), BtError>> {
+        // Spawn `session.add_torrent` on a detached task so cold DHT metadata resolution
+        // (>15s) never blocks `/torrent/add` or gets aborted when an HTTP client disconnects.
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), BtError>>();
+        let session = Arc::clone(&self.session);
+        let pending_adds = Arc::clone(&self.pending_adds);
+        let prewarm_cursors = Arc::clone(&self.prewarm_cursors);
+        let hash_bg = hash.to_string();
+        let magnet_owned = magnet.to_string();
+
+        let join = tokio::spawn(async move {
+            let opts = AddTorrentOptions {
+                paused: matches!(mode, StartMode::Paused),
+                overwrite: true,
+                only_files: Some(Vec::new()),
+                ..AddTorrentOptions::default()
+            };
+            let add_res = session
+                .add_torrent(AddTorrent::from_url(&magnet_owned), Some(opts))
+                .await;
+
+            let final_mode = pending_adds
+                .write()
+                .ok()
+                .and_then(|mut map| map.remove(&hash_bg))
+                .map_or(mode, |p| p.mode.0);
+
+            match add_res {
+                Ok(
+                    AddTorrentResponse::Added(_, handle)
+                    | AddTorrentResponse::AlreadyManaged(_, handle),
+                ) => {
+                    let empty = HashSet::new();
+                    if !matches!(handle.only_files().as_deref(), Some([])) {
+                        let _ = session.update_only_files(&handle, &empty).await;
+                    }
+                    match final_mode {
+                        StartMode::Active => {
+                            if matches!(handle.stats().state, TorrentStatsState::Paused) {
+                                let _ = session.unpause(&handle).await;
+                            }
+                            let api = Api::new(Arc::clone(&session), None);
+                            open_head_tail_prewarm_with(&api, &prewarm_cursors, &hash_bg, &handle)
+                                .await;
+                        }
+                        StartMode::Paused => {
+                            if !matches!(handle.stats().state, TorrentStatsState::Paused) {
+                                let _ = session.pause(&handle).await;
+                            }
+                        }
+                    }
+                    let ready = pick_video_from_handle(&handle).is_some();
+                    info!(
+                        hash = %hash_bg,
+                        ready,
+                        "torrent added to librqbit (on-demand)"
+                    );
+                    let _ = tx.send(Ok(()));
+                }
+                Ok(AddTorrentResponse::ListOnly(_)) => {
+                    let _ = tx.send(Err(BtError::Internal(
+                        "unexpected list_only response from add_torrent".to_string(),
+                    )));
+                }
+                Err(err) => {
+                    warn!(hash = %hash_bg, error = %err, "background add_torrent failed");
+                    let _ = tx.send(Err(BtError::Internal(format!("add_torrent failed: {err}"))));
+                }
+            }
+        });
+
+        if let Ok(mut pending) = self.pending_adds.write() {
+            pending.insert(
+                hash.to_string(),
+                PendingAdd {
+                    mode: PendingAddMode(mode),
+                    abort: join.abort_handle(),
+                },
+            );
+        }
+
+        rx
     }
 
     /// Return detailed status for a managed torrent.
@@ -438,8 +538,40 @@ impl BtEngine {
     /// Returns [`BtError::InvalidInput`] for a malformed hash or [`BtError::NotFound`]
     /// if the torrent is not managed.
     pub fn status(&self, raw_hash: &str) -> Result<TorrentStatusDto, BtError> {
-        let (hash, handle) = self.lookup_handle(raw_hash)?;
-        Ok(self.build_status(&hash, &handle))
+        let hash = normalize_hash(raw_hash)
+            .ok_or_else(|| BtError::InvalidInput("invalid info-hash".to_string()))?;
+        let id = parse_torrent_id(&hash)?;
+        if let Some(handle) = self.session.get(id) {
+            return Ok(self.build_status(&hash, &handle));
+        }
+        if let Some(pending_mode) = self.pending_add_mode(&hash) {
+            let state = match pending_mode {
+                StartMode::Active => "downloading_metadata",
+                StartMode::Paused => "paused",
+            };
+            return Ok(TorrentStatusDto {
+                hash: hash.clone(),
+                name: None,
+                ready: false,
+                cached: false,
+                head_ready: false,
+                peers: 0,
+                progress: 0.0,
+                download_rate: 0,
+                upload_rate: 0,
+                video_file: None,
+                video_size: 0,
+                local_size: 0,
+                mime: "video/mp4",
+                state,
+                verified_pieces: 0,
+                quality: "",
+                piece_segments: Vec::new(),
+                check_progress: 0.0,
+                pinned: self.tracker.is_pinned(&hash),
+            });
+        }
+        Err(BtError::NotFound(hash))
     }
 
     /// Return `/api/check/{hash}` readiness information.
@@ -481,7 +613,23 @@ impl BtEngine {
     /// # Errors
     /// Returns [`BtError::NotFound`] or [`BtError::Internal`].
     pub async fn pause(&self, raw_hash: &str, mode: PauseMode) -> Result<(), BtError> {
-        let (hash, handle) = self.lookup_handle(raw_hash)?;
+        let hash = normalize_hash(raw_hash)
+            .ok_or_else(|| BtError::InvalidInput("invalid info-hash".to_string()))?;
+        let id = parse_torrent_id(&hash)?;
+        let Some(handle) = self.session.get(id) else {
+            if let Ok(mut pending) = self.pending_adds.write() {
+                if let Some(entry) = pending.get_mut(&hash) {
+                    if matches!(mode, PauseMode::Force) || !self.tracker.is_pinned(&hash) {
+                        entry.mode = PendingAddMode(StartMode::Paused);
+                    }
+                    if let Ok(mut fg) = self.last_foreground_at.write() {
+                        fg.remove(&hash);
+                    }
+                    return Ok(());
+                }
+            }
+            return Err(BtError::NotFound(hash));
+        };
         {
             let mut cursors = self.seek_cursors.lock().await;
             cursors.remove(&hash);
@@ -525,7 +673,20 @@ impl BtEngine {
     /// # Errors
     /// Returns [`BtError::NotFound`] or [`BtError::Internal`].
     pub async fn resume(&self, raw_hash: &str) -> Result<(), BtError> {
-        let (hash, handle) = self.lookup_handle(raw_hash)?;
+        let hash = normalize_hash(raw_hash)
+            .ok_or_else(|| BtError::InvalidInput("invalid info-hash".to_string()))?;
+        let id = parse_torrent_id(&hash)?;
+        let Some(handle) = self.session.get(id) else {
+            if let Ok(mut pending) = self.pending_adds.write() {
+                if let Some(entry) = pending.get_mut(&hash) {
+                    entry.mode = PendingAddMode(StartMode::Active);
+                    self.tracker.touch(&hash);
+                    self.mark_foreground(&hash);
+                    return Ok(());
+                }
+            }
+            return Err(BtError::NotFound(hash));
+        };
         self.tracker.touch(&hash);
         self.mark_foreground(&hash);
         self.enforce_on_demand_mode(&handle).await;
@@ -632,6 +793,14 @@ impl BtEngine {
         let hash = normalize_hash(raw_hash)
             .ok_or_else(|| BtError::InvalidInput("invalid info-hash".to_string()))?;
         let id = parse_torrent_id(&hash)?;
+        let aborted_pending = self
+            .pending_adds
+            .write()
+            .ok()
+            .and_then(|mut map| map.remove(&hash));
+        if let Some(entry) = &aborted_pending {
+            entry.abort.abort();
+        }
         {
             let mut cursors = self.seek_cursors.lock().await;
             cursors.remove(&hash);
@@ -645,6 +814,10 @@ impl BtEngine {
         }
         if let Ok(mut fg) = self.last_foreground_at.write() {
             fg.remove(&hash);
+        }
+        if self.session.get(id).is_none() && aborted_pending.is_some() {
+            self.tracker.forget(&hash);
+            return Ok(());
         }
         let remove_disk = matches!(delete_files, DeleteFiles::Remove);
         self.session
@@ -928,9 +1101,43 @@ impl BtEngine {
         bits
     }
 
+    /// Ensure newly resolved `Live` torrents enter strict on-demand mode and open head+tail
+    /// prewarm cursors even when metadata arrived after the initial `add_magnet`/`resume` call.
+    pub async fn ensure_active_prewarms(&self) {
+        let live: Vec<(String, Arc<ManagedTorrent>)> = self.session.with_torrents(|iter| {
+            iter.filter_map(|(_, handle)| {
+                let stats = handle.stats();
+                if is_video_finished(handle, &stats)
+                    || !matches!(stats.state, TorrentStatsState::Live)
+                {
+                    return None;
+                }
+                let h = handle.info_hash().as_string();
+                if self.tracker.active_streams_for(&h) > 0 {
+                    return None;
+                }
+                Some((h, Arc::clone(handle)))
+            })
+            .collect()
+        });
+
+        for (h, handle) in live {
+            if pick_video_from_handle(&handle).is_none() {
+                continue;
+            }
+            self.enforce_on_demand_mode(&handle).await;
+            let has_seek_cursor = self.seek_cursors.lock().await.contains_key(&h);
+            if !has_seek_cursor {
+                self.ensure_head_prewarm(&h, &handle).await;
+            }
+        }
+    }
+
     /// Periodic 5s maintenance: pause background prewarms that reached their head+tail budget,
     /// and resume yielded background downloads once foreground playback goes idle.
     pub async fn maintain_background_downloads(&self) {
+        self.ensure_active_prewarms().await;
+
         let live_bg: Vec<(String, Arc<ManagedTorrent>)> = self.session.with_torrents(|iter| {
             iter.filter_map(|(_, handle)| {
                 let stats = handle.stats();
@@ -1138,6 +1345,13 @@ impl BtEngine {
         Ok(())
     }
 
+    fn pending_add_mode(&self, hash: &str) -> Option<StartMode> {
+        self.pending_adds
+            .read()
+            .ok()
+            .and_then(|map| map.get(hash).map(|p| p.mode.0))
+    }
+
     fn lookup_handle(&self, raw_hash: &str) -> Result<(String, Arc<ManagedTorrent>), BtError> {
         let hash = normalize_hash(raw_hash)
             .ok_or_else(|| BtError::InvalidInput("invalid info-hash".to_string()))?;
@@ -1182,41 +1396,7 @@ impl BtEngine {
     /// of peer bandwidth on the contiguous MP4 header (`ftyp`+`moov`) and tail index without
     /// downloading any other pieces of the file.
     async fn ensure_head_prewarm(&self, hash: &str, handle: &Arc<ManagedTorrent>) {
-        if is_video_finished(handle, &handle.stats()) {
-            return;
-        }
-        let Some(video) = pick_video_from_handle(handle) else {
-            return;
-        };
-        let bits = self.video_have_bits(hash, &video.piece_range);
-        if is_head_ready(&bits, video.len) {
-            return;
-        }
-        {
-            let prewarms = self.prewarm_cursors.lock().await;
-            if prewarms.contains_key(hash) {
-                return;
-            }
-        }
-
-        let mut streams: Vec<Box<dyn AsyncVideoStream>> = Vec::with_capacity(2);
-        if let Ok(head_stream) = Arc::clone(handle).stream(video.id).await {
-            streams.push(Box::new(head_stream));
-        }
-        if video.len > HEAD_READY_CONTIGUOUS_BYTES {
-            let tail_offset = video.len.saturating_sub(TAIL_PREWARM_BYTES);
-            if let Ok(mut tail_stream) = Arc::clone(handle).stream(video.id).await {
-                if tail_stream.seek(SeekFrom::Start(tail_offset)).await.is_ok() {
-                    streams.push(Box::new(tail_stream));
-                }
-            }
-        }
-
-        if !streams.is_empty() {
-            let mut prewarms = self.prewarm_cursors.lock().await;
-            prewarms.insert(hash.to_string(), streams);
-            debug!(hash = %hash, "opened on-demand head+tail prewarm cursors");
-        }
+        open_head_tail_prewarm_with(&self.api, &self.prewarm_cursors, hash, handle).await;
     }
 
     fn build_status(&self, hash: &str, handle: &ManagedTorrent) -> TorrentStatusDto {
@@ -1318,6 +1498,68 @@ impl BtEngine {
             check_progress: 0.0,
             pinned: self.tracker.is_pinned(hash),
         }
+    }
+}
+
+fn video_have_bits_with_api(api: &Api, hash: &str, piece_range: &Range<u32>) -> Vec<bool> {
+    if piece_range.is_empty() {
+        return Vec::new();
+    }
+    let Ok(id) = parse_torrent_id(hash) else {
+        return Vec::new();
+    };
+    let Ok((bf, total_pieces)) = api.api_dump_haves(id) else {
+        return Vec::new();
+    };
+    let start = usize::try_from(piece_range.start).unwrap_or(0);
+    let end = usize::try_from(piece_range.end.min(total_pieces)).unwrap_or(start);
+    let mut bits = Vec::with_capacity(end.saturating_sub(start));
+    for idx in start..end {
+        bits.push(bf.get(idx).as_deref().copied().unwrap_or(false));
+    }
+    bits
+}
+
+async fn open_head_tail_prewarm_with(
+    api: &Api,
+    prewarm_cursors: &Mutex<PrewarmCursorMap>,
+    hash: &str,
+    handle: &Arc<ManagedTorrent>,
+) {
+    if is_video_finished(handle, &handle.stats()) {
+        return;
+    }
+    let Some(video) = pick_video_from_handle(handle) else {
+        return;
+    };
+    let bits = video_have_bits_with_api(api, hash, &video.piece_range);
+    if is_head_ready(&bits, video.len) {
+        return;
+    }
+    {
+        let prewarms = prewarm_cursors.lock().await;
+        if prewarms.contains_key(hash) {
+            return;
+        }
+    }
+
+    let mut streams: Vec<Box<dyn AsyncVideoStream>> = Vec::with_capacity(2);
+    if let Ok(head_stream) = Arc::clone(handle).stream(video.id).await {
+        streams.push(Box::new(head_stream));
+    }
+    if video.len > HEAD_READY_CONTIGUOUS_BYTES {
+        let tail_offset = video.len.saturating_sub(TAIL_PREWARM_BYTES);
+        if let Ok(mut tail_stream) = Arc::clone(handle).stream(video.id).await {
+            if tail_stream.seek(SeekFrom::Start(tail_offset)).await.is_ok() {
+                streams.push(Box::new(tail_stream));
+            }
+        }
+    }
+
+    if !streams.is_empty() {
+        let mut prewarms = prewarm_cursors.lock().await;
+        prewarms.insert(hash.to_string(), streams);
+        debug!(hash = %hash, "opened on-demand head+tail prewarm cursors");
     }
 }
 

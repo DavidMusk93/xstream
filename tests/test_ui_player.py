@@ -1,12 +1,18 @@
-"""Locks critical VideoModal and CachePanel UX invariants against regressions.
+"""Locks critical VideoModal, useVideoPlayer, and CachePanel UX invariants against regressions.
 
 Follows tests/test_ui_star_card.py: static source assertions that catch the
 exact classes of frontend regressions that broke streaming UX in production:
-1. VideoModal onError retry must never set errorMsg (which unmounts <video>).
-2. VideoModal openPlayback must subscribe to SSE before waitForHeadReady.
-3. VideoModal must reportSeek on seek/seeking (not only after seeked) and
+1. VideoModal keeps <video> persistently mounted (no v-if unmount on loading/errorMsg)
+   and primes user-gesture media unlock synchronously (flush: 'sync') + muted fallback
+   when browsers block unmuted autoplay after a long waitForHeadReady.
+2. VideoModal openPlayback must subscribe to SSE before waitForHeadReady, and
+   useVideoPlayer must resync on sse.reconnected as well as sync.resync_required.
+3. VideoModal must keep isPlaying synchronized with actual HTMLMediaElement playback
+   (@play, @playing, @timeupdate) and never clobber isPlaying=false inside onStalled
+   or onWaiting while frames are still playing.
+4. VideoModal must reportSeek on seek/seeking (not only after seeked) and
    refresh bufferedRanges via @progress.
-4. CachePanel SSE handler must merge local_size and piece_segments and
+5. CachePanel SSE handler must merge local_size and piece_segments and
    fetch metrics on mount for the header indicator dot.
 """
 
@@ -16,16 +22,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VIDEO_MODAL = (ROOT / "frontend" / "components" / "video" / "VideoModal.vue").read_text(encoding="utf-8")
+USE_VIDEO_PLAYER = (ROOT / "frontend" / "composables" / "useVideoPlayer.ts").read_text(encoding="utf-8")
+PLAY_PAGE = (ROOT / "frontend" / "pages" / "play.vue").read_text(encoding="utf-8")
 CACHE_PANEL = (ROOT / "frontend" / "components" / "cache" / "CachePanel.vue").read_text(encoding="utf-8")
 
 
 def test_video_modal_retry_keeps_video_element_mounted():
-    """Regression: setting errorMsg during retry unmounted <video v-if='!loading && !errorMsg'>."""
-    assert 'v-if="!loading && !errorMsg"' in VIDEO_MODAL
+    """Regression: <video> must stay mounted across loading/retry so gesture priming & refs survive."""
+    video_tag = VIDEO_MODAL.split("<video", 1)[1].split("/>", 1)[0]
+    assert "v-if=" not in video_tag
+    assert 'v-show="isOpen"' in VIDEO_MODAL
+
     on_error_block = VIDEO_MODAL.split("function onError()", 1)[1].split("function togglePlay()", 1)[0]
     retry_branches = on_error_block.split("if (retryCount.value < MAX_RETRIES)")
     assert len(retry_branches) >= 2
-    # Inside the retry branches, retryingMsg must be used instead of errorMsg
     first_retry = on_error_block.split("if (code === 4 && retryCount.value < MAX_RETRIES)", 1)[1].split("return", 1)[0]
     assert "errorMsg.value =" not in first_retry
     assert "retryingMsg.value =" in first_retry
@@ -35,12 +45,41 @@ def test_video_modal_retry_keeps_video_element_mounted():
     assert "retryingMsg.value =" in second_retry
 
 
+def test_video_modal_gesture_priming_and_autoplay_fallback():
+    """Long head_ready waits (>5s) lose transient user activation unless primed synchronously + muted fallback."""
+    assert "function primeFromUserGesture()" in VIDEO_MODAL
+    assert "flush: 'sync'" in VIDEO_MODAL
+    assert "NotAllowedError" in VIDEO_MODAL
+    assert "autoMutedByPolicy" in VIDEO_MODAL
+    assert "primeFromUserGesture()" in PLAY_PAGE
+
+
+def test_video_modal_play_button_tracks_media_element_state():
+    """Regression: network `stalled` / transient `waiting` must never stick isPlaying=false while playing."""
+    video_tag = VIDEO_MODAL.split("<video", 1)[1].split("/>", 1)[0]
+    assert '@play="onPlay"' in video_tag
+    assert '@playing="onPlaying"' in video_tag
+    assert '@timeupdate="onTimeUpdate"' in video_tag
+
+    on_stalled_block = VIDEO_MODAL.split("function onStalled()", 1)[1].split("function onAbort()", 1)[0]
+    assert "isPlaying.value = false" not in on_stalled_block
+    assert "syncPlayingState()" in on_stalled_block
+
+    on_waiting_block = VIDEO_MODAL.split("function onWaiting()", 1)[1].split("function onPlaying()", 1)[0]
+    assert "isPlaying.value = false" not in on_waiting_block
+    assert "syncPlayingState()" in on_waiting_block
+
+    on_timeupdate_block = VIDEO_MODAL.split("function onTimeUpdate()", 1)[1].split("function onEnded()", 1)[0]
+    assert "!v.paused && !v.ended" in on_timeupdate_block
+
+
 def test_video_modal_subscribes_sse_before_wait_for_head_ready():
-    """Loading overlay must receive live peers/speed/cached MB while waiting for head_ready."""
+    """Loading overlay must receive live peers/speed/cached MB while waiting for head_ready, and resync on SSE reconnect."""
     open_block = VIDEO_MODAL.split("async function openPlayback(", 1)[1].split("watch(", 1)[0]
     pos_start = open_block.index("startPolling(hash)")
     pos_wait = open_block.index("waitForHeadReady(hash)")
     assert pos_start < pos_wait
+    assert USE_VIDEO_PLAYER.count("'sse.reconnected'") >= 2
 
 
 def test_video_modal_reports_seek_immediately_and_tracks_progress():

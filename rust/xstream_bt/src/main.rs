@@ -53,15 +53,21 @@ async fn main() {
         }
     });
 
-    // Background QoS & prewarm maintainer: auto-pauses head+tail-warmed background
-    // downloads and resumes yielded downloads once playback goes idle.
+    // Background QoS & prewarm maintainer: attaches head+tail prewarm cursors as soon as
+    // magnet metadata resolves (1s tick) and runs 5s background budget/yield maintenance.
     let qos_engine = Arc::clone(&engine);
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_secs(5));
+        let mut ticker = tokio::time::interval(Duration::from_secs(1));
+        let mut ticks: u64 = 0;
         ticker.tick().await;
         loop {
             ticker.tick().await;
-            qos_engine.maintain_background_downloads().await;
+            ticks = ticks.wrapping_add(1);
+            if ticks % 5 == 0 {
+                qos_engine.maintain_background_downloads().await;
+            } else {
+                qos_engine.ensure_active_prewarms().await;
+            }
         }
     });
 

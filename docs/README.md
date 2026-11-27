@@ -36,6 +36,7 @@ Post-mortems, performance analysis, and debugging case studies.
 | [finished-deadlock-allzero-false-positive.md](analysis/finished-deadlock-allzero-false-positive.md) | Finished-state deadlock caused by all-zero false positive in hole detection |
 | [timeout-debug.md](analysis/timeout-debug.md) | Caddy 502 upstream timeout troubleshooting case |
 | [piece-tracker-optimization.md](analysis/piece-tracker-optimization.md) | Bitwise optimization records & benchmarks |
+| [torrent-player-autoplay-and-state.md](analysis/torrent-player-autoplay-and-state.md) | RCA: WebKit NotAllowedError after async head_ready, HTML5 stalled clobbering play button state, and late-metadata prewarm |
 
 ## `docs/ops/` — Operations & Deployment
 

@@ -117,7 +117,7 @@
       </div>
     </main>
 
-    <VideoModal v-model:open="modalOpen" :hash="activeHash" />
+    <VideoModal ref="videoModalRef" v-model:open="modalOpen" :hash="activeHash" />
   </div>
 </template>
 
@@ -133,6 +133,7 @@ const errorMsg = ref('')
 
 const modalOpen = ref(false)
 const activeHash = ref('')
+const videoModalRef = ref<{ primeFromUserGesture: () => void } | null>(null)
 
 const recents = ref<RecentPlay[]>([])
 const recentsLoaded = ref(false)
@@ -181,6 +182,7 @@ async function play() {
     return
   }
   if (submitting.value) return
+  videoModalRef.value?.primeFromUserGesture()
   submitting.value = true
 
   try {

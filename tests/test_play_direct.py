@@ -127,7 +127,8 @@ def engine_stub(tmp_path):
 
 
 @pytest.fixture()
-def client(engine_stub):
+def client(engine_stub, monkeypatch):
+    monkeypatch.delenv("XSTREAM_BT_URL", raising=False)
     app = FastAPI()
     app.dependency_overrides[require_auth] = lambda: None
     app.state.engine = engine_stub
