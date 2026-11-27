@@ -24,6 +24,12 @@ def get_base_url() -> str | None:
     return raw or None
 
 
+def get_omesh_url() -> str | None:
+    """Return configured omesh CDN/edge URL (e.g. http://127.0.0.1:8767), or None if disabled."""
+    raw = os.environ.get("XSTREAM_OMESH_URL", "").strip().rstrip("/")
+    return raw or None
+
+
 def is_enabled() -> bool:
     """Return True when the Rust xstream_bt daemon is enabled via XSTREAM_BT_URL."""
     return get_base_url() is not None
@@ -210,7 +216,19 @@ async def get_status(hash_str: str) -> dict[str, Any]:
 
 
 async def check_stream(hash_str: str) -> JSONResponse:
-    """Forward GET /api/check/{hash} to xstream_bt."""
+    """Forward GET /api/check/{hash} to omesh (if enabled) with automatic xstream_bt fallback."""
+    omesh = get_omesh_url()
+    if omesh:
+        try:
+            resp = await _get_client().get(f"{omesh}/api/check/{hash_str}", timeout=3.0)
+            if resp.status_code == 200:
+                return JSONResponse(
+                    content=resp.json(),
+                    headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+                )
+        except httpx.HTTPError as exc:
+            log.debug(f"omesh check fallback to xstream_bt: {exc}")
+
     base = get_base_url()
     assert base is not None
     try:
@@ -264,13 +282,14 @@ async def stream_video(request: Request, hash_str: str) -> Response:
     """
     base = get_base_url()
     assert base is not None
+    stream_base = get_omesh_url() or base
     req_headers: dict[str, str] = {}
     range_hdr = request.headers.get("Range")
     if range_hdr:
         req_headers["Range"] = range_hdr
 
     client = _get_client()
-    req = client.build_request("GET", f"{base}/stream/{hash_str}", headers=req_headers)
+    req = client.build_request("GET", f"{stream_base}/stream/{hash_str}", headers=req_headers)
 
     send_task = asyncio.create_task(client.send(req, stream=True))
     disc_task = asyncio.create_task(_wait_disconnect(request))
@@ -289,11 +308,20 @@ async def stream_video(request: Request, hash_str: str) -> Response:
             return Response(status_code=499)
         upstream = send_task.result()
     except httpx.HTTPError as exc:
-        log.error(f"xstream_bt stream failed: {exc}")
-        raise HTTPException(status_code=503, detail="BitTorrent daemon unavailable")
+        if stream_base != base:
+            log.warning(f"omesh stream failed ({exc}), falling back to xstream_bt")
+            try:
+                fallback_req = client.build_request("GET", f"{base}/stream/{hash_str}", headers=req_headers)
+                upstream = await client.send(fallback_req, stream=True)
+            except httpx.HTTPError as fb_exc:
+                log.error(f"xstream_bt stream fallback failed: {fb_exc}")
+                raise HTTPException(status_code=503, detail="BitTorrent daemon unavailable")
+        else:
+            log.error(f"xstream_bt stream failed: {exc}")
+            raise HTTPException(status_code=503, detail="BitTorrent daemon unavailable")
 
     out_headers: dict[str, str] = {}
-    for key in ("content-type", "content-length", "content-range", "accept-ranges"):
+    for key in ("content-type", "content-length", "content-range", "accept-ranges", "x-omesh-source"):
         val = upstream.headers.get(key)
         if val is not None:
             out_headers[key] = val

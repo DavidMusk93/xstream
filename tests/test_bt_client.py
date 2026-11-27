@@ -185,3 +185,44 @@ async def test_delete_star_clears_xstream_bt_cache_and_pins(monkeypatch, tmp_pat
     assert deleted == [h_cached, h_missing]
 
 
+@pytest.mark.asyncio
+async def test_check_stream_prefers_omesh_and_falls_back_to_bt(monkeypatch):
+    """When XSTREAM_OMESH_URL is set, check_stream queries omesh first and falls back to xstream_bt."""
+    monkeypatch.setenv("XSTREAM_BT_URL", "http://127.0.0.1:8766")
+    monkeypatch.setenv("XSTREAM_OMESH_URL", "http://127.0.0.1:8767")
+
+    seen: list[str] = []
+
+    def handler_ok(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"hash": "f" * 40, "head_ready": True, "source": "ostore"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler_ok))
+    monkeypatch.setattr(bt_client, "_get_client", lambda: client)
+
+    resp = await bt_client.check_stream("f" * 40)
+    await client.aclose()
+    assert resp.status_code == 200
+    assert seen == [f"http://127.0.0.1:8767/api/check/{'f' * 40}"]
+
+    # Now simulate omesh down -> automatic fallback to xstream_bt
+    seen_fb: list[str] = []
+
+    def handler_fb(request: httpx.Request) -> httpx.Response:
+        seen_fb.append(str(request.url))
+        if ":8767" in str(request.url):
+            raise httpx.ConnectError("omesh offline", request=request)
+        return httpx.Response(200, json={"hash": "f" * 40, "head_ready": False})
+
+    client2 = httpx.AsyncClient(transport=httpx.MockTransport(handler_fb))
+    monkeypatch.setattr(bt_client, "_get_client", lambda: client2)
+
+    resp2 = await bt_client.check_stream("f" * 40)
+    await client2.aclose()
+    assert resp2.status_code == 200
+    assert len(seen_fb) == 2
+    assert seen_fb[0].startswith("http://127.0.0.1:8767/")
+    assert seen_fb[1].startswith("http://127.0.0.1:8766/")
+
+
+

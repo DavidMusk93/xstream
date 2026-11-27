@@ -1,5 +1,5 @@
 [workspace]
-members = ["xstream_core", "xstream_bt"]
+members = ["xstream_core", "xstream_bt", "omesh"]
 resolver = "2"
 
 [workspace.package]
