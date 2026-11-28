@@ -3,12 +3,14 @@
     <Transition name="player" :duration="{ enter: 450, leave: 200 }">
     <div
       v-show="isOpen"
-      class="player-root fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl"
+      class="player-root fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl overscroll-none touch-none"
       @click.self="close"
+      @wheel.prevent
+      @touchmove.prevent
     >
       <div
         ref="containerRef"
-        class="player-stage relative w-full h-full sm:w-[92vw] sm:max-w-6xl sm:h-auto sm:aspect-video bg-black sm:rounded-[22px] overflow-hidden shadow-2xl"
+        class="player-stage relative w-full h-full sm:w-[92vw] sm:max-w-6xl sm:h-auto sm:aspect-video bg-black sm:rounded-[22px] overflow-hidden shadow-2xl overscroll-none touch-none"
         @dblclick="onDblClick"
         @touchstart="onTouchStart"
         @touchend="onTouchEnd"
@@ -376,6 +378,10 @@ function primeFromUserGesture() {
 defineExpose({ primeFromUserGesture })
 
 watch(isOpen, (open) => {
+  if (typeof document !== 'undefined') {
+    document.documentElement.style.overflow = open ? 'hidden' : ''
+    document.body.style.overflow = open ? 'hidden' : ''
+  }
   if (open) primeFromUserGesture()
 }, { flush: 'sync' })
 
@@ -1208,6 +1214,10 @@ onMounted(() => {
   }
 
   onUnmounted(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.overflow = ''
+      document.body.style.overflow = ''
+    }
     cancelWaitForHeadReady()
     document.removeEventListener('fullscreenchange', handler)
     document.removeEventListener('webkitfullscreenchange', handler)
@@ -1227,10 +1237,8 @@ function onTouchStart(e: TouchEvent) {
 }
 
 function onTouchMove(e: TouchEvent) {
-  if (e.touches.length !== 1) return
-  if (!controlsHidden.value && videoRef.value) {
-    e.preventDefault()
-  }
+  if (!isOpen.value) return
+  e.preventDefault()
 }
 
 function onDblClick(e: MouseEvent) {
