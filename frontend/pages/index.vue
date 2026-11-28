@@ -154,7 +154,14 @@
       :stars="displayStars"
       @injected="onXInjected"
     />
-    <VideoModal v-model:open="modalOpen" :hash="activeHash" :code="activeCode" :star-code="activeStarCode" />
+    <VideoModal
+      v-model:open="modalOpen"
+      :hash="activeHash"
+      :code="activeCode"
+      :star-code="activeStarCode"
+      :liked="activeLiked"
+      @liked="onActiveTitleLiked"
+    />
 
     <SyncToast
       :visible="toastVisible"
@@ -245,6 +252,26 @@ const modalOpen = ref(false)
 const activeHash = ref('')
 const activeCode = ref('')
 const activeStarCode = ref('')
+
+const activeLiked = computed(() => {
+  if (!activeCode.value) return false
+  for (const s of displayStars.value) {
+    const t = s.titles?.find(item => item.code === activeCode.value)
+    if (t) return !!t.user_liked
+  }
+  return false
+})
+
+function onActiveTitleLiked(val: boolean) {
+  if (!activeCode.value) return
+  for (const s of displayStars.value) {
+    const t = s.titles?.find(item => item.code === activeCode.value)
+    if (t) {
+      t.user_liked = val
+      break
+    }
+  }
+}
 
 /** Scroll the page to a star's shelf. Returns false when it is not mounted yet.
  *

@@ -22,16 +22,38 @@
         >
           <p class="text-[15px] font-semibold text-white/95 truncate">{{ code }}</p>
 
-          <button
-            class="w-10 h-10 shrink-0 rounded-full bg-white/[0.12] backdrop-blur-md text-white flex items-center justify-center transition hover:bg-white/20 active:scale-[0.92]"
-            aria-label="Close player"
-            @click="close"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"/>
-              <line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
+          <div class="flex items-center gap-2 shrink-0">
+            <button
+              v-if="code"
+              type="button"
+              class="w-10 h-10 shrink-0 rounded-full backdrop-blur-md flex items-center justify-center transition hover:bg-white/20 active:scale-[0.92]"
+              :class="localLiked ? 'bg-rose-500/25 text-rose-400' : 'bg-white/[0.12] text-white/90'"
+              :aria-pressed="localLiked"
+              :aria-label="localLiked ? `Unlike ${code}` : `Like ${code}`"
+              :title="localLiked ? `Liked ${code}` : `Like ${code}`"
+              :disabled="liking"
+              @click.stop="toggleModalLike"
+            >
+              <svg
+                width="17" height="17" viewBox="0 0 24 24"
+                :fill="localLiked ? 'currentColor' : 'none'"
+                stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"
+              >
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+              </svg>
+            </button>
+
+            <button
+              class="w-10 h-10 shrink-0 rounded-full bg-white/[0.12] backdrop-blur-md text-white flex items-center justify-center transition hover:bg-white/20 active:scale-[0.92]"
+              aria-label="Close player"
+              @click="close"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
         </div>
 
         <!-- Video: kept mounted across loading/retry so synchronous user-gesture priming survives async head_ready -->
@@ -254,9 +276,40 @@ import {
 } from '~/utils/playerMachine'
 
 const isOpen = defineModel<boolean>('open', { default: false })
-const props = defineProps<{ hash?: string; code?: string; starCode?: string }>()
+const props = defineProps<{ hash?: string; code?: string; starCode?: string; liked?: boolean }>()
+const emit = defineEmits<{ liked: [value: boolean] }>()
 
 const { track } = useTrack()
+const { likeTitle } = useApi()
+const { addLog } = useEventLog()
+
+const localLiked = ref(!!props.liked)
+const liking = ref(false)
+watch(() => [props.code, props.liked] as const, ([, liked]) => {
+  localLiked.value = !!liked
+})
+
+async function toggleModalLike() {
+  if (!props.code || liking.value) return
+  liking.value = true
+  const prev = localLiked.value
+  const next = !prev
+  localLiked.value = next
+  emit('liked', next)
+  try {
+    await likeTitle(props.code, next)
+    track(next ? 'like' : 'unlike', { code: props.code, star_code: props.starCode, source: 'player' })
+    addLog({ kind: 'action', title: `${next ? 'Liked' : 'Unliked'} ${props.code}`, detail: 'Player', state: 'success' })
+  } catch (e: any) {
+    localLiked.value = prev
+    emit('liked', prev)
+    const msg = String(e?.data?.detail ?? e?.message ?? e)
+    logError('like', `VideoModal toggleLike ${props.code} (${next}) failed: ${msg}`)
+    addLog({ kind: 'action', title: `Like failed: ${props.code}`, detail: msg, state: 'error' })
+  } finally {
+    liking.value = false
+  }
+}
 
 const videoRef = ref<HTMLVideoElement>()
 const containerRef = ref<HTMLDivElement>()
