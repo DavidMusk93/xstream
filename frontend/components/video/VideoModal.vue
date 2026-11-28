@@ -281,7 +281,7 @@ const emit = defineEmits<{ liked: [value: boolean] }>()
 
 const { track } = useTrack()
 const { likeTitle } = useApi()
-const { addLog } = useEventLog()
+const { add: addLog } = useEventLog()
 
 const localLiked = ref(!!props.liked)
 const liking = ref(false)
