@@ -33,14 +33,17 @@ use crate::{
 /// Chunk size (64 KiB) used when reading from `librqbit::FileStream`.
 const STREAM_BUF_BYTES: usize = 65_536;
 
-/// Maximum bytes returned for an open-ended `Range: bytes=start-` request (8 MiB).
+/// Maximum bytes returned for an open-ended `Range: bytes=0-` initial request (12 MiB).
 ///
-/// Browsers send open-ended `Range: bytes=X-` on every seek. Returning the entire
-/// remaining multi-GB file in one response blasts tens of MiB into TCP/HTTP2 buffers
-/// and blocks at the uncached BT frontier, stalling subsequent seeks even inside
-/// already-cached regions. Capping open-ended ranges to 8 MiB lets cached seeks
-/// complete in milliseconds while still supporting seamless sequential streaming.
-const MAX_OPEN_RANGE_BYTES: u64 = 8 * 1024 * 1024;
+/// Covers large 4K MP4 `moov` atoms (commonly 8-11 MiB, e.g. MIDA-912's 10.71 MiB moov)
+/// plus the first keyframe in a single HTTP round-trip.
+const MAX_OPEN_HEAD_RANGE_BYTES: u64 = 12 * 1024 * 1024;
+
+/// Maximum bytes returned for an open-ended `Range: bytes=start-` seek/continuation (4 MiB).
+///
+/// Smaller 4 MiB chunks complete twice as fast over WAN (~220ms at 18 MB/s) and avoid
+/// crossing into the uncached BT frontier when seeking near the end of cached data.
+const MAX_OPEN_SEEK_RANGE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Shared state injected into all HTTP handlers.
 #[derive(Debug, Clone)]
@@ -294,10 +297,12 @@ async fn stream_video(
             };
             let is_open_ended = raw_range.trim().ends_with('-');
             if is_open_ended {
-                let capped_end = range
-                    .start
-                    .saturating_add(MAX_OPEN_RANGE_BYTES - 1)
-                    .min(total_size - 1);
+                let cap = if range.start == 0 {
+                    MAX_OPEN_HEAD_RANGE_BYTES
+                } else {
+                    MAX_OPEN_SEEK_RANGE_BYTES
+                };
+                let capped_end = range.start.saturating_add(cap - 1).min(total_size - 1);
                 if capped_end < range.end {
                     range.end = capped_end;
                 }
