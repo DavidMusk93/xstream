@@ -345,10 +345,10 @@
                     justLiked ? 'animate-heart-sensual' : ''
                   ]"
                   :style="activeLiked ? { backgroundColor: `rgba(${auraRgb}, 0.14)`, color: `rgb(${auraRgb})` } : undefined"
-                  :data-tip="activeLiked ? 'Liked' : 'Like'"
+                  :data-tip="activeLiked ? `Liked ${activeTitle?.code ?? ''}` : `Like ${activeTitle?.code ?? ''}`"
                   :aria-pressed="activeLiked"
-                  :aria-label="activeLiked ? 'Unlike' : 'Like'"
-                  :disabled="liking"
+                  :aria-label="activeLiked ? `Unlike ${activeTitle?.code ?? ''}` : `Like ${activeTitle?.code ?? ''}`"
+                  :disabled="activeLiking"
                   @click="toggleLike"
                 >
                   <svg
@@ -380,14 +380,18 @@
         <!-- Windowed rendering: spacers keep the scroll width exact while
              only the visible ±THUMB_BUFFER thumbnails exist in the DOM -->
         <div v-if="leadPad > 0" class="shrink-0 h-px" :style="{ width: `${leadPad}px` }" aria-hidden="true" />
-        <button
+        <div
           v-for="{ title, idx } in windowedTitles"
           :key="title.code"
-          class="group/thumb shrink-0 w-[148px] sm:w-[188px] lg:w-[212px] text-left snap-center active:scale-[0.96] active:duration-100 [transition-timing-function:var(--ease-sensual)] sm:transition-transform sm:duration-300"
+          role="button"
+          tabindex="0"
+          class="group/thumb shrink-0 w-[148px] sm:w-[188px] lg:w-[212px] text-left snap-center cursor-pointer active:scale-[0.96] active:duration-100 [transition-timing-function:var(--ease-sensual)] sm:transition-transform sm:duration-300"
           :class="displayIndex === idx ? '' : 'sm:hover:-translate-y-1.5'"
           :aria-label="title.code"
           :aria-current="displayIndex === idx ? 'true' : undefined"
           @click="pickThumb(idx)"
+          @keydown.enter.prevent="pickThumb(idx)"
+          @keydown.space.prevent="pickThumb(idx)"
         >
           <div
             class="thumb-cover aspect-[3/2] rounded-[14px] overflow-hidden bg-fill relative"
@@ -422,13 +426,35 @@
             >
               <span class="text-[11px] font-semibold text-foreground/50">{{ title.code }}</span>
             </div>
+
+            <!-- Per-title like toggle (always visible when liked, revealed on hover otherwise) -->
+            <button
+              type="button"
+              class="absolute top-2 right-2 z-10 w-7 h-7 rounded-full flex items-center justify-center backdrop-blur-md transition-all duration-200 active:scale-90"
+              :class="title.user_liked
+                ? 'bg-black/60 text-rose-400 opacity-100 shadow-sm'
+                : 'bg-black/40 text-white/85 hover:bg-black/60 hover:text-white opacity-75 sm:opacity-0 sm:group-hover/thumb:opacity-100'"
+              :aria-pressed="!!title.user_liked"
+              :aria-label="title.user_liked ? `Unlike ${title.code}` : `Like ${title.code}`"
+              :title="title.user_liked ? `Liked ${title.code}` : `Like ${title.code}`"
+              :disabled="likingCodes.has(title.code)"
+              @click.stop="toggleTitleLike(title)"
+            >
+              <svg
+                width="13" height="13" viewBox="0 0 24 24"
+                :fill="title.user_liked ? 'currentColor' : 'none'"
+                stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
+              >
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+              </svg>
+            </button>
           </div>
           <div class="mt-2.5 flex items-center gap-1.5 px-0.5 whitespace-nowrap">
             <span class="thumb-dot h-1.5 rounded-full" aria-hidden="true" />
             <span class="thumb-code text-[13px] font-semibold truncate">{{ title.code }}</span>
             <span class="ml-auto text-[12px] text-foreground-muted/70 tabular-nums">{{ shortDate(title.date) }}</span>
           </div>
-        </button>
+        </div>
         <div v-if="trailPad > 0" class="shrink-0 h-px" :style="{ width: `${trailPad}px` }" aria-hidden="true" />
       </div>
     </div>
@@ -1222,7 +1248,8 @@ onUnmounted(() => {
   if (recoilTimer) clearTimeout(recoilTimer)
 })
 const copied = ref(false)
-const liking = ref(false)
+const likingCodes = ref<Set<string>>(new Set())
+const activeLiking = computed(() => !!activeTitle.value && likingCodes.value.has(activeTitle.value.code))
 const activeLiked = computed(() => activeTitle.value?.user_liked ?? false)
 const activePlayable = computed(() =>
   !!activeTitle.value?.magnet && activeTitle.value?.magnet_status !== 'dead'
@@ -1263,15 +1290,16 @@ function onPlay() {
 const justLiked = ref(false)
 let likeAnimTimer: ReturnType<typeof setTimeout> | null = null
 
-async function toggleLike() {
-  const target = activeTitle.value
-  if (liking.value || !target) return
-  liking.value = true
+async function toggleTitleLike(target: Title | undefined) {
+  if (!target || likingCodes.value.has(target.code)) return
+  const nextSet = new Set(likingCodes.value)
+  nextSet.add(target.code)
+  likingCodes.value = nextSet
   const prevVal = !!target.user_liked
   const newVal = !prevVal
   // Optimistic toggle so the heart responds immediately; roll back on error.
   target.user_liked = newVal
-  if (newVal) {
+  if (newVal && target.code === activeTitle.value?.code) {
     justLiked.value = true
     if (likeAnimTimer) clearTimeout(likeAnimTimer)
     likeAnimTimer = setTimeout(() => { justLiked.value = false }, 600)
@@ -1288,8 +1316,14 @@ async function toggleLike() {
     logError('like', `toggleLike ${target.code} (${newVal}) failed: ${msg}`)
     addLog({ kind: 'action', title: `Like failed: ${target.code}`, detail: msg, state: 'error' })
   } finally {
-    liking.value = false
+    const doneSet = new Set(likingCodes.value)
+    doneSet.delete(target.code)
+    likingCodes.value = doneSet
   }
+}
+
+async function toggleLike() {
+  await toggleTitleLike(activeTitle.value)
 }
 
 function copyMagnet() {
