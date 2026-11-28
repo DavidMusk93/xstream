@@ -37,6 +37,7 @@ from pydantic import BaseModel
 
 from backend.routers.auth import require_auth
 from backend.routers.stars import _load_config
+from backend.services.local_bm25 import LocalDoc, search_local_library
 from core import get_logger
 from core.db.connection import _conn as _db_conn
 from core.db.write_queue import db_read
@@ -473,23 +474,106 @@ def _star_ref(name: str, url: str, followed: dict[str, str]) -> SearchResultStar
     )
 
 
+def _local_doc_to_item(doc: LocalDoc) -> SearchResultItem:
+    """Convert a local library BM25 hit into a SearchResultItem."""
+    magnets: list[SearchResultMagnet] = []
+    seen_hashes: set[str] = set()
+    if doc.magnet:
+        magnets.append(
+            SearchResultMagnet(
+                magnet=doc.magnet,
+                resolution=doc.resolution,
+                size="",
+                seeds=0,
+                is_hd="hhd800" in doc.magnet.lower() or "4k688" in doc.magnet.lower(),
+            )
+        )
+        if doc.magnet_hash:
+            seen_hashes.add(doc.magnet_hash.lower())
+    for m in doc.all_magnets:
+        if not isinstance(m, dict) or not m.get("magnet"):
+            continue
+        mh = str(m.get("hash") or "").lower()
+        if mh and mh in seen_hashes:
+            continue
+        if mh:
+            seen_hashes.add(mh)
+        magnets.append(
+            SearchResultMagnet(
+                magnet=str(m["magnet"]),
+                resolution=str(m.get("resolution") or ""),
+                size=str(m.get("size") or ""),
+                seeds=int(m.get("seed") or 0),
+                is_hd="hhd800" in str(m["magnet"]).lower() or "4k688" in str(m["magnet"]).lower(),
+            )
+        )
+    best_size = next((m.size for m in magnets if m.size), "")
+    best_seeds = max((m.seeds for m in magnets), default=0)
+    stars = (
+        [SearchResultStar(name=doc.star_name, url="", code=doc.star_code, followed=True)]
+        if doc.star_name
+        else []
+    )
+    return SearchResultItem(
+        code=doc.code,
+        title=doc.title,
+        release_date=doc.release_date,
+        views=doc.views,
+        likes=doc.likes,
+        cover_url=f"/api/cover/{doc.code}",
+        resolution=doc.resolution,
+        size=best_size,
+        seeds=best_seeds,
+        in_library=True,
+        source="local",
+        stars=stars,
+        magnets=magnets,
+    )
+
+
+@router.get("/local", response_model=SearchResponse)
+async def search_local_titles(
+    q: str = Query(..., min_length=2, max_length=100),
+    limit: int = Query(20, ge=1, le=50),
+) -> SearchResponse:
+    """Instant local-only BM25 search over the user's PostgreSQL library."""
+    query = q.strip()
+    hits = await db_read(search_local_library, query, limit)
+    results = [_local_doc_to_item(doc) for _, doc in hits]
+    return SearchResponse(query=query, count=len(results), items=results, actresses=[])
+
+
 @router.get("", response_model=SearchResponse)
 async def search_titles(q: str = Query(..., min_length=2, max_length=100)) -> SearchResponse:
-    """Search the catalog by code or keyword (ijavtorrent, sukebei fallback)."""
+    """Search local library via BM25 + remote catalog (ijavtorrent, sukebei fallback)."""
     query = q.strip()
 
+    local_task = asyncio.create_task(db_read(search_local_library, query, 20))
+    remote_items: list[tuple[VideoItem, str]] = []
+    directory: list[dict] = []
+    remote_err: Exception | None = None
     try:
-        items, directory = await _fetch_items(query)
+        remote_items, directory = await _fetch_items(query)
     except Exception as exc:
-        log.warning(f"search fetch failed for {query!r}: {exc}")
-        raise HTTPException(status_code=502, detail=f"检索失败: {exc}") from exc
+        remote_err = exc
+        log.warning(f"remote search fetch failed for {query!r}: {exc}")
+
+    local_hits = await local_task
+    local_results = [_local_doc_to_item(doc) for _, doc in local_hits]
+    if remote_err is not None and not local_results:
+        raise HTTPException(status_code=502, detail=f"检索失败: {remote_err}") from remote_err
 
     config = _load_config()
     followed = _followed_index(config)
-    in_library = await db_read(_library_codes, [it.code for it, _ in items])
+    in_library = await db_read(_library_codes, [it.code for it, _ in remote_items])
 
-    results = []
-    for it, source in items:
+    seen_codes: set[str] = {_norm_code(it.code) for it in local_results}
+    results: list[SearchResultItem] = list(local_results)
+    for it, source in remote_items:
+        nc = _norm_code(it.code)
+        if nc in seen_codes:
+            continue
+        seen_codes.add(nc)
         # Same best-magnet selection as the sync pipeline (hhd800 bonus,
         # resolution tier, seeds, size) — not raw extractor order.
         scored = sorted(
@@ -525,7 +609,7 @@ async def search_titles(q: str = Query(..., min_length=2, max_length=100)) -> Se
             )
         )
 
-    log.info(f"search {query!r}: {len(results)} results")
+    log.info(f"search {query!r}: {len(local_results)} local + {len(results) - len(local_results)} remote")
     # Live directory search first; the offline-crawled local index is the
     # fallback when ijavtorrent returned nothing (down or no match).
     matches = (directory or _actress_matches(query))[:12]
