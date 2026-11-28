@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -16,6 +17,7 @@ log = get_logger("bt-client")
 _client: httpx.AsyncClient | None = None
 _watchers: dict[str, asyncio.Task[None]] = {}
 _broadcaster_task: asyncio.Task[None] | None = None
+_l3_sweeper_task: asyncio.Task[None] | None = None
 _archived_submitted: set[str] = set()
 
 
@@ -120,15 +122,17 @@ def _get_client() -> httpx.AsyncClient:
 
 
 async def close_client() -> None:
-    """Shut down background watchers, broadcaster, and close the shared HTTP client."""
-    global _broadcaster_task, _client
-    if _broadcaster_task is not None and not _broadcaster_task.done():
-        _broadcaster_task.cancel()
-        try:
-            await _broadcaster_task
-        except asyncio.CancelledError:
-            pass
+    """Shut down background watchers, broadcaster, L3 sweeper, and close the shared HTTP client."""
+    global _broadcaster_task, _l3_sweeper_task, _client
+    for task in (_broadcaster_task, _l3_sweeper_task):
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     _broadcaster_task = None
+    _l3_sweeper_task = None
     for task in list(_watchers.values()):
         task.cancel()
     _watchers.clear()
@@ -180,6 +184,105 @@ def start_progress_broadcaster() -> None:
 
     try:
         _broadcaster_task = asyncio.create_task(_loop(), name="bt-progress-broadcaster")
+    except RuntimeError:
+        pass
+
+
+_L3_MIN_FREE_BYTES = 10 * 1024 * 1024 * 1024  # 10 GiB
+_L3_MAX_PEER_ACTIVE_JOBS = 2
+
+
+async def _has_idle_archive_worker(omesh: str) -> bool:
+    """Return True when no foreground stream is active and at least one BT worker peer is idle."""
+    if _watchers:
+        return False
+    try:
+        resp = await _get_client().get(
+            f"{omesh}/mesh/nodes",
+            headers=_omesh_headers(),
+            timeout=5.0,
+        )
+        if resp.status_code != 200:
+            return False
+        peers = resp.json().get("peers") or []
+    except Exception as exc:
+        log.debug(f"Idle L3 sweeper /mesh/nodes check failed: {exc}")
+        return False
+
+    for peer in peers:
+        if (
+            peer.get("healthy")
+            and peer.get("bt_enabled")
+            and int(peer.get("active_jobs") or 0) < _L3_MAX_PEER_ACTIVE_JOBS
+            and int(peer.get("free_disk_bytes") or 0) >= _L3_MIN_FREE_BYTES
+        ):
+            return True
+    return False
+
+
+async def run_liked_l3_sweep_once(
+    fetch_liked_fn: Callable[[], list[tuple[str | None, str | None]]],
+) -> str | None:
+    """Dispatch at most one unarchived liked title to omesh bt_archive when workers are idle."""
+    omesh = get_omesh_url()
+    if not omesh:
+        return None
+    if not await _has_idle_archive_worker(omesh):
+        return None
+
+    from core.db.write_queue import db_read
+
+    rows = await db_read(fetch_liked_fn)
+    client = _get_client()
+    headers = _omesh_headers()
+
+    for magnet, hash_str in rows:
+        h = (hash_str or "").strip().lower()
+        if not h or h in _archived_submitted:
+            continue
+        try:
+            chk = await client.get(f"{omesh}/api/check/{h}", headers=headers, timeout=5.0)
+            if chk.status_code == 200 and chk.json().get("source") == "ostore":
+                _archived_submitted.add(h)
+                continue
+        except Exception as exc:
+            log.debug(f"Idle L3 sweeper check failed for {h[:12]}: {exc}")
+            continue
+
+        raw_magnet = (magnet or "").strip() or f"magnet:?xt=urn:btih:{h}"
+        if await submit_bt_archive_job(h, raw_magnet):
+            log.info(f"Idle L3 sweeper queued liked title {h[:12]}... for bt_archive")
+            return h
+    return None
+
+
+def start_liked_l3_sweeper(
+    fetch_liked_fn: Callable[[], list[tuple[str | None, str | None]]],
+    *,
+    initial_delay: float = 60.0,
+    interval: float = 600.0,
+) -> None:
+    """Start periodic idle background archival of user-liked titles to ostore L3."""
+    global _l3_sweeper_task
+    if not get_omesh_url():
+        return
+    if _l3_sweeper_task is not None and not _l3_sweeper_task.done():
+        return
+
+    async def _loop() -> None:
+        try:
+            await asyncio.sleep(initial_delay)
+            while True:
+                try:
+                    await run_liked_l3_sweep_once(fetch_liked_fn)
+                except Exception as exc:
+                    log.warning(f"Idle L3 sweeper cycle failed: {exc}")
+                await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            pass
+
+    try:
+        _l3_sweeper_task = asyncio.create_task(_loop(), name="bt-liked-l3-sweeper")
     except RuntimeError:
         pass
 

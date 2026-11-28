@@ -172,6 +172,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             from backend.services import bt_client
             if bt_client.is_enabled():
                 bt_client.start_progress_broadcaster()
+
+                def _fetch_liked_for_l3() -> list[tuple[str | None, str | None]]:
+                    conn = _db_conn()
+                    try:
+                        return conn.execute(
+                            """
+                            SELECT magnet, magnet_hash
+                            FROM titles
+                            WHERE user_liked = 1 AND magnet_hash IS NOT NULL AND magnet_hash <> ''
+                            ORDER BY updated_at DESC
+                            """
+                        ).fetchall()
+                    finally:
+                        conn.close()
+
+                bt_client.start_liked_l3_sweeper(_fetch_liked_for_l3)
                 from backend.routers.torrents import _resolve_magnet
                 from core.db.write_queue import db_read
 
