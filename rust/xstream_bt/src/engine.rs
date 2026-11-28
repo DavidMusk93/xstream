@@ -258,10 +258,10 @@ const DEFAULT_PUBLIC_TRACKERS: &[&str] = &[
     "http://tracker.opentrackr.org:1337/announce",
 ];
 
-/// Grace window (seconds) after the last `/stream`, `seek`, `progress`, or `resume` call
+/// Grace window (seconds) after the last `/stream`, `seek`, `progress`, `add`, or `resume` call
 /// during which a torrent is treated as active foreground playback and must NOT be paused
-/// by background maintenance between discrete browser HTTP Range requests.
-const FOREGROUND_GRACE: Duration = Duration::from_secs(45);
+/// by background maintenance (covers cold DHT metadata + head warmup and Range pauses).
+const FOREGROUND_GRACE: Duration = Duration::from_secs(120);
 
 type PrewarmCursorMap = HashMap<String, Vec<Box<dyn AsyncVideoStream>>>;
 
