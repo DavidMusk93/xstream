@@ -220,21 +220,42 @@ async def _has_idle_archive_worker(omesh: str) -> bool:
     return False
 
 
+async def reclaim_l1_if_archived(hash_str: str) -> bool:
+    """Unpin and delete a torrent from local cc xstream_bt L1 cache once archived in ostore L3."""
+    base = get_base_url()
+    h = hash_str.strip().lower()
+    if not base or not h or h in _watchers:
+        return False
+    client = _get_client()
+    try:
+        st = await client.get(f"{base}/torrent/status/{h}", timeout=3.0)
+        if st.status_code != 200:
+            return False
+        await client.delete(f"{base}/api/cache/pin/{h}", timeout=5.0)
+        del_resp = await client.delete(f"{base}/api/cache/{h}", timeout=15.0)
+        if del_resp.status_code < 400:
+            log.info(f"Reclaimed local L1 BT cache for L3-archived {h[:12]}...")
+            return True
+    except Exception as exc:
+        log.debug(f"L1 reclaim skipped for {h[:12]}: {exc}")
+    return False
+
+
 async def run_liked_l3_sweep_once(
     fetch_liked_fn: Callable[[], list[tuple[str | None, str | None]]],
 ) -> str | None:
-    """Dispatch at most one unarchived liked title to omesh bt_archive when workers are idle."""
+    """Reclaim L1 caches for L3-archived liked titles and dispatch at most one new bt_archive when idle."""
     omesh = get_omesh_url()
     if not omesh:
         return None
-    if not await _has_idle_archive_worker(omesh):
-        return None
+    can_dispatch = await _has_idle_archive_worker(omesh)
 
     from core.db.write_queue import db_read
 
     rows = await db_read(fetch_liked_fn)
     client = _get_client()
     headers = _omesh_headers()
+    dispatched: str | None = None
 
     for magnet, hash_str in rows:
         h = (hash_str or "").strip().lower()
@@ -243,17 +264,19 @@ async def run_liked_l3_sweep_once(
         try:
             chk = await client.get(f"{omesh}/api/check/{h}", headers=headers, timeout=5.0)
             if chk.status_code == 200 and chk.json().get("source") == "ostore":
+                await reclaim_l1_if_archived(h)
                 _archived_submitted.add(h)
                 continue
         except Exception as exc:
             log.debug(f"Idle L3 sweeper check failed for {h[:12]}: {exc}")
             continue
 
-        raw_magnet = (magnet or "").strip() or f"magnet:?xt=urn:btih:{h}"
-        if await submit_bt_archive_job(h, raw_magnet):
-            log.info(f"Idle L3 sweeper queued liked title {h[:12]}... for bt_archive")
-            return h
-    return None
+        if can_dispatch and dispatched is None:
+            raw_magnet = (magnet or "").strip() or f"magnet:?xt=urn:btih:{h}"
+            if await submit_bt_archive_job(h, raw_magnet):
+                log.info(f"Idle L3 sweeper queued liked title {h[:12]}... for bt_archive")
+                dispatched = h
+    return dispatched
 
 
 def start_liked_l3_sweeper(

@@ -17,10 +17,17 @@ class _FakeResponse:
 
 
 class _FakeAsyncClient:
-    def __init__(self, nodes_payload: dict[str, Any], check_sources: dict[str, str]) -> None:
+    def __init__(
+        self,
+        nodes_payload: dict[str, Any],
+        check_sources: dict[str, str],
+        local_l1_hashes: set[str] | None = None,
+    ) -> None:
         self._nodes_payload = nodes_payload
         self._check_sources = check_sources
+        self._local_l1_hashes = set(local_l1_hashes or ())
         self.posted: list[dict[str, Any]] = []
+        self.deleted: list[str] = []
 
     async def get(self, url: str, **_kwargs: Any) -> _FakeResponse:
         if url.endswith("/mesh/nodes"):
@@ -29,16 +36,24 @@ class _FakeAsyncClient:
             h = url.rsplit("/", 1)[-1]
             src = self._check_sources.get(h, "none")
             return _FakeResponse(200, {"source": src, "ready": src == "ostore"})
+        if "/torrent/status/" in url:
+            h = url.rsplit("/", 1)[-1]
+            return _FakeResponse(200 if h in self._local_l1_hashes else 404, {"hash": h})
         return _FakeResponse(404, {})
 
     async def post(self, url: str, json: dict[str, Any], **_kwargs: Any) -> _FakeResponse:
         self.posted.append({"url": url, "json": json})
         return _FakeResponse(200, {"ok": True})
 
+    async def delete(self, url: str, **_kwargs: Any) -> _FakeResponse:
+        self.deleted.append(url)
+        return _FakeResponse(200, {"ok": True})
+
 
 @pytest.mark.asyncio
 async def test_liked_l3_sweeper_skips_archived_and_dispatches_one(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XSTREAM_OMESH_URL", "http://127.0.0.1:8767")
+    monkeypatch.setenv("XSTREAM_BT_URL", "http://127.0.0.1:8766")
     monkeypatch.setattr(bt_client, "_archived_submitted", set())
     monkeypatch.setattr(bt_client, "_watchers", {})
 
@@ -60,6 +75,7 @@ async def test_liked_l3_sweeper_skips_archived_and_dispatches_one(monkeypatch: p
             "bbbb" * 10: "none",
             "cccc" * 10: "none",
         },
+        local_l1_hashes={"aaaa" * 10},
     )
     monkeypatch.setattr(bt_client, "_get_client", lambda: fake)
 
@@ -74,6 +90,8 @@ async def test_liked_l3_sweeper_skips_archived_and_dispatches_one(monkeypatch: p
     assert fake.posted[0]["json"]["kind"] == "bt_archive"
     assert fake.posted[0]["json"]["hash"] == "bbbb" * 10
     assert ("aaaa" * 10) in bt_client._archived_submitted
+    assert any(u.endswith(f"/api/cache/pin/{'aaaa' * 10}") for u in fake.deleted)
+    assert any(u.endswith(f"/api/cache/{'aaaa' * 10}") for u in fake.deleted)
 
 
 @pytest.mark.asyncio
