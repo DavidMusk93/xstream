@@ -115,13 +115,34 @@ def _candidates(item: dict[str, Any], skip_hash: str | None) -> list[dict[str, A
 
 
 def _process_title(item: dict[str, Any]) -> dict[str, Any]:
-    """Per-title check: primary first, live-candidate fallback when dead.
+    """Per-title check: self-heal downgraded primaries to top HD candidate, retry once before downgrading.
 
     Runs on a MagnetChecker worker thread.
     """
     checker = get_checker()
     primary_hash = item.get("magnet_hash") or extract_hash(item["magnet"])
+    all_cands = _candidates(item, skip_hash=None)
+
+    # Self-heal: if this title was previously downgraded to a lower-ranked fallback,
+    # probe the top-ranked candidate (all_magnets[0], e.g. [FHD]/[4K]) first and upgrade back if alive.
+    if all_cands and all_cands[0].get("hash") and all_cands[0]["hash"] != primary_hash:
+        top = all_cands[0]
+        res_top = checker.check_one(top["magnet"])
+        if res_top["alive"]:
+            log.info(f"upgrade {item['code']}: restored top candidate {top['hash'][:12]}...")
+            return {
+                "alive": True,
+                "status": "swapped",
+                "hash": top["hash"],
+                "magnet": top["magnet"],
+                "peers": res_top["peers"],
+            }
+
     res = checker.check_one(item["magnet"])
+    if not res["alive"]:
+        # Retry once before downgrading to a lower-resolution fallback so transient DHT
+        # misses do not permanently downgrade [FHD]/[4K] titles to 720p.
+        res = checker.check_one(item["magnet"])
     if res["alive"]:
         return {"alive": True, "status": "ok", "hash": primary_hash, "peers": res["peers"]}
 
