@@ -75,6 +75,33 @@ async def submit_archive_job(hash_str: str) -> bool:
     return False
 
 
+async def submit_bt_archive_job(hash_str: str, magnet: str) -> bool:
+    """Ask omesh to offline-download, faststart-remux, and archive a liked magnet to ostore L3."""
+    omesh = get_omesh_url()
+    if not omesh:
+        return False
+    h = hash_str.strip().lower()
+    if not h or not magnet or h in _archived_submitted:
+        return False
+    _archived_submitted.add(h)
+    try:
+        resp = await _get_client().post(
+            f"{omesh}/mesh/jobs",
+            json={"kind": "bt_archive", "hash": h, "magnet": magnet, "target": "auto"},
+            headers=_omesh_headers(),
+            timeout=5.0,
+        )
+        if resp.status_code < 400:
+            log.info(f"omesh bt_archive queued (target=auto) for {h[:12]}...")
+            return True
+        _archived_submitted.discard(h)
+        log.warning(f"omesh bt_archive rejected for {h[:12]}: {resp.status_code}")
+    except Exception as exc:
+        _archived_submitted.discard(h)
+        log.debug(f"omesh bt_archive submit failed for {h[:12]}: {exc}")
+    return False
+
+
 def is_enabled() -> bool:
     """Return True when the Rust xstream_bt daemon is enabled via XSTREAM_BT_URL."""
     return get_base_url() is not None

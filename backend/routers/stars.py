@@ -611,8 +611,9 @@ async def like_title(request: LikeRequest, req: Request) -> LikeResponse:
                 res = await bt_client.add_torrent(resolved, prefetch=False)
                 if res and res.get("hash"):
                     await bt_client.set_pin(res["hash"], pinned=True)
+                    asyncio.create_task(bt_client.submit_bt_archive_job(res["hash"], resolved))
                     downloaded = True
-                    log.info(f"like_title: auto-download via xstream_bt {code} -> {res['hash'][:12]}...")
+                    log.info(f"like_title: auto-download + bt_archive via xstream_bt/omesh {code} -> {res['hash'][:12]}...")
             else:
                 info = await asyncio.to_thread(engine.add_torrent, resolved, prefetch=False)
                 if info:
