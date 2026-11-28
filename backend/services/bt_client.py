@@ -451,14 +451,32 @@ async def stream_video(request: Request, hash_str: str) -> Response:
         return Response(content=body, status_code=upstream.status_code, headers=out_headers)
 
     async def _iter_chunks():
+        it = upstream.aiter_bytes(chunk_size=65_536).__aiter__()
+        disc = asyncio.create_task(_wait_disconnect(request))
         try:
-            async for chunk in upstream.aiter_bytes(chunk_size=65_536):
-                if await request.is_disconnected():
+            while True:
+                next_chunk = asyncio.create_task(it.__anext__())
+                done, _ = await asyncio.wait(
+                    {next_chunk, disc},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if disc in done:
+                    next_chunk.cancel()
+                    try:
+                        await next_chunk
+                    except (asyncio.CancelledError, StopAsyncIteration, Exception):
+                        pass
+                    break
+                try:
+                    chunk = next_chunk.result()
+                except StopAsyncIteration:
                     break
                 yield chunk
         except (asyncio.CancelledError, httpx.HTTPError):
             pass
         finally:
+            if not disc.done():
+                disc.cancel()
             await upstream.aclose()
 
     return StreamingResponse(
