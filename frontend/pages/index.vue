@@ -338,17 +338,61 @@ function onUserManualScroll() {
   cancelPendingRevealScroll()
 }
 
+const BROWSE_POS_KEY = 'xstream_browse_pos'
+let browsePosRestored = false
+
+function saveBrowsePos() {
+  if (!import.meta.client) return
+  try {
+    if (window.scrollY <= 40) {
+      sessionStorage.removeItem(BROWSE_POS_KEY)
+      return
+    }
+    if (navActive.value) {
+      sessionStorage.setItem(BROWSE_POS_KEY, JSON.stringify({
+        star: navActive.value,
+        y: Math.round(window.scrollY),
+      }))
+    }
+  } catch {
+    // ignore storage quota / private mode errors
+  }
+}
+
+function tryRestoreBrowsePos() {
+  if (!import.meta.client || browsePosRestored) return
+  if (typeof route.query.star === 'string' && route.query.star) {
+    browsePosRestored = true
+    return
+  }
+  if (!displayStars.value.length) return
+  browsePosRestored = true
+  try {
+    const raw = sessionStorage.getItem(BROWSE_POS_KEY)
+    if (!raw) return
+    const saved = JSON.parse(raw) as { star?: string; y?: number }
+    if (saved.star && displayStars.value.some(s => s.code === saved.star)) {
+      revealStar(saved.star, true)
+    }
+  } catch {
+    // ignore malformed storage
+  }
+}
+
 let scrollObserver: ResizeObserver | null = null
 onMounted(() => {
   measureScroll()
+  tryRestoreBrowsePos()
   window.addEventListener('scroll', onPageScroll, { passive: true })
   window.addEventListener('wheel', onUserManualScroll, { passive: true })
   window.addEventListener('touchmove', onUserManualScroll, { passive: true })
+  window.addEventListener('pagehide', saveBrowsePos)
   scrollObserver = new ResizeObserver(onPageScroll)
   scrollObserver.observe(document.body)
 })
 watch(displayStars, () => {
   if (!import.meta.client) return
+  tryRestoreBrowsePos()
   nextTick(measureScroll)
 })
 
@@ -667,6 +711,9 @@ if (import.meta.client) {
 // Active star for StarNav: the section crossing a band at 30–40% of the
 // viewport. Same directive, same mount-time wiring.
 const navActive = ref('')
+watch(navActive, () => {
+  saveBrowsePos()
+})
 let bandObserver: IntersectionObserver | null = null
 if (import.meta.client) {
   bandObserver = new IntersectionObserver((entries) => {
@@ -695,6 +742,7 @@ onUnmounted(() => {
   window.removeEventListener('scroll', onPageScroll)
   window.removeEventListener('wheel', onUserManualScroll)
   window.removeEventListener('touchmove', onUserManualScroll)
+  window.removeEventListener('pagehide', saveBrowsePos)
   scrollObserver?.disconnect()
   if (scrollRaf) cancelAnimationFrame(scrollRaf)
 })
