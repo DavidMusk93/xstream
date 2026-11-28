@@ -33,6 +33,15 @@ use crate::{
 /// Chunk size (64 KiB) used when reading from `librqbit::FileStream`.
 const STREAM_BUF_BYTES: usize = 65_536;
 
+/// Maximum bytes returned for an open-ended `Range: bytes=start-` request (8 MiB).
+///
+/// Browsers send open-ended `Range: bytes=X-` on every seek. Returning the entire
+/// remaining multi-GB file in one response blasts tens of MiB into TCP/HTTP2 buffers
+/// and blocks at the uncached BT frontier, stalling subsequent seeks even inside
+/// already-cached regions. Capping open-ended ranges to 8 MiB lets cached seeks
+/// complete in milliseconds while still supporting seamless sequential streaming.
+const MAX_OPEN_RANGE_BYTES: u64 = 8 * 1024 * 1024;
+
 /// Shared state injected into all HTTP handlers.
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -280,9 +289,19 @@ async fn stream_video(
 
     let (status, reader): (StatusCode, Box<dyn AsyncRead + Send + Unpin>) =
         if let Some(raw_range) = range_header {
-            let Some(range) = parse_byte_range(raw_range, total_size) else {
+            let Some(mut range) = parse_byte_range(raw_range, total_size) else {
                 return Err(BtError::InvalidRange { total_size, mime });
             };
+            let is_open_ended = raw_range.trim().ends_with('-');
+            if is_open_ended {
+                let capped_end = range
+                    .start
+                    .saturating_add(MAX_OPEN_RANGE_BYTES - 1)
+                    .min(total_size - 1);
+                if capped_end < range.end {
+                    range.end = capped_end;
+                }
+            }
 
             stream
                 .seek(SeekFrom::Start(range.start))
